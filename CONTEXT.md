@@ -36,6 +36,10 @@ _Avoid_: Applicant (for the row), submission, candidacy
 Where an Application stands in the hiring workflow: New, Screening, Interview, Offer, Hired or Rejected. The tracker on an Application's page labels New as "Applied". An Applicant who withdraws puts the Application in a Withdrawn state that Staff cannot change; it is shown under All only and is not a Stage Staff can move an Application into. The Careers site shows the same value as the Application's status.
 _Avoid_: Status (in the HRMS UI), step
 
+**Source**:
+Where an Application came from: Careers page, Facebook, JobStreet, Walk-in or Referral. Every Application the Applicant submits on the Careers site is "Careers page", even if they first saw the job elsewhere, because the Careers site does not ask. Staff choose the Source when they add an Applicant by hand, and for a Referral they also record who referred the Applicant as free text, not linked to a Staff member. An Application added by hand before Sources were recorded has no Source and is shown as "Unspecified".
+_Avoid_: Channel, origin
+
 **Required Document**:
 A document an Applicant must upload to apply for a Job Posting. Staff tick from Resume or CV, Valid government ID and Health certificate, and can add their own, such as "NBI clearance". It is always a document; other hiring criteria are not Required Documents.
 _Avoid_: Application requirement, attachment
@@ -57,7 +61,7 @@ A summary block on the Dashboard that belongs to exactly one Module and is shown
 _Avoid_: Tile, panel
 
 **Key Summary Card**:
-A kind of Widget that shows one headline figure at the top of the Dashboard, with an optional line of detail beneath it. The Key Summary Cards are Total Employee, New Hire, Open jobs, Applicants, Interviews this week, Offer acceptance, Average time to hire, Attendance Rate, and Pending Leaves. The hiring cards (owned by Recruitment and Hiring) sit in a row of their own above the rest.
+A kind of Widget that shows one headline figure at the top of the Dashboard, with an optional line of detail beneath it. The Key Summary Cards are Open jobs, Applicants, Interviews this week, Offer acceptance, Average time to hire, Total Employee, and Attendance Rate. The hiring cards (owned by Recruitment and Hiring) sit in a row of their own above the rest. The owning Module of Attendance Rate may change if Attendance is replaced.
 _Avoid_: KPI, stat tile, Open Positions (replaced by Open jobs)
 
 **Open jobs**:
@@ -86,7 +90,7 @@ _Avoid_: Date filter, period (for the range itself)
 The period a Dashboard Range is compared with. This month is compared with the same days of last month (held at the end of a shorter month), Last month with the month before it, Last 30 or 90 days with the same number of days just before, Year to date with the same days of last year, and a Custom range with the period of the same length just before it. A comparison is left out when either period has no data.
 
 **Detail Widget**:
-A kind of Widget that shows more than one headline figure, such as a chart or a list, below the Key Summary Cards. The Detail Widgets are Headcount Trend, Department Distribution, Recent Activity, and Upcoming Events. In the code, `Widget` on its own is not used; the Key Summary Cards and the Detail Widgets are separate types.
+A kind of Widget that shows more than one headline figure, such as a chart or a list, on the Dashboard beside or below the Key Summary Cards. The Detail Widgets are Hiring pipeline, Needs attention, Applicants by job, Where applicants come from, Upcoming interviews, Headcount Trend, Department Distribution, Recent Activity, and Upcoming Events. The hiring ones are owned by Recruitment and Hiring. Where a Detail Widget has a headline sentence, it is computed from the data and falls back to a neutral line when there is none. In the code, `Widget` on its own is not used; the Key Summary Cards and the Detail Widgets are separate types.
 _Avoid_: Panel, tile
 
 **Headcount Trend**:
@@ -100,6 +104,21 @@ A kind of Widget, owned by Employee Information, that lists the latest employee-
 
 **Upcoming Events**:
 A kind of Widget, owned by Attendance, that lists what is coming up such as approved leave and holidays. It does not draw on other Modules.
+
+**Hiring pipeline**:
+A Detail Widget, owned by Recruitment and Hiring, that shows how many Applications received in the Dashboard Range have ever reached each Stage (Applied, Screening, Interview, Offer, Hired), each as a percent of all Applications received. Rejected and Withdrawn are not bars. Its headline names how many applicants it takes to get one hire and the Stage where most drop off.
+
+**Needs attention**:
+A Detail Widget, owned by Recruitment and Hiring, that lists what Staff should act on now, not affected by the Dashboard Range: Applications to review (at New), Interviews to schedule (at Screening with no interview booked), and Results to record (interviews that ended with no result). Offers past reply date and Missing documents are left out until Offers and Hired hold that data.
+
+**Applicants by job**:
+A Detail Widget, owned by Recruitment and Hiring, that ranks the five Job Postings with the most Applications received in the Dashboard Range, each with its count and its percent of all Applications received in the range. Job Postings that are no longer Open are included. Its headline names the Job Posting with the most Applications.
+
+**Upcoming interviews**:
+A Detail Widget, owned by Recruitment and Hiring, that lists the next five Interviews still to start in the current Monday-to-Sunday week (Manila time), each with the applicant, the Job Posting and the Interview type. Finished Interviews are left out, and the Dashboard Range does not affect it. Its headline says how many start today and how many more this week. Unrelated to Upcoming Events, which lists leave and holidays.
+
+**Where applicants come from**:
+A Detail Widget, owned by Recruitment and Hiring, that shows each Source's share of the Applications received in the Dashboard Range and its hire rate, the Applications from that Source that have reached Hired as a percent of those from it. "Unspecified" appears as a row only when it has Applications and never wins a headline. Its headline names the Source with the most Applications and the Source with the highest hire rate, falling back to "Careers page brings the most applicants" when no Application was received.
 
 ## UI design reference
 
