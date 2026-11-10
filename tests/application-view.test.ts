@@ -235,16 +235,24 @@ describe("interview rows", () => {
 });
 
 describe("add applicant form", () => {
-  const form = { fullName: " Mylene Santos ", email: " mylene@example.com ", mobile: "0917 123 4567", address: "Cainta, Rizal", jobPostingId: "job-1", expectedSalary: "15500", availableFrom: "2026-11-10" };
+  const form = { fullName: " Mylene Santos ", email: " mylene@example.com ", mobile: "0917 123 4567", address: "Cainta, Rizal", jobPostingId: "job-1", expectedSalary: "15500", availableFrom: "2026-11-10", source: "Walk-in", referredBy: "" };
 
   it("trims the fields and reads the salary as a number", () => {
-    expect(readApplicantForm(form)).toEqual({ input: { fullName: "Mylene Santos", email: "mylene@example.com", mobile: "0917 123 4567", address: "Cainta, Rizal", jobPostingId: "job-1", expectedSalary: 15500, availableFrom: "2026-11-10" } });
+    expect(readApplicantForm(form)).toEqual({ input: { fullName: "Mylene Santos", email: "mylene@example.com", mobile: "0917 123 4567", address: "Cainta, Rizal", jobPostingId: "job-1", expectedSalary: 15500, availableFrom: "2026-11-10", source: "Walk-in" } });
+  });
+
+  it("asks for a source, and for who referred a Referral", () => {
+    expect(readApplicantForm({ ...form, source: "" }).errors).toEqual({ source: "Choose a source." });
+    expect(readApplicantForm({ ...form, source: "Careers page" }).errors).toEqual({ source: "Choose a source." });
+    expect(readApplicantForm({ ...form, source: "Referral", referredBy: "  " }).errors).toEqual({ referredBy: "Enter who referred them." });
+    expect(readApplicantForm({ ...form, source: "Referral", referredBy: " Ana " }).input).toMatchObject({ source: "Referral", referredBy: "Ana" });
+    expect(readApplicantForm({ ...form, source: "Facebook", referredBy: "ignored" }).input).not.toHaveProperty("referredBy");
   });
 
   it("names every missing field", () => {
-    expect(readApplicantForm({ fullName: " ", email: "", mobile: "", address: "", jobPostingId: "", expectedSalary: "", availableFrom: "" }).errors).toEqual({
+    expect(readApplicantForm({ fullName: " ", email: "", mobile: "", address: "", jobPostingId: "", expectedSalary: "", availableFrom: "", source: "", referredBy: "" }).errors).toEqual({
       fullName: "Enter the full name.", email: "Enter an email address.", mobile: "Enter a mobile number.", address: "Enter the address.",
-      jobPostingId: "Choose a Job Posting.", expectedSalary: "Enter the expected salary.", availableFrom: "Choose the date they can start.",
+      jobPostingId: "Choose a Job Posting.", expectedSalary: "Enter the expected salary.", availableFrom: "Choose the date they can start.", source: "Choose a source.",
     });
   });
 

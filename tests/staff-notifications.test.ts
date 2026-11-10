@@ -74,7 +74,7 @@ it("notifies every Recruitment and Hiring user, and only them, when a Careers ap
 
 it("notifies when HR adds an applicant by hand", async () => {
   await insertPosting();
-  await applicationsFor(handle, db).addApplicant({ fullName: "Walk In", email: "w@example.test", mobile: "09", address: "Manila", jobPostingId: "p1", expectedSalary: 1, availableFrom: "2031-02-01" });
+  await applicationsFor(handle, db).addApplicant({ fullName: "Walk In", email: "w@example.test", mobile: "09", address: "Manila", jobPostingId: "p1", expectedSalary: 1, availableFrom: "2031-02-01", source: "Walk-in" });
   await deliverStaffNotifications(db);
   expect(sends.map((s) => s.body.type)).toEqual(["application.received"]);
   expect(sends[0].body.title).toBe("New application: Walk In");

@@ -1,4 +1,5 @@
 import { gatewayDocumentFiles, type DocumentFiles } from "@/lib/document-files";
+import { MANUAL_SOURCES, type ApplicationSource, type ManualSource } from "./application-sources";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 
@@ -13,6 +14,7 @@ export type ApplicationListItem = {
   appliedAt: Date;
   stage: ApplicationStage;
   nextStep: string;
+  source: ApplicationSource;
 };
 type SubmittedDocument = { id: number; name: string; size: number; contentType: string; uploadedAt: Date | null; requiredFor: string };
 export type ApplicationDocument = (SubmittedDocument & { status: "Submitted"; downloadUrl: string })
@@ -40,7 +42,7 @@ export type ApplicationProfile = Omit<ApplicationListItem, "nextStep"> & {
   expectedSalary: number | null;
   availableFrom: string | null;
 };
-export type ManualApplicantInput = { fullName: string; email: string; mobile: string; address: string; jobPostingId: string; expectedSalary: number; availableFrom: string };
+export type ManualApplicantInput = { fullName: string; email: string; mobile: string; address: string; jobPostingId: string; expectedSalary: number; availableFrom: string; source: ManualSource; referredBy?: string };
 export type ApplicationTab = "All" | Exclude<ApplicationStage, "Withdrawn">;
 export type ApplicationFilters = { jobPostingId?: string; stage?: ApplicationTab; search?: string };
 export type ApplicationJobPostingOption = { id: string; title: string; applicationCount: number };
@@ -110,7 +112,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       FROM (
         SELECT id, applicant_name AS "applicantName", applicant_email AS "applicantEmail",
           job_posting_id AS "jobPostingId", job_posting_title AS "jobPostingTitle",
-          location, applied_at AS "appliedAt", stage,
+          location, applied_at AS "appliedAt", stage, source,
           (SELECT min(i.starts_at) FROM public.hrms_application_interviews i
             WHERE i.application_id = searched.id AND i.starts_at >= CURRENT_TIMESTAMP
               AND i.result IS NULL) AS "nextInterviewAt"
@@ -185,7 +187,9 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       if (!input || !["fullName", "email", "mobile", "address", "jobPostingId"].every((key) => text(input[key as keyof ManualApplicantInput]))
         || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())
         || typeof input.expectedSalary !== "number" || !Number.isFinite(input.expectedSalary) || input.expectedSalary < 0
-        || !date(input.availableFrom)) throw new ApplicationError("validation");
+        || !date(input.availableFrom)
+        || !MANUAL_SOURCES.includes(input.source)
+        || (input.source === "Referral" ? !text(input.referredBy) : input.referredBy !== undefined && input.referredBy !== "")) throw new ApplicationError("validation");
       const email = input.email.trim();
       try {
         // One statement checks the posting and both sources; the unique index settles HR-side races.
@@ -194,8 +198,8 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
             SELECT status FROM public.job_postings WHERE id = $5
           ), inserted AS (
             INSERT INTO public.hrms_manual_applications
-              (full_name, email, mobile, address, job_posting_id, expected_salary, available_from, added_by_name)
-            SELECT $1, $2, $3, $4, $5, $6, $7::date, $8 FROM posting
+              (full_name, email, mobile, address, job_posting_id, expected_salary, available_from, added_by_name, source, referred_by)
+            SELECT $1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10 FROM posting
             WHERE status = 'open' AND NOT EXISTS (
               SELECT 1 FROM public.hrms_all_applications a
               WHERE a.job_posting_id = $5 AND lower(a.applicant_email) = lower($2))
@@ -203,7 +207,8 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           )
           SELECT (SELECT id FROM inserted) AS id, (SELECT status FROM posting) AS posting_status`,
         [input.fullName.trim(), email, input.mobile.trim(), input.address.trim(), input.jobPostingId,
-          input.expectedSalary, input.availableFrom, access.staff.name]);
+          input.expectedSalary, input.availableFrom, access.staff.name, input.source,
+          input.source === "Referral" ? input.referredBy!.trim() : null]);
         if (rows[0].id !== null) return rows[0].id;
         throw new ApplicationError(rows[0].posting_status === null ? "not-found" : "conflict");
       } catch (error) {

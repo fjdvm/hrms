@@ -1,3 +1,4 @@
+import { MANUAL_SOURCES } from "./application-sources";
 import type { ApplicationInterview, ApplicationProfile, ApplicationStage, ApplicationTab, InterviewInput, ManualApplicantInput } from "./applications";
 
 export const STAGE_BADGE = {
@@ -223,7 +224,7 @@ export function readInterviewForm(form: InterviewForm): { input?: InterviewInput
   return { input: { startsAt: `${form.date}T${form.start}:00+08:00`, endsAt: `${form.date}T${form.end}:00+08:00`, type: form.type, interviewerName, location: place } };
 }
 
-export type ApplicantForm = Record<"fullName" | "email" | "mobile" | "address" | "jobPostingId" | "expectedSalary" | "availableFrom", string>;
+export type ApplicantForm = Record<"fullName" | "email" | "mobile" | "address" | "jobPostingId" | "expectedSalary" | "availableFrom" | "source" | "referredBy", string>;
 export type ApplicantFormErrors = Partial<Record<keyof ApplicantForm, string>>;
 
 /** Reads the Add applicant form; the salary arrives as typed and leaves as a number. */
@@ -239,6 +240,10 @@ export function readApplicantForm(form: ApplicantForm): { input?: ManualApplican
   if (!salary) errors.expectedSalary = "Enter the expected salary.";
   else if (!Number.isFinite(Number(salary)) || Number(salary) < 0) errors.expectedSalary = "Enter a salary of 0 or more.";
   if (!form.availableFrom) errors.availableFrom = "Choose the date they can start.";
-  if (Object.keys(errors).length > 0) return { errors };
-  return { input: { fullName, email, mobile, address, jobPostingId: form.jobPostingId, expectedSalary: Number(salary), availableFrom: form.availableFrom } };
+  const source = MANUAL_SOURCES.find((name) => name === form.source);
+  const referredBy = form.referredBy.trim();
+  if (!source) errors.source = "Choose a source.";
+  else if (source === "Referral" && !referredBy) errors.referredBy = "Enter who referred them.";
+  if (Object.keys(errors).length > 0 || !source) return { errors };
+  return { input: { fullName, email, mobile, address, jobPostingId: form.jobPostingId, expectedSalary: Number(salary), availableFrom: form.availableFrom, source, ...(source === "Referral" ? { referredBy } : {}) } };
 }

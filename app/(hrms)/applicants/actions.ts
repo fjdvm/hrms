@@ -9,7 +9,7 @@ import { readApplicantForm, type ApplicantFormErrors } from "@/lib/application-v
 
 export type AddApplicantState = { error?: string; fieldErrors?: ApplicantFormErrors; added?: number; attempt?: number; values?: Record<string, string> };
 
-const FIELDS = ["fullName", "email", "mobile", "address", "jobPostingId", "expectedSalary", "availableFrom"] as const;
+const FIELDS = ["fullName", "email", "mobile", "address", "jobPostingId", "expectedSalary", "availableFrom", "source", "referredBy"] as const;
 
 const MESSAGES: Record<ApplicationError["reason"], string> = {
   validation: "Check the applicant's details and try again.",

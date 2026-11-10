@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { MANUAL_SOURCES } from "@/lib/application-sources";
 import type { ApplicationJobPostingOption } from "@/lib/applications";
 import { addApplicant, type AddApplicantState } from "@/app/(hrms)/applicants/actions";
 import { cn } from "@/lib/utils";
@@ -26,9 +27,10 @@ function Labelled({ label, htmlFor, required, error, hint, children }: { label: 
 /** The Add applicant button in the page header and the form it opens. Saving refreshes the list, where the new Application sits at New. */
 export function AddApplicant({ jobs }: { jobs: ApplicationJobPostingOption[] }) {
   const [open, setOpen] = useState(false);
+  const [source, setSource] = useState("");
   const [state, submit, pending] = useActionState(async (previous: AddApplicantState, data: FormData) => {
     const next = await addApplicant(previous, data);
-    if (next.added) setOpen(false);
+    if (next.added) { setOpen(false); setSource(""); }
     return next;
   }, {} as AddApplicantState);
   const errors = state.fieldErrors ?? {};
@@ -48,7 +50,7 @@ export function AddApplicant({ jobs }: { jobs: ApplicationJobPostingOption[] }) 
           <div className="flex items-start gap-[12px] border-b border-[#ebebeb] pb-[16px] pl-[24px] pr-[18px] pt-[20px]">
             <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
               <DialogTitle className="text-[17px] font-semibold leading-[normal] tracking-normal text-foreground">Add applicant</DialogTitle>
-              <DialogDescription className="text-[13px] leading-[normal] text-zinc-500">For people who walked in or were referred.</DialogDescription>
+              <DialogDescription className="text-[13px] leading-[normal] text-zinc-500">For applicants HR enters by hand.</DialogDescription>
             </div>
             <DialogClose aria-label="Close" className="cursor-pointer text-zinc-500 hover:text-foreground"><X className="size-[18px]" /></DialogClose>
           </div>
@@ -81,6 +83,20 @@ export function AddApplicant({ jobs }: { jobs: ApplicationJobPostingOption[] }) 
                 <ChevronDown className="size-4 shrink-0 text-zinc-500" />
               </div>
             </Labelled>
+            <Labelled label="Source" htmlFor="applicant-source" required error={errors.source}>
+              <div className={box("source")}>
+                <select key={state.attempt} id="applicant-source" name="source" defaultValue={value("source") ?? ""} onChange={(event) => setSource(event.target.value)} className={cn(INPUT, "appearance-none")}>
+                  <option value="" disabled>Choose a source</option>
+                  {MANUAL_SOURCES.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+                <ChevronDown className="size-4 shrink-0 text-zinc-500" />
+              </div>
+            </Labelled>
+            {source === "Referral" && (
+              <Labelled label="Referred by" htmlFor="applicant-referred-by" required error={errors.referredBy}>
+                <div className={box("referredBy")}><input id="applicant-referred-by" name="referredBy" defaultValue={value("referredBy")} placeholder="Who referred them" className={INPUT} /></div>
+              </Labelled>
+            )}
             <div className="flex flex-col gap-md sm:flex-row sm:gap-[12px]">
               <div className="min-w-0 flex-1">
                 <Labelled label="Expected salary" htmlFor="applicant-salary" required error={errors.expectedSalary}>
