@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sidebarFor, sidebarSections } from "@/components/layout/sidebar-nav";
 import { MODULES } from "@/lib/modules";
 
@@ -52,5 +52,42 @@ describe("sidebar", () => {
       expect(existsSync(join(dir, "page.tsx"))).toBe(true);
       expect(existsSync(join(dir, "loading.tsx"))).toBe(true);
     }
+  });
+});
+
+describe("System links in the sidebar", () => {
+  const load = async (env: Record<string, string | undefined>) => {
+    vi.resetModules();
+    for (const key of ["NEXT_PUBLIC_HOST_URL", "NEXT_PUBLIC_CRMS_URL", "NEXT_PUBLIC_HRMS_URL"]) {
+      vi.stubEnv(key, env[key] as string);
+      if (env[key] === undefined) delete process.env[key];
+    }
+    const mod = await import("@/components/layout/sidebar-nav");
+    return Object.fromEntries(mod.systems.map((s) => [s.fullName, s.url]));
+  };
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("defaults Portal, CRM and HRMS to the Azure addresses, with no vercel.app left", async () => {
+    const urls = await load({});
+    expect(urls["Enterprise Portal"]).toBe("https://portal.buildwrite.me/");
+    expect(urls["Customer Relationship Management"]).toBe("https://creoms.buildwrite.me/");
+    expect(urls["Human Resource Management"]).toBe("https://hrms.buildwrite.me/");
+  });
+
+  it("uses the environment value when set", async () => {
+    const urls = await load({
+      NEXT_PUBLIC_HOST_URL: "https://p.test/",
+      NEXT_PUBLIC_CRMS_URL: "https://c.test/",
+      NEXT_PUBLIC_HRMS_URL: "https://h.test/",
+    });
+    expect(urls["Enterprise Portal"]).toBe("https://p.test/");
+    expect(urls["Customer Relationship Management"]).toBe("https://c.test/");
+    expect(urls["Human Resource Management"]).toBe("https://h.test/");
+  });
+
+  it("leaves the POS and IMS links unchanged", async () => {
+    const urls = await load({});
+    expect(urls["Point of Sale"]).toBe("https://web-pos-alpha-vert.vercel.app/");
+    expect(urls["IMS - Inventory Management System"]).toBe("https://br-sims.vercel.app/");
   });
 });
