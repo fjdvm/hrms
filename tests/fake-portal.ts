@@ -20,6 +20,9 @@ export class FakePortal {
   private codes = new Map<string, Code>();
   private nextHandle = 1;
 
+  /** Staff the recipients directory lists, with the Modules each holds. */
+  directory: { id: string; username: string; modules: string[] }[] = [];
+
   /** The Portal cannot decide: it answers 503 until restored. */
   unavailable = false;
 
@@ -70,6 +73,14 @@ export class FakePortal {
     }
 
     return Response.json({ active: true, system: FAKE_SYSTEM, module: body.module, staff: session.staff });
+  }
+
+  private async recipients(request: Request): Promise<Response> {
+    const expected = `Basic ${Buffer.from(`${FAKE_SYSTEM}:${FAKE_SECRET}`).toString("base64")}`;
+    if (request.headers.get("authorization") !== expected) return Response.json({ error: "invalid_client" }, { status: 401 });
+    if (this.unavailable) return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
+
+    return Response.json({ staff: this.directory });
   }
 
   private authorize(url: URL): Response {
@@ -150,6 +161,7 @@ export class FakePortal {
     if (url.pathname === "/logout") return this.logout();
     if (url.pathname === "/api/integrations/authorize") return this.authorize(url);
     if (url.pathname === "/api/integrations/exchange") return this.exchange(request);
+    if (url.pathname === "/api/integrations/recipients") return this.recipients(request);
     if (url.pathname === "/api/integrations/validate") return this.validate(request);
 
     return new Response("not found", { status: 404 });

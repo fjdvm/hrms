@@ -35,6 +35,19 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+### Header bell (live Notifications)
+
+Run `npm run db:migrate` (migration 0019). Triggers queue a Staff Notification in the
+same transaction as each new application (Careers or HR-added) and each posting
+published or closed. Delivery asks the Portal's `/api/integrations/recipients` for
+Staff holding the Recruitment and Hiring Module, then posts one gateway
+notification to them (stable idempotency key, retried with backoff). Queued rows
+are flushed when any signed-in tab opens the bell (page load) and by the cron route;
+a Careers application can wait for one of those. The browser holds no key: it asks
+`/api/notifications/live` for a short-lived Live ticket and opens the gateway
+WebSocket, refetching the inbox on connect and on pushed events, never on a timer.
+`NOTIFICATIONS_APP` (default `HRMS`) must equal the HRMS Caller's App in the gateway.
+
 ### Recruitment audit delivery
 
 Run `npm run db:migrate` before deploying recruitment changes. Migration 0003 adds

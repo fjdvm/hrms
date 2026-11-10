@@ -106,3 +106,25 @@ export async function validateSession(sessionHandle: string, module: string): Pr
     ? { decision: "allowed", staff: body.staff }
     : { decision: "unavailable" };
 }
+
+/**
+ * Portal user ids of the Staff who currently hold a Module in HRMS (System backend call, no
+ * browser session). `null` means the Portal could not answer, so the caller must retry later.
+ */
+export async function listModuleHolders(module: string): Promise<string[] | null> {
+  const response = await postJson("/api/integrations/recipients", {});
+
+  if (!response?.ok) {
+    return null;
+  }
+
+  const body = (await response.json().catch(() => null)) as { staff?: { id?: unknown; modules?: unknown }[] } | null;
+
+  if (!Array.isArray(body?.staff)) {
+    return null;
+  }
+
+  return body.staff.flatMap((member) =>
+    typeof member.id === "string" && Array.isArray(member.modules) && member.modules.includes(module) ? [member.id] : [],
+  );
+}
