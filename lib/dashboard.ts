@@ -9,6 +9,8 @@ export interface DashboardSummary {
   applicants?: { current: number; previous: number };
   /** Interviews starting in the current Manila week (finished ones included) and the ones starting today. */
   interviews?: { thisWeek: number; today: number };
+  /** Interviews that start after now and before the end of the current Manila week, any order. Every one is needed for the widget's headline; it lists the first five. */
+  upcomingInterviews?: UpcomingInterview[];
   /** Decided offers (accepted of decided) with a decision date in the range and in its Previous period. */
   offers?: { current: OfferOutcomes; previous: OfferOutcomes };
   /** Applications Hired in the range and in its Previous period, with the mean whole days from applying to being Hired (null with no hires). */
@@ -21,6 +23,15 @@ export interface DashboardSummary {
   recentActivity?: ActivityEvent[];
   /** Company holidays and approved leave not yet started. */
   upcomingEvents?: UpcomingEvent[];
+}
+
+export interface UpcomingInterview {
+  id: number;
+  applicantName: string;
+  jobPostingTitle: string;
+  type: "Online" | "In person";
+  /** ISO timestamp. */
+  startsAt: string;
 }
 
 export interface OfferOutcomes {
@@ -441,6 +452,22 @@ export interface ActivityItem extends ActivityEvent {
   ago: string;
 }
 
+export interface UpcomingInterviewItem {
+  id: number;
+  applicantName: string;
+  jobPostingTitle: string;
+  type: UpcomingInterview["type"];
+  /** "Today, 4:00 PM" or "Thu, Oct 29, 10:00 AM", in Manila time. */
+  when: string;
+}
+
+export interface UpcomingInterviewsData {
+  /** "2 today, 3 more this week." */
+  headline: string;
+  /** At most five, soonest first. */
+  items: UpcomingInterviewItem[];
+}
+
 /** A Detail Widget and the data it shows; `data` is null when its owning Module has none yet. */
 export type DetailWidget = {
   label: string;
@@ -450,12 +477,14 @@ export type DetailWidget = {
   | { id: "department-distribution"; data: DepartmentSlice[] | null }
   | { id: "recent-activity"; data: ActivityItem[] | null }
   | { id: "upcoming-events"; data: UpcomingEvent[] | null }
+  | { id: "upcoming-interviews"; data: UpcomingInterviewsData | null }
 );
 
 const TREND_MONTHS = 12;
 /** About five items, so the left People block ends level with Headcount Trend. */
 const ACTIVITY_LIMIT = 5;
 const EVENT_LIMIT = 10;
+const INTERVIEW_LIMIT = 5;
 const EVENT_WINDOW_DAYS = 30;
 const UNASSIGNED = "Unassigned";
 
@@ -521,6 +550,38 @@ function upcomingEvents(summary: DashboardSummary, now: Date): UpcomingEvent[] |
     .sort((a, b) => day(a) - day(b))
     .slice(0, EVENT_LIMIT);
   return items.length > 0 ? items : null;
+}
+
+const manilaFormat = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", ...options });
+const interviewTime = manilaFormat({ hour: "numeric", minute: "2-digit" });
+const interviewDay = manilaFormat({ weekday: "short", month: "short", day: "numeric" });
+
+/** The next five Interviews still to start this Manila week, with a headline counting today's and the rest of the week's. Null when none. */
+function upcomingInterviews(summary: DashboardSummary, now: Date): UpcomingInterviewsData | null {
+  const { week, today } = manilaWeek(now);
+  const upcoming = (summary.upcomingInterviews ?? [])
+    .map((i) => ({ ...i, at: Date.parse(i.startsAt) }))
+    .filter((i) => i.at > now.getTime() && i.at < week.to.getTime())
+    .sort((a, b) => a.at - b.at || a.id - b.id);
+  if (upcoming.length === 0) return null;
+  const todayCount = upcoming.filter((i) => i.at < today.to.getTime()).length;
+  const rest = upcoming.length - todayCount;
+  const headline =
+    rest === 0 ? `${todayCount} today.` : todayCount === 0 ? `None today, ${rest} this week.` : `${todayCount} today, ${rest} more this week.`;
+  return {
+    headline,
+    items: upcoming.slice(0, INTERVIEW_LIMIT).map((i) => {
+      const at = new Date(i.at);
+      const isToday = i.at < today.to.getTime();
+      return {
+        id: i.id,
+        applicantName: i.applicantName,
+        jobPostingTitle: i.jobPostingTitle,
+        type: i.type,
+        when: `${isToday ? "Today" : interviewDay.format(at)}, ${interviewTime.format(at)}`,
+      };
+    }),
+  };
 }
 
 interface DetailWidgetSpec {
@@ -590,6 +651,8 @@ export interface DashboardLayout {
   hiringCards: KeySummaryCard[];
   /** The People block: `left` and `trend` side by side (2 and 3 of five columns) from `xl`; whichever is alone takes the full width. Null when both are absent. */
   people: { left: PeopleLeft | null; trend: DetailWidget | null } | null;
+  /** Rows of hiring Detail Widgets under the hiring cards; none when the Staff member lacks Recruitment and Hiring. */
+  hiringRows: DetailWidget[][];
   /** Rows of Detail Widgets below: Department Distribution | Upcoming Events, half and half, a lone one full width. */
   rows: DetailWidget[][];
 }
@@ -613,8 +676,13 @@ export function dashboardLayoutFor(
     widgetFor("upcoming-events", permittedPages, summary, now),
   ].filter((w): w is DetailWidget => w !== null);
 
+  const hiringRows: DetailWidget[][] = permittedPages.includes("/job-postings")
+    ? [[{ id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) }]]
+    : [];
+
   return {
     hiringCards: cardsInRow("hiring", permittedPages, summary, range),
+    hiringRows,
     people: left || trend ? { left, trend } : null,
     rows: bottom.length > 0 ? [bottom] : [],
   };

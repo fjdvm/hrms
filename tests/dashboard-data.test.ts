@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { dashboardRange } from "@/lib/dashboard";
-import { applicantsSummary, dashboardSummaryFor, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary } from "@/lib/dashboard-data";
+import { applicantsSummary, dashboardSummaryFor, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
 
 const NOW = new Date("2026-10-28T12:05:00Z");
 const RANGE = dashboardRange("this-month", NOW);
@@ -58,6 +58,7 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
     openJobs: { count: 1, openings: 2, locations: 1 },
     applicants: { current: 0, previous: 0 },
     interviews: { thisWeek: 0, today: 0 },
+    upcomingInterviews: [],
     offers: { current: { accepted: 0, decided: 0 }, previous: { accepted: 0, decided: 0 } },
     timeToHire: { current: { hires: 0, averageDays: null }, previous: { hires: 0, averageDays: null } },
   });
@@ -192,4 +193,20 @@ it("has no average when nobody was Hired", async () => {
     current: { hires: 0, averageDays: null },
     previous: { hires: 0, averageDays: null },
   });
+});
+
+it("reads interviews still to start this Manila week, with applicant and Job Posting, soonest first", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await interview("2026-10-28T12:05:00Z"); // exactly now: already started
+  await interview("2026-11-01T15:59:00Z"); // Sun 1 Nov 23:59 Manila: last moment of the week
+  await interview("2026-10-28T13:00:00Z"); // later today
+  await interview("2026-11-01T16:00:00Z"); // next Monday: not this week
+  await interview("2026-10-28T03:00:00Z"); // finished
+  const rows = await upcomingInterviewsSummary(NOW, db);
+  expect(rows.map((r) => r.startsAt)).toEqual(["2026-10-28T13:00:00.000Z", "2026-11-01T15:59:00.000Z"]);
+  expect(rows[0]).toMatchObject({ type: "Online", applicantName: expect.any(String), jobPostingTitle: expect.any(String) });
+});
+
+it("reads no upcoming interviews when none is stored", async () => {
+  expect(await upcomingInterviewsSummary(NOW, db)).toEqual([]);
 });

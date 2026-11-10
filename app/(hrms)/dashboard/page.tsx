@@ -19,7 +19,7 @@ export default async function Page({ searchParams }: PageProps<"/dashboard">) {
   const range = dashboardRange(firstValue(params.range), now, { from: firstValue(params.from), to: firstValue(params.to) });
   const summary = await dashboardSummaryFor(permittedPages, range, now);
   const layout = dashboardLayoutFor(permittedPages, summary, range, now);
-  const empty = layout.hiringCards.length === 0 && !layout.people && layout.rows.length === 0;
+  const empty = layout.hiringCards.length === 0 && layout.hiringRows.length === 0 && !layout.people && layout.rows.length === 0;
   const hiring = permittedPages.includes("/job-postings");
 
   return (

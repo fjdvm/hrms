@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cardRowsFor,
+  dashboardLayoutFor,
   customRangeProblem,
   dashboardRange,
   exportFileName,
@@ -8,6 +9,7 @@ import {
   manilaWeek,
   rangeSearch,
   type DashboardSummary,
+  type UpcomingInterviewsData,
 } from "@/lib/dashboard";
 
 const NOW = new Date("2026-10-28T12:05:00Z"); // Wednesday 28 Oct 2026, Manila
@@ -214,5 +216,66 @@ describe("Export", () => {
   it("is named for the range's dates", () => {
     expect(exportFileName(RANGE)).toBe("dashboard-hiring-2026-10-01_to_2026-10-28.csv");
     expect(exportFileName(dashboardRange("custom", NOW, { from: "2026-09-01", to: "2026-10-15" }))).toBe("dashboard-hiring-2026-09-01_to_2026-10-15.csv");
+  });
+});
+
+describe("Upcoming interviews widget", () => {
+  const widget = (pages: string[], upcomingInterviews: DashboardSummary["upcomingInterviews"], now = NOW) =>
+    dashboardLayoutFor(pages, { upcomingInterviews }, RANGE, now).hiringRows.flat().find((w) => w.id === "upcoming-interviews");
+  const at = (id: number, startsAt: string, name = `Applicant ${id}`) => ({ id, applicantName: name, jobPostingTitle: "Cashier", type: "Online" as const, startsAt });
+  const data = (list: DashboardSummary["upcomingInterviews"], now = NOW) => widget(["/job-postings"], list, now)!.data as UpcomingInterviewsData | null;
+
+  it("is shown only to Staff holding Recruitment and Hiring", () => {
+    expect(widget(["/dashboard", "/attendance"], [at(1, "2026-10-28T13:00:00Z")])).toBeUndefined();
+    expect(widget(["/job-postings"], [])).toMatchObject({ label: "Upcoming interviews", module: "Recruitment and Hiring" });
+  });
+
+  it("lists the next five soonest first and counts all of them in the headline", () => {
+    const list = [
+      at(7, "2026-10-31T02:00:00Z"), at(1, "2026-10-28T13:00:00Z"), at(2, "2026-10-28T12:30:00Z"),
+      at(3, "2026-10-29T02:00:00Z"), at(4, "2026-10-30T02:00:00Z"), at(5, "2026-10-30T03:00:00Z"), at(6, "2026-10-31T01:00:00Z"),
+    ];
+    const d = data(list)!;
+    expect(d.items.map((i) => i.id)).toEqual([2, 1, 3, 4, 5]);
+    expect(d.headline).toBe("2 today, 5 more this week.");
+  });
+
+  it("words the day and time in Manila time: Today, otherwise weekday and date", () => {
+    const d = data([at(1, "2026-10-28T13:00:00Z"), at(2, "2026-10-29T02:30:00Z")])!;
+    expect(d.items.map((i) => i.when)).toEqual(["Today, 9:00 PM", "Thu, Oct 29, 10:30 AM"]);
+  });
+
+  it("leaves out interviews that started or fall outside the Manila week", () => {
+    const d = data([
+      at(1, "2026-10-28T12:05:00Z"), // started this minute
+      at(2, "2026-10-28T03:00:00Z"), // finished
+      at(3, "2026-11-01T15:59:00Z"), // Sun 23:59 Manila: in
+      at(4, "2026-11-01T16:00:00Z"), // Mon 00:00 Manila: next week
+    ])!;
+    expect(d.items.map((i) => i.id)).toEqual([3]);
+    expect(d.headline).toBe("None today, 1 this week.");
+  });
+
+  it("rolls over to the new week at Manila midnight", () => {
+    const sundayNight = new Date("2026-11-01T15:00:00Z"); // Sun 1 Nov 23:00 Manila
+    expect(data([at(1, "2026-11-01T15:30:00Z"), at(2, "2026-11-01T16:30:00Z")], sundayNight)!.items.map((i) => i.id)).toEqual([1]);
+    expect(data([at(2, "2026-11-01T16:30:00Z")], new Date("2026-11-01T16:00:00Z"))!.items.map((i) => i.id)).toEqual([2]);
+  });
+
+  it("says only today when nothing else is left in the week", () => {
+    expect(data([at(1, "2026-10-28T13:00:00Z")])!.headline).toBe("1 today.");
+  });
+
+  it("has no data, so shows Nothing to show yet, with no interviews or none loaded", () => {
+    expect(data([])).toBeNull();
+    expect(data(undefined)).toBeNull();
+  });
+
+  it("ignores the Dashboard Range", () => {
+    const list = [at(1, "2026-10-28T13:00:00Z")];
+    const other = dashboardRange("last-month", NOW);
+    expect(dashboardLayoutFor(["/job-postings"], { upcomingInterviews: list }, other, NOW).hiringRows).toEqual(
+      dashboardLayoutFor(["/job-postings"], { upcomingInterviews: list }, RANGE, NOW).hiringRows,
+    );
   });
 });

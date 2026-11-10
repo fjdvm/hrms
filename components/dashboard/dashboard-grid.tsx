@@ -16,7 +16,7 @@ export function DashboardGrid({
   card: (card: KeySummaryCard) => ReactNode;
   widget: (widget: DetailWidget, stretch: boolean) => ReactNode;
 }) {
-  const { hiringCards, people, rows } = layout;
+  const { hiringCards, hiringRows, people, rows } = layout;
   const left = people?.left ?? null;
   const trend = people?.trend ?? null;
 
@@ -25,6 +25,11 @@ export function DashboardGrid({
       {hiringCards.length > 0 && (
         <div className="grid gap-md sm:grid-cols-2 xl:grid-cols-5">{hiringCards.map(card)}</div>
       )}
+      {hiringRows.map((row) => (
+        <div key={row[0].id} className={detailWidgetRowClass(row.length)}>
+          {row.map((w) => widget(w, false))}
+        </div>
+      ))}
       {people && (
         <div className="grid gap-md xl:grid-cols-5">
           {left && (

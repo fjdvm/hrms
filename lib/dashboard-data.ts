@@ -36,6 +36,20 @@ export async function interviewsSummary(now: Date, db: Database = database): Pro
   return { thisWeek: rows[0].this_week, today: rows[0].today };
 }
 
+/** Interviews still to start this Manila week (after now, before next Monday), with the applicant and Job Posting each belongs to. */
+export async function upcomingInterviewsSummary(now: Date, db: Database = database): Promise<NonNullable<DashboardSummary["upcomingInterviews"]>> {
+  const { week } = manilaWeek(now);
+  const { rows } = await db.query<{ id: number; applicant_name: string; job_posting_title: string; type: "Online" | "In person"; starts_at: string }>(
+    `SELECT i.id::int AS id, a.applicant_name, a.job_posting_title, i.type, i.starts_at
+     FROM public.hrms_application_interviews i
+     JOIN public.hrms_all_applications a ON a.id = i.application_id
+     WHERE i.starts_at > $1 AND i.starts_at < $2
+     ORDER BY i.starts_at, i.id`,
+    [now.toISOString(), week.to.toISOString()],
+  );
+  return rows.map((r) => ({ id: r.id, applicantName: r.applicant_name, jobPostingTitle: r.job_posting_title, type: r.type, startsAt: new Date(r.starts_at).toISOString() }));
+}
+
 /**
  * Decided offers by decision date, in the range and in its Previous period. An Application that reached Offer is
  * decided once it reaches Hired (accepted) or Rejected (not accepted) at or after that; the first such Stage is
@@ -97,12 +111,13 @@ export async function dashboardSummaryFor(
   db: Database = database,
 ): Promise<DashboardSummary> {
   if (!permittedPages.includes("/job-postings")) return {};
-  const [openJobs, applicants, interviews, offers, timeToHire] = await Promise.all([
+  const [openJobs, applicants, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
     openJobsSummary(db),
     applicantsSummary(range, db),
     interviewsSummary(now, db),
+    upcomingInterviewsSummary(now, db),
     offersSummary(range, db),
     timeToHireSummary(range, db),
   ]);
-  return { openJobs, applicants, interviews, offers, timeToHire };
+  return { openJobs, applicants, interviews, upcomingInterviews, offers, timeToHire };
 }
