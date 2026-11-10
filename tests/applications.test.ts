@@ -723,7 +723,7 @@ it.each(["Hired", "Rejected", "Withdrawn"])("records a past interview result aft
   expect(await applications.readProfile(id)).toMatchObject({ stage, interviews: [{ score: 3, result: "Not passed" }] });
 });
 
-const manual = { fullName: " Walk In ", email: "walk@example.test", mobile: "0917", address: "Manila", jobPostingId: "posting-1", expectedSalary: 25000, availableFrom: "2026-11-15" };
+const manual = { fullName: " Walk In ", email: "walk@example.test", mobile: "0917", address: "Manila", jobPostingId: "posting-1", expectedSalary: 25000, availableFrom: "2026-11-15", source: "Walk-in" } as const;
 
 it("adds an applicant by hand at New, listed, searchable, counted and exported with Careers rows", async () => {
   await seed(1);
@@ -768,9 +768,38 @@ it("allows only one of two concurrent identical adds", async () => {
 it.each([
   { fullName: " " }, { email: "not-an-email" }, { mobile: "" }, { address: "  " }, { jobPostingId: "" },
   { expectedSalary: -1 }, { expectedSalary: NaN }, { expectedSalary: "5" }, { availableFrom: "2026-02-30" }, { availableFrom: "soon" },
+  { source: undefined }, { source: "Careers page" }, { source: "Unspecified" }, { source: "Twitter" },
+  { source: "Referral" }, { source: "Referral", referredBy: "  " }, { source: "Facebook", referredBy: "Ana" },
 ])("validates manual applicant input %j", async (override) => {
   await seed(1);
   await expect(applicationsFor(handle, db).addApplicant({ ...manual, ...override } as never)).rejects.toMatchObject({ reason: "validation" });
+});
+
+it("stores the Source and referrer, and every row of the combined list carries a Source", async () => {
+  await seed(1);
+  await seed(2);
+  await db.query("INSERT INTO hrms_manual_applications (full_name,email,mobile,address,job_posting_id,expected_salary,available_from,added_by_name) VALUES ('Old','old@example.test','1','x','posting-1',1,'2026-11-01','Ada')");
+  const applications = applicationsFor(handle, db);
+  await applications.addApplicant({ ...manual, source: "Referral", referredBy: " Ana Cruz " });
+  await applications.addApplicant({ ...manual, email: "fb@example.test", source: "Facebook" });
+  const { rows } = await db.query<{ applicant_email: string; source: string; referred_by: string | null }>("SELECT applicant_email, source, referred_by FROM hrms_all_applications ORDER BY applicant_email");
+  expect(rows).toEqual([
+    { applicant_email: "fb@example.test", source: "Facebook", referred_by: null },
+    { applicant_email: "old@example.test", source: "Unspecified", referred_by: null },
+    { applicant_email: "person1@example.test", source: "Careers page", referred_by: null },
+    { applicant_email: "person2@example.test", source: "Careers page", referred_by: null },
+    { applicant_email: "walk@example.test", source: "Referral", referred_by: "Ana Cruz" },
+  ]);
+  expect((await applications.list()).rows.map((row) => row.source).sort()).toEqual(["Careers page", "Careers page", "Facebook", "Referral", "Unspecified"]);
+});
+
+it("the database refuses a Source outside the four names or a referrer on a non-Referral", async () => {
+  await seed(1);
+  const insert = (source: string | null, referredBy: string | null) => db.query("INSERT INTO hrms_manual_applications (full_name,email,mobile,address,job_posting_id,expected_salary,available_from,added_by_name,source,referred_by) VALUES ('A','a@example.test','1','x','posting-1',1,'2026-11-01','Ada',$1,$2)", [source, referredBy]);
+  await expect(insert("Twitter", null)).rejects.toThrow();
+  await expect(insert("Referral", null)).rejects.toThrow();
+  await expect(insert("Walk-in", "Ana")).rejects.toThrow();
+  await expect(insert("Referral", "Ana")).resolves.toBeDefined();
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("adding an applicant fails closed on %s", async (reason) => {
