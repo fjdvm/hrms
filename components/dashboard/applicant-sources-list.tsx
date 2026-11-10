@@ -1,0 +1,24 @@
+import type { ApplicantSourcesData } from "@/lib/dashboard";
+
+export function ApplicantSourcesList({ data }: { data: ApplicantSourcesData }) {
+  return (
+    <>
+      <p className="mb-md text-body-sm text-muted-foreground">{data.headline}</p>
+      <ul className="flex min-h-0 flex-1 flex-col gap-md overflow-y-auto">
+        {data.rows.map((row) => (
+          <li key={row.source} className="flex flex-col gap-xs">
+            <div className="flex items-baseline justify-between gap-md">
+              <p className="text-label-md min-w-0 truncate">{row.source}</p>
+              <p className="text-body-sm shrink-0 text-muted-foreground">
+                {row.percent}%{row.hireRate !== null && ` · ${row.hireRate}% hired`}
+              </p>
+            </div>
+            <div className="h-2 rounded-full bg-muted" role="presentation">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${row.bar}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}

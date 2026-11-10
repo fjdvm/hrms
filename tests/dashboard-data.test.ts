@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { dashboardRange } from "@/lib/dashboard";
-import { applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, needsAttentionSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
+import { applicantSourcesSummary, applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, needsAttentionSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
 
 const NOW = new Date("2026-10-28T12:05:00Z");
 const RANGE = dashboardRange("this-month", NOW);
@@ -59,6 +59,7 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
     applicants: { current: 0, previous: 0 },
     hiringPipeline: { applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 },
     needsAttention: { toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0 },
+    applicantSources: [],
     applicantsByJob: { total: 0, jobs: [] },
     interviews: { thisWeek: 0, today: 0 },
     upcomingInterviews: [],
@@ -312,4 +313,44 @@ it("counts Interviews that ended with no result, not the ones still to come or a
 
 it("reads nothing to act on when nothing is waiting", async () => {
   expect(await needsAttentionSummary(NOW, db)).toEqual({ toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0 });
+});
+
+async function addFrom(appliedAt: string, source: string | null, referredBy: string | null = null): Promise<number> {
+  received += 1;
+  await db.query(
+    `INSERT INTO hrms_manual_applications (full_name, email, mobile, address, job_posting_id, expected_salary, available_from, added_by_name, applied_at, source, referred_by)
+     VALUES ('Someone', $1, '0917', 'Antipolo', 'a', 1000, '2026-11-01', 'Ada', $2, $3, $4)`,
+    [`s${received}@example.test`, appliedAt, source, referredBy],
+  );
+  return (await db.query<{ id: number }>("SELECT min(id)::int AS id FROM hrms_manual_applications")).rows[0].id;
+}
+
+it("counts Applications in the range per Source, with those that ever reached Hired", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await receive("2026-10-05T08:00:00Z"); // Careers page
+  const hired = await receive("2026-10-06T08:00:00Z"); // Careers page, hired
+  await db.query("INSERT INTO hrms_application_stage_history (application_id, stage, reached_at) VALUES ($1, 'Hired', $2)", [hired, "2026-10-20T08:00:00Z"]);
+  await addFrom("2026-10-07T08:00:00Z", "Facebook");
+  await addFrom("2026-10-08T08:00:00Z", "Referral", "Paolo");
+  await addFrom("2026-10-09T08:00:00Z", null); // before Sources were recorded
+  const rows = await applicantSourcesSummary(RANGE, db);
+  expect([...rows].sort((a, b) => a.source.localeCompare(b.source))).toEqual([
+    { source: "Careers page", count: 2, hired: 1 },
+    { source: "Facebook", count: 1, hired: 0 },
+    { source: "Referral", count: 1, hired: 0 },
+    { source: "Unspecified", count: 1, hired: 0 },
+  ]);
+});
+
+it("counts Sources only for Applications received in the range, on Manila days", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await addFrom("2026-09-30T16:00:00Z", "Walk-in"); // 1 Oct 00:00 Manila: in
+  await addFrom("2026-10-28T15:59:00Z", "Walk-in"); // 28 Oct 23:59 Manila: in
+  await addFrom("2026-10-28T16:00:00Z", "Walk-in"); // after
+  await addFrom("2026-09-30T15:59:00Z", "Walk-in"); // before
+  expect(await applicantSourcesSummary(RANGE, db)).toEqual([{ source: "Walk-in", count: 2, hired: 0 }]);
+});
+
+it("reads no Sources when no Application was received", async () => {
+  expect(await applicantSourcesSummary(RANGE, db)).toEqual([]);
 });

@@ -12,6 +12,7 @@ import {
   type ApplicantsByJobData,
   type HiringPipelineData,
   type NeedsAttentionData,
+  type ApplicantSourcesData,
   type UpcomingInterviewsData,
 } from "@/lib/dashboard";
 
@@ -424,5 +425,76 @@ describe("Needs attention widget", () => {
     expect(d.headline).toBe("Nothing needs your attention.");
     expect(d.rows.every((r) => r.muted)).toBe(true);
     expect(widget(["/job-postings"], undefined)!.data).toBeNull();
+  });
+});
+
+describe("Where applicants come from widget", () => {
+  type Row = NonNullable<DashboardSummary["applicantSources"]>[number];
+  const row = (source: Row["source"], count: number, hired = 0): Row => ({ source, count, hired });
+  const widget = (pages: string[], applicantSources: DashboardSummary["applicantSources"], range = RANGE) =>
+    dashboardLayoutFor(pages, { applicantSources }, range, NOW).hiringRows.flat().find((w) => w.id === "applicant-sources");
+  const data = (applicantSources: Row[], range = RANGE) => widget(["/job-postings"], applicantSources, range)!.data as ApplicantSourcesData;
+
+  it("is shown only to Staff holding Recruitment and Hiring, and follows the range", () => {
+    expect(widget(["/dashboard", "/attendance"], [row("Facebook", 1)])).toBeUndefined();
+    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Where applicants come from", module: "Recruitment and Hiring", rangeDependent: true });
+    expect(widget(["/job-postings"], undefined)!.data).toBeNull();
+  });
+
+  it("shows the five Sources, largest share first, ties in Source order", () => {
+    const d = data([row("Careers page", 4), row("Facebook", 2), row("Walk-in", 2), row("JobStreet", 1)]);
+    expect(d.rows.map((r) => [r.source, r.count])).toEqual([
+      ["Careers page", 4], ["Facebook", 2], ["Walk-in", 2], ["JobStreet", 1], ["Referral", 0],
+    ]);
+  });
+
+  it("makes the shares add up to 100, and scales bars to the largest", () => {
+    const d = data([row("Facebook", 1), row("JobStreet", 1), row("Walk-in", 1)]); // 33.3 each would sum to 99
+    expect(d.rows.map((r) => r.percent)).toEqual([34, 33, 33, 0, 0]);
+    expect(d.rows.reduce((sum, r) => sum + r.percent, 0)).toBe(100);
+    const e = data([row("Careers page", 8), row("Facebook", 2)]);
+    expect(e.rows.slice(0, 2).map((r) => [r.percent, r.bar])).toEqual([[80, 100], [20, 25]]);
+  });
+
+  it("takes hire rate as the Source's own hires over its own Applications", () => {
+    const d = data([row("Careers page", 8, 2), row("Facebook", 3, 1), row("Referral", 0)]);
+    expect(Object.fromEntries(d.rows.map((r) => [r.source, r.hireRate]))).toMatchObject({ "Careers page": 25, Facebook: 33, Referral: null });
+  });
+
+  it("shows Unspecified only when it has Applications, and counts it in the shares", () => {
+    expect(data([row("Facebook", 1)]).rows.map((r) => r.source)).not.toContain("Unspecified");
+    const d = data([row("Facebook", 3), row("Unspecified", 1)]);
+    expect(d.rows.map((r) => [r.source, r.percent])).toEqual([["Facebook", 75], ["Unspecified", 25], ["JobStreet", 0], ["Walk-in", 0], ["Referral", 0], ["Careers page", 0]]);
+    expect(d.rows.reduce((sum, r) => sum + r.percent, 0)).toBe(100);
+  });
+
+  it("names the Source with the most Applications and the one hired most often", () => {
+    expect(data([row("Facebook", 6, 0), row("Referral", 2, 1), row("Walk-in", 4, 1)]).headline).toBe(
+      "Facebook brings the most applicants. Referral applicants are hired most often.",
+    );
+  });
+
+  it("gives ties for most Applications and for best hire rate to the first Source in order", () => {
+    expect(data([row("Walk-in", 2, 1), row("JobStreet", 2, 1), row("Facebook", 2, 0)]).headline).toBe(
+      "Facebook brings the most applicants. JobStreet applicants are hired most often.",
+    );
+  });
+
+  it("compares hire rates exactly, not rounded", () => {
+    // 33.44% against 33.33%: both show as 33%, but the exact rates are not a tie.
+    expect(data([row("Facebook", 3, 1), row("JobStreet", 299, 100)]).headline).toBe("JobStreet brings the most applicants. JobStreet applicants are hired most often.");
+  });
+
+  it("falls back when nothing was received, and leaves out the second sentence with no hires", () => {
+    expect(data([]).headline).toBe("Careers page brings the most applicants.");
+    expect(data([]).rows.every((r) => r.percent === 0 && r.hireRate === null)).toBe(true);
+    expect(data([row("Facebook", 3), row("Walk-in", 1)]).headline).toBe("Facebook brings the most applicants.");
+  });
+
+  it("never lets Unspecified win a sentence, even when it is the largest", () => {
+    const d = data([row("Unspecified", 9, 9), row("Facebook", 2, 1)]);
+    expect(d.headline).toBe("Facebook brings the most applicants. Facebook applicants are hired most often.");
+    expect(d.rows[0].source).toBe("Unspecified");
+    expect(data([row("Unspecified", 5, 1)]).headline).toBe("Careers page brings the most applicants.");
   });
 });

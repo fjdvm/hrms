@@ -59,6 +59,20 @@ export async function hiringPipelineSummary(range: DashboardRange, db: Database 
   return rows[0];
 }
 
+/** Applications received in the range (counted as in applicantsSummary) per Source, with how many ever reached Hired. */
+export async function applicantSourcesSummary(range: DashboardRange, db: Database = database): Promise<NonNullable<DashboardSummary["applicantSources"]>> {
+  const { rows } = await db.query<{ source: NonNullable<DashboardSummary["applicantSources"]>[number]["source"]; count: number; hired: number }>(
+    `SELECT a.source,
+            count(*)::int AS count,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.hrms_application_stage_history h WHERE h.application_id = a.id AND h.stage = 'Hired'))::int AS hired
+     FROM public.hrms_all_applications a
+     WHERE a.applied_at >= $1 AND a.applied_at < $2
+     GROUP BY a.source`,
+    [range.from.toISOString(), range.to.toISOString()],
+  );
+  return rows;
+}
+
 /**
  * What Staff should act on now: Applications at New (with the oldest one's date), Applications at Screening with no
  * Interview booked (with the Job Posting holding the most), and Interviews that ended with no result recorded.
@@ -184,16 +198,17 @@ export async function dashboardSummaryFor(
   db: Database = database,
 ): Promise<DashboardSummary> {
   if (!permittedPages.includes("/job-postings")) return {};
-  const [openJobs, applicants, hiringPipeline, needsAttention, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
+  const [openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
     openJobsSummary(db),
     applicantsSummary(range, db),
     hiringPipelineSummary(range, db),
     needsAttentionSummary(now, db),
+    applicantSourcesSummary(range, db),
     applicantsByJobSummary(range, db),
     interviewsSummary(now, db),
     upcomingInterviewsSummary(now, db),
     offersSummary(range, db),
     timeToHireSummary(range, db),
   ]);
-  return { openJobs, applicants, hiringPipeline, needsAttention, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
+  return { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
 }
