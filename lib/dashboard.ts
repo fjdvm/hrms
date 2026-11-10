@@ -13,6 +13,8 @@ export interface DashboardSummary {
   upcomingInterviews?: UpcomingInterview[];
   /** Applications received in the Dashboard Range: the total and the five Job Postings with the most (ties by title), closed and filled ones included. */
   applicantsByJob?: { total: number; jobs: { id: string; title: string; count: number }[] };
+  /** Applications received in the Dashboard Range, and how many of them have ever reached each later Stage (from stage history, so a later Rejected still counts). */
+  hiringPipeline?: HiringPipelineCounts;
   /** Decided offers (accepted of decided) with a decision date in the range and in its Previous period. */
   offers?: { current: OfferOutcomes; previous: OfferOutcomes };
   /** Applications Hired in the range and in its Previous period, with the mean whole days from applying to being Hired (null with no hires). */
@@ -478,6 +480,29 @@ export interface UpcomingInterviewsData {
   items: UpcomingInterviewItem[];
 }
 
+/** Applications received in the range (`applied`, counted as in the Applicants card) and those that ever reached each later Stage. */
+export interface HiringPipelineCounts {
+  applied: number;
+  screening: number;
+  interview: number;
+  offer: number;
+  hired: number;
+}
+
+export interface HiringPipelineBar {
+  stage: "Applied" | "Screening" | "Interview" | "Offer" | "Hired";
+  count: number;
+  /** Whole percent of every Application received in the range. */
+  percent: number;
+}
+
+export interface HiringPipelineData {
+  /** "About 1 in 8 applicants gets hired. Most drop off at Interview." */
+  headline: string;
+  /** Applied, Screening, Interview, Offer, Hired, in that order. */
+  bars: HiringPipelineBar[];
+}
+
 export interface ApplicantsByJobRow {
   id: string;
   title: string;
@@ -502,6 +527,7 @@ export type DetailWidget = {
   /** True when the Dashboard Range changes the widget, so it shows a skeleton while the range reloads. */
   rangeDependent?: boolean;
 } & (
+  | { id: "hiring-pipeline"; data: HiringPipelineData | null }
   | { id: "applicants-by-job"; data: ApplicantsByJobData | null }
   | { id: "headcount-trend"; data: HeadcountPoint[] | null }
   | { id: "department-distribution"; data: DepartmentSlice[] | null }
@@ -611,6 +637,43 @@ function upcomingInterviews(summary: DashboardSummary, now: Date): UpcomingInter
         when: `${isToday ? "Today" : interviewDay.format(at)}, ${interviewTime.format(at)}`,
       };
     }),
+  };
+}
+
+const PIPELINE_STAGES = [
+  ["Applied", "applied"],
+  ["Screening", "screening"],
+  ["Interview", "interview"],
+  ["Offer", "offer"],
+  ["Hired", "hired"],
+] as const;
+
+/**
+ * The five pipeline bars with each one's percent of all Applications received, and a headline naming the odds of a
+ * hire and the Stage where the most Applications stop (the largest loss to the next bar; the earliest wins a tie).
+ * Null when no Application was received.
+ */
+function hiringPipeline(summary: DashboardSummary, range: DashboardRange): HiringPipelineData | null {
+  const counts = summary.hiringPipeline;
+  if (!counts || counts.applied === 0) return null;
+  const bars = PIPELINE_STAGES.map(([stage, key]) => ({
+    stage,
+    count: counts[key],
+    percent: Math.round((counts[key] / counts.applied) * 100),
+  }));
+  if (counts.hired === 0) return { headline: `No one has been hired ${range.phrase} yet.`, bars };
+  let dropOff = bars[0];
+  let largest = -1;
+  for (let i = 0; i < bars.length - 1; i++) {
+    const loss = Math.max(bars[i].count - bars[i + 1].count, 0);
+    if (loss > largest) {
+      largest = loss;
+      dropOff = bars[i];
+    }
+  }
+  return {
+    headline: `About 1 in ${Math.max(Math.round(counts.applied / counts.hired), 1)} applicants gets hired. Most drop off at ${dropOff.stage}.`,
+    bars,
   };
 }
 
@@ -727,10 +790,13 @@ export function dashboardLayoutFor(
   ].filter((w): w is DetailWidget => w !== null);
 
   const hiringRows: DetailWidget[][] = permittedPages.includes("/job-postings")
-    ? [[
-        { id: "applicants-by-job", label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true, data: applicantsByJob(summary, range) },
-        { id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) },
-      ]]
+    ? [
+        [{ id: "hiring-pipeline", label: "Hiring pipeline", module: "Recruitment and Hiring", rangeDependent: true, data: hiringPipeline(summary, range) }],
+        [
+          { id: "applicants-by-job", label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true, data: applicantsByJob(summary, range) },
+          { id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) },
+        ],
+      ]
     : [];
 
   return {

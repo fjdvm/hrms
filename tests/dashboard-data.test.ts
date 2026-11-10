@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { dashboardRange } from "@/lib/dashboard";
-import { applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
+import { applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
 
 const NOW = new Date("2026-10-28T12:05:00Z");
 const RANGE = dashboardRange("this-month", NOW);
@@ -57,6 +57,7 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
   expect(await dashboardSummaryFor(["/dashboard", "/job-postings"], RANGE, NOW, db)).toEqual({
     openJobs: { count: 1, openings: 2, locations: 1 },
     applicants: { current: 0, previous: 0 },
+    hiringPipeline: { applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 },
     applicantsByJob: { total: 0, jobs: [] },
     interviews: { thisWeek: 0, today: 0 },
     upcomingInterviews: [],
@@ -233,4 +234,28 @@ it("counts only the range, on Manila days, not the Previous period", async () =>
 
 it("reads no jobs when no Application was received", async () => {
   expect(await applicantsByJobSummary(RANGE, db)).toEqual({ total: 0, jobs: [] });
+});
+
+it("counts Applications in the range that ever reached each Stage, even if later Rejected", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await moved("2026-10-05T08:00:00Z", [["Screening", "2026-10-06T08:00:00Z"], ["Interview", "2026-10-08T08:00:00Z"], ["Offer", "2026-10-10T08:00:00Z"], ["Hired", "2026-10-12T08:00:00Z"]]);
+  await moved("2026-10-06T08:00:00Z", [["Screening", "2026-10-07T08:00:00Z"], ["Interview", "2026-10-09T08:00:00Z"], ["Rejected", "2026-10-11T08:00:00Z"]], "Rejected");
+  await moved("2026-10-07T08:00:00Z", []);
+  expect(await hiringPipelineSummary(RANGE, db)).toEqual({ applied: 3, screening: 2, interview: 2, offer: 1, hired: 1 });
+});
+
+it("reads Applied as the Applicants card does, and leaves out Applications outside the range", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await moved("2026-10-05T08:00:00Z", [["Screening", "2026-10-06T08:00:00Z"]]);
+  await moved("2026-09-30T15:59:00Z", [["Screening", "2026-10-02T08:00:00Z"]]); // Previous period
+  await moved("2026-10-28T16:00:00Z", [["Screening", "2026-10-29T08:00:00Z"]]); // after
+  await receive("2026-10-08T08:00:00Z", "Withdrawn");
+  await addByHr("2026-10-09T08:00:00Z");
+  const pipeline = await hiringPipelineSummary(RANGE, db);
+  expect(pipeline.applied).toBe((await applicantsSummary(RANGE, db)).current);
+  expect(pipeline).toEqual({ applied: 3, screening: 1, interview: 0, offer: 0, hired: 0 });
+});
+
+it("reads an empty pipeline when no Application was received", async () => {
+  expect(await hiringPipelineSummary(RANGE, db)).toEqual({ applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 });
 });

@@ -1,5 +1,6 @@
 import { ApplicantsByJobList } from "@/components/dashboard/applicants-by-job-list";
 import { DepartmentDonut } from "@/components/dashboard/department-donut";
+import { HiringPipelineBars } from "@/components/dashboard/hiring-pipeline-bars";
 import { HeadcountTrendChart } from "@/components/dashboard/headcount-trend-chart";
 import { RecentActivityList } from "@/components/dashboard/recent-activity-list";
 import { UpcomingInterviewsList } from "@/components/dashboard/upcoming-interviews-list";
@@ -21,6 +22,9 @@ export function DetailWidget({ stretch, ...widget }: DetailWidgetData & { stretc
       )}
       {widget.id === "upcoming-events" && widget.data && (
         <UpcomingEventsList items={widget.data} />
+      )}
+      {widget.id === "hiring-pipeline" && widget.data && (
+        <HiringPipelineBars data={widget.data} />
       )}
       {widget.id === "applicants-by-job" && widget.data && (
         <ApplicantsByJobList data={widget.data} />
