@@ -80,8 +80,8 @@ const NOW = new Date(2026, 9, 27, 12); // 27 Oct 2026
 
 const layout = (pages: string[], summary: DashboardSummary = {}) => dashboardLayoutFor(pages, summary, RANGE, NOW);
 const widgetData = (pages: string[], id: string, summary: DashboardSummary = {}) => {
-  const { people, rows } = layout(pages, summary);
-  return [people?.left?.activity, people?.trend, ...rows.flat()].find((w) => w?.id === id)?.data;
+  const { people, rows, hiringRows } = layout(pages, summary);
+  return [people?.left?.activity, people?.trend, ...hiringRows.flat(), ...rows.flat()].find((w) => w?.id === id)?.data;
 };
 
 describe("Dashboard layout", () => {
@@ -136,7 +136,7 @@ describe("Dashboard layout", () => {
 
   it("is empty for Staff holding none of the owning Modules", () => {
     const l = layout(["/dashboard", "/payroll-ess", "/nope"]);
-    expect(l).toEqual({ hiringCards: [], people: null, rows: [] });
+    expect(l).toEqual({ hiringCards: [], hiringRows: [], people: null, rows: [] });
   });
 
   it("has no data without a supply from their Module", () => {

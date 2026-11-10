@@ -1,6 +1,7 @@
 import { DepartmentDonut } from "@/components/dashboard/department-donut";
 import { HeadcountTrendChart } from "@/components/dashboard/headcount-trend-chart";
 import { RecentActivityList } from "@/components/dashboard/recent-activity-list";
+import { UpcomingInterviewsList } from "@/components/dashboard/upcoming-interviews-list";
 import { UpcomingEventsList } from "@/components/dashboard/upcoming-events-list";
 import { DetailWidgetCard } from "@/components/dashboard/detail-widget-card";
 import type { DetailWidget as DetailWidgetData } from "@/lib/dashboard";
@@ -19,6 +20,9 @@ export function DetailWidget({ stretch, ...widget }: DetailWidgetData & { stretc
       )}
       {widget.id === "upcoming-events" && widget.data && (
         <UpcomingEventsList items={widget.data} />
+      )}
+      {widget.id === "upcoming-interviews" && widget.data && (
+        <UpcomingInterviewsList data={widget.data} />
       )}
     </DetailWidgetCard>
   );
