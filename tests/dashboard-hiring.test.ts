@@ -11,6 +11,7 @@ import {
   type DashboardSummary,
   type ApplicantsByJobData,
   type HiringPipelineData,
+  type NeedsAttentionData,
   type UpcomingInterviewsData,
 } from "@/lib/dashboard";
 
@@ -367,6 +368,61 @@ describe("Hiring pipeline widget", () => {
 
   it("has no data, so shows its empty state, with no Applications", () => {
     expect(data([0, 0, 0, 0, 0])).toBeNull();
+    expect(widget(["/job-postings"], undefined)!.data).toBeNull();
+  });
+});
+
+describe("Needs attention widget", () => {
+  const counts = (toReview: number, toSchedule: number, resultsToRecord: number, extra: Partial<NonNullable<DashboardSummary["needsAttention"]>> = {}) => ({
+    toReview: { count: toReview, oldestAppliedAt: toReview ? "2026-10-25T08:00:00Z" : null },
+    toSchedule: { count: toSchedule, topJob: toSchedule ? { title: "Cashier", count: toSchedule } : null },
+    resultsToRecord,
+    ...extra,
+  });
+  const widget = (pages: string[], needsAttention: DashboardSummary["needsAttention"], range = RANGE) =>
+    dashboardLayoutFor(pages, { needsAttention }, range, NOW).hiringRows.flat().find((w) => w.id === "needs-attention");
+  const data = (needsAttention: DashboardSummary["needsAttention"], range = RANGE) =>
+    widget(["/job-postings"], needsAttention, range)!.data as NeedsAttentionData | null;
+
+  it("is shown only to Staff holding Recruitment and Hiring, and ignores the range", () => {
+    expect(widget(["/dashboard", "/attendance"], counts(1, 1, 1))).toBeUndefined();
+    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Needs attention", module: "Recruitment and Hiring" });
+    expect(widget(["/job-postings"], undefined)!.rangeDependent).toBeUndefined();
+    expect(data(counts(1, 2, 3), dashboardRange("last-30-days", NOW))).toEqual(data(counts(1, 2, 3)));
+  });
+
+  it("lists the three rows in order, each with its count and where Staff act", () => {
+    expect(data(counts(4, 2, 1))!.rows.map((r) => [r.id, r.title, r.count, r.href])).toEqual([
+      ["review", "Applications to review", 4, "/applicants?stage=New"],
+      ["schedule", "Interviews to schedule", 2, "/applicants?stage=Screening"],
+      ["results", "Results to record", 1, "/interviews"],
+    ]);
+  });
+
+  it("says how long ago the oldest Application to review applied, and which Job Posting has most waiting", () => {
+    const rows = data(counts(4, 2, 1))!.rows;
+    expect(rows[0].detail).toBe("Oldest applied 3 days ago"); // 25 Oct to 28 Oct, Manila
+    expect(rows[1].detail).toBe("Most waiting: Cashier");
+    expect(data(counts(1, 0, 0, { toReview: { count: 1, oldestAppliedAt: "2026-10-28T01:00:00Z" } }))!.rows[0].detail).toBe("Oldest applied today");
+    expect(data(counts(1, 0, 0, { toReview: { count: 1, oldestAppliedAt: "2026-10-27T01:00:00Z" } }))!.rows[0].detail).toBe("Oldest applied 1 day ago");
+  });
+
+  it("sums the counts in the headline", () => {
+    expect(data(counts(4, 2, 1))!.headline).toBe("7 things to do today");
+    expect(data(counts(0, 0, 1))!.headline).toBe("1 thing to do today");
+  });
+
+  it("keeps a zero row, muted, and sums only what is above zero", () => {
+    const d = data(counts(3, 0, 0))!;
+    expect(d.rows.map((r) => r.muted)).toEqual([false, true, true]);
+    expect(d.headline).toBe("3 things to do today");
+    expect(d.rows[1].detail).toBeNull();
+  });
+
+  it("says nothing needs attention when every count is zero, and shows its empty state without data", () => {
+    const d = data(counts(0, 0, 0))!;
+    expect(d.headline).toBe("Nothing needs your attention.");
+    expect(d.rows.every((r) => r.muted)).toBe(true);
     expect(widget(["/job-postings"], undefined)!.data).toBeNull();
   });
 });
