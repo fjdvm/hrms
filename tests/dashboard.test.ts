@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardRowsFor, compare, dashboardRange, detailWidgetRowsFor, parseRangeId, type DashboardSummary, type UpcomingEvent } from "@/lib/dashboard";
+import { cardRowsFor, compare, dashboardRange, dashboardLayoutFor, parseRangeId, type DashboardSummary, type UpcomingEvent } from "@/lib/dashboard";
 
 const RANGE = dashboardRange(undefined, new Date("2026-10-28T12:05:00Z"));
 
@@ -78,37 +78,76 @@ describe("Key Summary Cards", () => {
 
 const NOW = new Date(2026, 9, 27, 12); // 27 Oct 2026
 
-describe("Detail Widgets", () => {
-  const names = (pages: string[], summary: DashboardSummary = {}) =>
-    detailWidgetRowsFor(pages, summary, NOW).map((row) => row.map((w) => w.label));
+const layout = (pages: string[], summary: DashboardSummary = {}) => dashboardLayoutFor(pages, summary, RANGE, NOW);
+const widgetData = (pages: string[], id: string, summary: DashboardSummary = {}) => {
+  const { people, rows } = layout(pages, summary);
+  return [people?.left?.activity, people?.trend, ...rows.flat()].find((w) => w?.id === id)?.data;
+};
 
-  it("are laid out two per row in fixed order", () => {
-    expect(names(ALL)).toEqual([
-      ["Headcount Trend", "Department Distribution"],
-      ["Recent Activity", "Upcoming Events"],
-    ]);
+describe("Dashboard layout", () => {
+  const labelsOf = (ws: ({ label: string } | null | undefined)[]) => ws.filter(Boolean).map((w) => w!.label);
+  const shape = (pages: string[]) => {
+    const l = layout(pages);
+    return {
+      hiring: l.hiringCards.map((c) => c.label),
+      leftCards: l.people?.left?.cards.map((c) => c.label) ?? null,
+      activity: l.people?.left?.activity?.label ?? null,
+      trend: l.people?.trend?.label ?? null,
+      rows: l.rows.map((row) => labelsOf(row)),
+    };
+  };
+
+  it("places everything for Staff holding every Module", () => {
+    expect(shape(ALL)).toEqual({
+      hiring: ["Open jobs", "Applicants", "Interviews this week", "Offer acceptance", "Average time to hire"],
+      leftCards: ["Total Employee", "Attendance Rate"],
+      activity: "Recent Activity",
+      trend: "Headcount Trend",
+      rows: [["Department Distribution", "Upcoming Events"]],
+    });
   });
 
-  it("only include Detail Widgets whose Module is held, a lone Detail Widget forming its own row", () => {
-    expect(names(["/attendance"])).toEqual([["Upcoming Events"]]);
-    expect(names(["/employee-information"])).toEqual([
-      ["Headcount Trend", "Department Distribution"],
-      ["Recent Activity"],
-    ]);
+  it("keeps the left block's Total Employee card and Recent Activity with only Employee Information", () => {
+    expect(shape(["/employee-information"])).toEqual({
+      hiring: [],
+      leftCards: ["Total Employee"],
+      activity: "Recent Activity",
+      trend: "Headcount Trend",
+      rows: [["Department Distribution"]],
+    });
   });
 
-  it("are absent when neither Module is held", () => {
-    expect(names(["/dashboard", "/job-postings", "/nope"])).toEqual([]);
+  it("leaves a lone Attendance Rate card as the left block, with no Headcount Trend, with only Attendance", () => {
+    expect(shape(["/attendance"])).toEqual({
+      hiring: [],
+      leftCards: ["Attendance Rate"],
+      activity: null,
+      trend: null,
+      rows: [["Upcoming Events"]],
+    });
   });
 
-  it("have no data without a supply from their Module", () => {
-    expect(detailWidgetRowsFor(ALL, {}, NOW).flat().map((w) => w.data)).toEqual([null, null, null, null]);
+  it("has no People block and no rows with only Recruitment and Hiring", () => {
+    const l = layout(["/job-postings"]);
+    expect(l.hiringCards).toHaveLength(5);
+    expect(l.people).toBeNull();
+    expect(l.rows).toEqual([]);
+  });
+
+  it("is empty for Staff holding none of the owning Modules", () => {
+    const l = layout(["/dashboard", "/payroll-ess", "/nope"]);
+    expect(l).toEqual({ hiringCards: [], people: null, rows: [] });
+  });
+
+  it("has no data without a supply from their Module", () => {
+    const l = layout(ALL);
+    expect([l.people?.left?.activity?.data, l.people?.trend?.data, ...l.rows.flat().map((w) => w.data)]).toEqual([null, null, null, null]);
   });
 });
 
 describe("Headcount Trend", () => {
   const trend = (summary: DashboardSummary) =>
-    detailWidgetRowsFor(["/employee-information"], summary, NOW)[0][0].data as
+    widgetData(["/employee-information"], "headcount-trend", summary) as
       | { month: string; total: number | null }[]
       | null;
 
@@ -156,7 +195,7 @@ describe("Headcount Trend", () => {
 
 describe("Department Distribution", () => {
   const slices = (summary: DashboardSummary) =>
-    detailWidgetRowsFor(["/employee-information"], summary, NOW)[0][1].data as
+    widgetData(["/employee-information"], "department-distribution", summary) as
       | { department: string; count: number }[]
       | null;
 
@@ -207,14 +246,14 @@ describe("Recent Activity", () => {
     at,
   });
   const items = (summary: DashboardSummary) =>
-    detailWidgetRowsFor(["/employee-information"], summary, NOW)[1][0].data as { id: string; ago: string }[] | null;
+    widgetData(["/employee-information"], "recent-activity", summary) as { id: string; ago: string }[] | null;
 
-  it("lists the latest 10 newest first with relative times", () => {
+  it("lists the latest 5 newest first with relative times", () => {
     const events = Array.from({ length: 12 }, (_, i) =>
       entry(`e${i}`, new Date(2026, 9, 27 - i, 9).toISOString()),
     );
     const got = items({ recentActivity: events })!;
-    expect(got).toHaveLength(10);
+    expect(got).toHaveLength(5);
     expect(got[0]).toMatchObject({ id: "e0", ago: "Today" });
     expect(got[3].ago).toBe("3d ago");
     expect(items({ recentActivity: [...events].reverse() })!.map((e) => e.id)).toEqual(
@@ -233,7 +272,7 @@ describe("Upcoming Events", () => {
       ? { id, kind, status: "approved", title: id, date, description: "" }
       : { id, kind, title: id, date, description: "" };
   const items = (summary: DashboardSummary) =>
-    detailWidgetRowsFor(["/attendance"], summary, NOW)[0][0].data as { id: string }[] | null;
+    widgetData(["/attendance"], "upcoming-events", summary) as { id: string }[] | null;
 
   it("keeps events in the next 30 days, soonest first", () => {
     const got = items({
