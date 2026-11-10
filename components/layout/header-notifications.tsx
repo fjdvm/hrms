@@ -73,7 +73,10 @@ function useInbox() {
         const connection = new WebSocket(url);
         socket = connection;
         // Fetch after subscribing, so events during catch-up cannot be missed.
-        connection.onopen = () => void sync();
+        connection.onopen = () => {
+          failures = 0;
+          void sync();
+        };
         connection.onmessage = (message) => {
           try {
             const event = JSON.parse(message.data);

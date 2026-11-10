@@ -16,12 +16,14 @@ BEGIN
   INSERT INTO public.hrms_staff_notifications (id, payload)
   SELECT 'application.received:' || a.id, jsonb_build_object(
     'type', 'application.received',
-    'title', 'New application: ' || a.applicant_name,
-    'body', a.applicant_name || ' applied for ' || a.job_posting_title || '.',
+    'title', 'New application: ' || COALESCE(a.applicant_name, 'Applicant'),
+    'body', COALESCE(a.applicant_name, 'An applicant') || ' applied for ' || COALESCE(a.job_posting_title, 'a job posting') || '.',
     'link', '/applicants/' || a.id)
   FROM public.hrms_all_applications a WHERE a.id = NEW.id
   ON CONFLICT (id) DO NOTHING;
   RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL; -- queueing is a side effect: it must never fail the Careers or HR write
 END $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS hrms_careers_application_received ON public.applications;
@@ -37,10 +39,12 @@ BEGIN
   INSERT INTO public.hrms_staff_notifications (id, payload)
   VALUES ('job-posting.' || kind || ':' || NEW.id, jsonb_build_object(
     'type', 'job-posting.' || kind,
-    'title', 'Job posting ' || kind || ': ' || NEW.title,
-    'body', 'The job posting "' || NEW.title || '" was ' || kind || '.',
+    'title', 'Job posting ' || kind || ': ' || COALESCE(NEW.title, ''),
+    'body', 'The job posting "' || COALESCE(NEW.title, '') || '" was ' || kind || '.',
     'link', '/job-postings/' || NEW.id))
   ON CONFLICT (id) DO NOTHING;
+  RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
 
@@ -50,3 +54,7 @@ CREATE TRIGGER hrms_posting_published AFTER UPDATE OF status ON public.job_posti
 DROP TRIGGER IF EXISTS hrms_posting_closed ON public.job_postings;
 CREATE TRIGGER hrms_posting_closed AFTER UPDATE OF status ON public.job_postings
   FOR EACH ROW WHEN (OLD.status = 'open' AND NEW.status = 'closed') EXECUTE FUNCTION public.hrms_queue_posting_status();
+-- Create-and-publish inserts the posting already open.
+DROP TRIGGER IF EXISTS hrms_posting_created_open ON public.job_postings;
+CREATE TRIGGER hrms_posting_created_open AFTER INSERT ON public.job_postings
+  FOR EACH ROW WHEN (NEW.status = 'open') EXECUTE FUNCTION public.hrms_queue_posting_status();

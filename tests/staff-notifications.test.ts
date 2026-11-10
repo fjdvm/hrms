@@ -49,9 +49,10 @@ beforeEach(async () => {
 });
 afterEach(async () => { await db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-async function insertPosting(status = "open") {
+async function insertPosting(status = "open", keepQueue = false) {
   await db.query(`INSERT INTO job_postings (id,title,department,description,requirements,employment_type,location,required_documents,screening_criteria,status,deadline)
     VALUES ('p1','Cashier','Retail','d','r','Full time','Manila','[]','[]',$1,'2031-01-01')`, [status]);
+  if (!keepQueue) await db.query("DELETE FROM hrms_staff_notifications"); // seeding is not the event under test
 }
 async function careersApplication() {
   await db.query(`INSERT INTO applicant_profiles VALUES ('person-1','Live name','p1@example.test')`);
@@ -88,6 +89,18 @@ it("notifies when a posting is published and when it is closed, once each", asyn
   await deliverStaffNotifications(db);
   expect(sends.map((s) => s.body.type).sort()).toEqual(["job-posting.closed", "job-posting.published"]);
   expect(sends.find((s) => s.body.type === "job-posting.closed")?.body.title).toBe("Job posting closed: Recruiter");
+});
+
+it("notifies when a posting is created already open", async () => {
+  await insertPosting("open", true);
+  await deliverStaffNotifications(db);
+  expect(sends.map((s) => s.body.type)).toEqual(["job-posting.published"]);
+});
+
+it("never fails the application insert when the notification cannot be built", async () => {
+  await insertPosting();
+  await db.query("DROP TABLE hrms_staff_notifications CASCADE");
+  await expect(careersApplication()).resolves.toBeTypeOf("number");
 });
 
 it("does not notify for drafts or for edits that keep the status", async () => {
