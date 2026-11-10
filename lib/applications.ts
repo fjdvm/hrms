@@ -41,6 +41,7 @@ export type ApplicationProfile = Omit<ApplicationListItem, "nextStep"> & {
   address: string | null;
   expectedSalary: number | null;
   availableFrom: string | null;
+  referredBy: string | null;
 };
 export type ManualApplicantInput = { fullName: string; email: string; mobile: string; address: string; jobPostingId: string; expectedSalary: number; availableFrom: string; source: ManualSource; referredBy?: string };
 export type ApplicationTab = "All" | Exclude<ApplicationStage, "Withdrawn">;
@@ -341,7 +342,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           a.email AS "applicantEmail", a.mobile, a.address,
           a.expected_salary AS "expectedSalary", a.available_from AS "availableFrom",
           a.job_posting_id AS "jobPostingId", j.title AS "jobPostingTitle", j.location,
-          a.created_at AS "appliedAt", a.stage
+          a.created_at AS "appliedAt", a.stage, a.source, a.referred_by AS "referredBy"
         FROM (
           SELECT c.id, c.documents_snapshot, c.job_posting_id, c.created_at,
             CASE WHEN c.status = 'Received' THEN 'New' ELSE c.status END AS stage,
@@ -350,12 +351,14 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
             c.profile_snapshot->>'phone' AS mobile,
             c.profile_snapshot->>'location' AS address,
             (c.profile_snapshot->>'expectedSalary')::double precision AS expected_salary,
-            c.profile_snapshot->>'availableFrom' AS available_from
+            c.profile_snapshot->>'availableFrom' AS available_from,
+            'Careers page'::text AS source, NULL::text AS referred_by
           FROM public.applications c
           LEFT JOIN public.applicant_profiles p ON p.applicant_id = c.applicant_id
           UNION ALL
           SELECT m.id, '[]'::jsonb, m.job_posting_id, m.applied_at, m.status, m.full_name, m.email,
-            m.mobile, m.address, m.expected_salary, m.available_from::text
+            m.mobile, m.address, m.expected_salary, m.available_from::text,
+            COALESCE(m.source, 'Unspecified'), m.referred_by
           FROM public.hrms_manual_applications m
         ) a
         JOIN public.job_postings j ON j.id = a.job_posting_id
@@ -390,9 +393,9 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     async exportCsv({ jobPostingId, stage, search }: ApplicationFilters = {}): Promise<string> {
       const { rows } = await read({ jobPostingId, stage, search }, false);
       const records = [
-        ["name", "email", "Job Posting", "location", "applied date", "Stage", "Next step"],
+        ["name", "email", "Job Posting", "location", "Source", "applied date", "Stage", "Next step"],
         ...rows.map((row) => [row.applicantName, row.applicantEmail, row.jobPostingTitle,
-          row.location, row.appliedAt.toISOString(), row.stage, row.nextStep]),
+          row.location, row.source, row.appliedAt.toISOString(), row.stage, row.nextStep]),
       ];
       return records.map((record) => record.map((value) => /[",\r\n]/.test(value)
         ? `"${value.replaceAll('"', '""')}"` : value).join(",")).join("\r\n") + "\r\n";

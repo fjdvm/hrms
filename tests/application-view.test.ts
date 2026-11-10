@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, readInterviewForm, type InterviewForm, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
+import { formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, readInterviewForm, type InterviewForm, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
 
 describe("application list view", () => {
   it("reads the page from the URL, defaulting to the first", () => {
@@ -260,5 +260,14 @@ describe("add applicant form", () => {
     expect(readApplicantForm({ ...form, email: "mylene" }).errors).toEqual({ email: "Enter a valid email address." });
     expect(readApplicantForm({ ...form, expectedSalary: "-1" }).errors).toEqual({ expectedSalary: "Enter a salary of 0 or more." });
     expect(readApplicantForm({ ...form, expectedSalary: "abc" }).errors).toEqual({ expectedSalary: "Enter a salary of 0 or more." });
+  });
+});
+
+describe("formatSource", () => {
+  it("names a Referral's referrer and leaves other Sources as they are", () => {
+    expect(formatSource("Referral", " Paolo Garcia ")).toBe("Referral · Paolo Garcia");
+    expect(formatSource("Referral", null)).toBe("Referral");
+    expect(formatSource("Careers page", null)).toBe("Careers page");
+    expect(formatSource("Unspecified", null)).toBe("Unspecified");
   });
 });

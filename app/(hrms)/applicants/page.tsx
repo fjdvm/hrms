@@ -33,9 +33,10 @@ function ApplicantsTable({ rows }: { rows: ApplicationListItem[] }) {
     <Table className="table-fixed min-w-[900px]">
       <TableHeader>
         <TableRow className="border-border-subtle hover:bg-transparent">
-          <TableHead className={`${HEAD} w-[30%]`}>Applicant</TableHead>
-          <TableHead className={`${HEAD} w-[24%]`}>Applied for</TableHead>
-          <TableHead className={`${HEAD} w-[13%]`}>Applied</TableHead>
+          <TableHead className={`${HEAD} w-[27%]`}>Applicant</TableHead>
+          <TableHead className={`${HEAD} w-[22%]`}>Applied for</TableHead>
+          <TableHead className={`${HEAD} w-[11%]`}>Source</TableHead>
+          <TableHead className={`${HEAD} w-[12%]`}>Applied</TableHead>
           <TableHead className={`${HEAD} w-[13%]`}>Stage</TableHead>
           <TableHead className={HEAD}>Next step</TableHead>
         </TableRow>
@@ -50,6 +51,7 @@ function ApplicantsTable({ rows }: { rows: ApplicationListItem[] }) {
               <p>{row.jobPostingTitle}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">{row.location}</p>
             </TableCell>
+            <TableCell className={CELL}>{row.source}</TableCell>
             <TableCell className={CELL}>{formatApplied(row.appliedAt)}</TableCell>
             <TableCell className={CELL}>
               <Badge variant={STAGE_BADGE[row.stage]}>{row.stage}</Badge>
@@ -159,7 +161,7 @@ export default async function Page({ searchParams }: PageProps<"/applicants">) {
         fallback={
           <>
             <PageHeader title={TITLE} subtitle={" "} />
-            <TableSkeleton columns={5} showToolbar={false} />
+            <TableSkeleton columns={6} showToolbar={false} />
           </>
         }
       >

@@ -209,9 +209,9 @@ it("exports every matching Application in list order, beyond the first page", as
   const filters = { jobPostingId: "posting-0", stage: "New" as const, search: "APPLICANT" };
   const csv = await applications.exportCsv(filters);
   const lines = csv.split("\r\n");
-  expect(lines[0]).toBe("name,email,Job Posting,location,applied date,Stage,Next step");
+  expect(lines[0]).toBe("name,email,Job Posting,location,Source,applied date,Stage,Next step");
   expect(lines).toHaveLength(29);
-  expect(lines[1]).toBe("Applicant 26,person26@example.test,Cashier,Manila,2026-10-01T08:00:00.000Z,New,Review application");
+  expect(lines[1]).toBe("Applicant 26,person26@example.test,Cashier,Manila,Careers page,2026-10-01T08:00:00.000Z,New,Review application");
   const rows = [...(await applications.list(filters)).rows, ...(await applications.list({ ...filters, page: 2 })).rows];
   expect(lines.slice(1, -1).map((line) => line.split(",")[0])).toEqual(rows.map((row) => row.applicantName));
 });
@@ -221,8 +221,8 @@ it("quotes CSV commas, quotes and line breaks and returns headers for an empty v
   await db.query("UPDATE applications SET profile_snapshot = $1::jsonb", [JSON.stringify({ fullName: 'Ada, "AJ"\r\nOkafor' })]);
   await db.query("UPDATE job_postings SET title = $1, location = $2", ['Cashier "Lead"', 'Manila\nOffice']);
   const applications = applicationsFor(handle, db);
-  expect(await applications.exportCsv()).toBe('name,email,Job Posting,location,applied date,Stage,Next step\r\n"Ada, ""AJ""\r\nOkafor",person1@example.test,"Cashier ""Lead""","Manila\nOffice",2026-10-01T08:00:00.000Z,Withdrawn,Withdrawn by applicant\r\n');
-  expect(await applications.exportCsv({ search: "missing" })).toBe("name,email,Job Posting,location,applied date,Stage,Next step\r\n");
+  expect(await applications.exportCsv()).toBe('name,email,Job Posting,location,Source,applied date,Stage,Next step\r\n"Ada, ""AJ""\r\nOkafor",person1@example.test,"Cashier ""Lead""","Manila\nOffice",Careers page,2026-10-01T08:00:00.000Z,Withdrawn,Withdrawn by applicant\r\n');
+  expect(await applications.exportCsv({ search: "missing" })).toBe("name,email,Job Posting,location,Source,applied date,Stage,Next step\r\n");
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("CSV export fails closed on %s before reading data", async (reason) => {
@@ -255,7 +255,7 @@ it("reads Application profile details from the submitted snapshot rather than th
     id, interviews: [], documents: [], notes: [], stageDates: { New: new Date("2026-10-01T08:00:00Z") }, activity: [], applicantName: "Submitted Name", applicantEmail: "submitted@example.test",
     mobile: "09171234567", address: "Quezon City", expectedSalary: 25000, availableFrom: "2026-11-01",
     jobPostingId: "posting-1", jobPostingTitle: "Cashier", location: "Manila",
-    stage: "Screening", appliedAt: new Date("2026-10-01T08:00:00Z"),
+    stage: "Screening", appliedAt: new Date("2026-10-01T08:00:00Z"), source: "Careers page", referredBy: null,
   });
 });
 
@@ -870,4 +870,15 @@ it("rejects an HR-added applicant straight from New with activity and no notific
     activity: [{ fromStage: "New", toStage: "Rejected", reason: "No vacancy", actorName: "Ada Okafor" }] });
   expect((await applications.list({ stage: "Rejected" })).rows).toMatchObject([{ id }]);
   expect((await db.query("SELECT * FROM hrms_application_notifications")).rows).toHaveLength(0);
+});
+
+it("the profile carries the Source: Careers page, a Referral with its referrer, and Unspecified for old manual rows", async () => {
+  const careers = await seed(1);
+  await db.query("INSERT INTO hrms_manual_applications (full_name,email,mobile,address,job_posting_id,expected_salary,available_from,added_by_name) VALUES ('Old','old@example.test','1','x','posting-1',1,'2026-11-01','Ada')");
+  const applications = applicationsFor(handle, db);
+  const referral = await applications.addApplicant({ ...manual, source: "Referral", referredBy: "Ana Cruz" });
+  const old = (await applications.list()).rows.find((row) => row.applicantEmail === "old@example.test")!.id;
+  expect(await applications.readProfile(careers)).toMatchObject({ source: "Careers page", referredBy: null });
+  expect(await applications.readProfile(referral)).toMatchObject({ source: "Referral", referredBy: "Ana Cruz" });
+  expect(await applications.readProfile(old)).toMatchObject({ source: "Unspecified", referredBy: null });
 });

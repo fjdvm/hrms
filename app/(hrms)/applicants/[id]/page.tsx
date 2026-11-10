@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { BackLink, CardTitle, PAGE, PageHeader, ProfileColumns } from "@/components/hiring/parts";
 import { ApplicationError, type ApplicationProfile } from "@/lib/applications";
-import { STAGE_BADGE, canReject, detailOrDash, formatAppliedFor, formatAvailableFrom, formatSalary, trackerSteps } from "@/lib/application-view";
+import { STAGE_BADGE, canReject, detailOrDash, formatAppliedFor, formatAvailableFrom, formatSalary, formatSource, trackerSteps } from "@/lib/application-view";
 import { applicationsForRequest } from "@/lib/portal/applications";
 import { requireModule } from "@/lib/portal/staff";
 import { ApplicationActivity } from "@/components/hiring/application-activity";
@@ -68,6 +68,7 @@ function ApplicationDetails({ profile }: { profile: ApplicationProfile }) {
         <Detail label="Address" value={detailOrDash(profile.address)} />
         <Detail label="Expected salary" value={formatSalary(profile.expectedSalary)} />
         <Detail label="Available from" value={formatAvailableFrom(profile.availableFrom)} />
+        <Detail label="Source" value={formatSource(profile.source, profile.referredBy)} />
       </dl>
       <ApplicationDocuments documents={profile.documents} applicantName={profile.applicantName} />
     </Card>

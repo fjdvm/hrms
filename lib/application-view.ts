@@ -135,6 +135,9 @@ export function formatAvailableFrom(value: string | null) {
 /** "Applied for Branch Cashier · Cainta branch · 20 Oct 2026". */
 export const formatAppliedFor = (title: string, location: string, appliedAt: Date) => `Applied for ${title} · ${location} · ${formatApplied(appliedAt)}`;
 
+/** "Facebook", or "Referral · Paolo Garcia" when the referrer is known. */
+export const formatSource = (source: string, referredBy: string | null) => source === "Referral" && referredBy?.trim() ? `Referral · ${referredBy.trim()}` : source;
+
 /** A blank detail reads as a dash. */
 export const detailOrDash = (value: string | null) => value?.trim() || "—";
 
