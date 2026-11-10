@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { dashboardRange } from "@/lib/dashboard";
-import { applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
+import { applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, needsAttentionSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
 
 const NOW = new Date("2026-10-28T12:05:00Z");
 const RANGE = dashboardRange("this-month", NOW);
@@ -58,6 +58,7 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
     openJobs: { count: 1, openings: 2, locations: 1 },
     applicants: { current: 0, previous: 0 },
     hiringPipeline: { applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 },
+    needsAttention: { toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0 },
     applicantsByJob: { total: 0, jobs: [] },
     interviews: { thisWeek: 0, today: 0 },
     upcomingInterviews: [],
@@ -258,4 +259,57 @@ it("reads Applied as the Applicants card does, and leaves out Applications outsi
 
 it("reads an empty pipeline when no Application was received", async () => {
   expect(await hiringPipelineSummary(RANGE, db)).toEqual({ applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 });
+});
+
+/** An Interview for an existing Application, ending an hour after it starts. */
+async function bookInterview(applicationId: number, startsAt: string, result: "Passed" | "Not passed" | null = null) {
+  await db.query(
+    `INSERT INTO hrms_application_interviews (application_id, starts_at, ends_at, type, interviewer_name, location, score, result)
+     VALUES ($1, $2, ($2::timestamptz + interval '1 hour'), 'Online', 'Ada', 'Zoom', $3, $4)`,
+    [applicationId, startsAt, result ? 4 : null, result],
+  );
+}
+
+it("counts Applications at New to review, with when the oldest was received, whatever the range", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await receive("2026-08-02T08:00:00Z"); // far outside the range: still waiting
+  await receive("2026-10-20T08:00:00Z");
+  await receive("2026-10-21T08:00:00Z", "Screening");
+  await receive("2026-10-22T08:00:00Z", "Withdrawn");
+  expect((await needsAttentionSummary(NOW, db)).toReview).toEqual({ count: 2, oldestAppliedAt: "2026-08-02T08:00:00.000Z" });
+});
+
+it("counts Applications at Screening with no Interview booked, and names the Job Posting with the most", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await post("b", "closed", "Antipolo", 1);
+  await receive("2026-10-01T08:00:00Z", "Screening", "a");
+  await receive("2026-10-02T08:00:00Z", "Screening", "b");
+  await receive("2026-10-03T08:00:00Z", "Screening", "b");
+  const booked = await receive("2026-10-04T08:00:00Z", "Screening", "a");
+  await bookInterview(booked, "2026-11-20T08:00:00Z");
+  await receive("2026-10-05T08:00:00Z", "Interview", "a");
+  expect((await needsAttentionSummary(NOW, db)).toSchedule).toEqual({ count: 3, topJob: { title: "b", count: 2 } });
+});
+
+it("breaks a tie for the most waiting by Job Posting title", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await post("b", "open", "Antipolo", 1);
+  await receive("2026-10-01T08:00:00Z", "Screening", "b");
+  await receive("2026-10-02T08:00:00Z", "Screening", "a");
+  expect((await needsAttentionSummary(NOW, db)).toSchedule.topJob).toEqual({ title: "a", count: 1 });
+});
+
+it("counts Interviews that ended with no result, not the ones still to come or already decided", async () => {
+  await post("a", "open", "Antipolo", 1);
+  const id = await receive("2026-10-01T08:00:00Z", "Interview");
+  await bookInterview(id, "2026-10-20T08:00:00Z"); // ended, no result
+  await bookInterview(id, "2026-10-21T08:00:00Z", "Passed"); // decided
+  await bookInterview(id, "2026-10-28T11:05:00Z"); // ends 12:05 = NOW: ended
+  await bookInterview(id, "2026-10-28T11:06:00Z"); // ends after NOW
+  await bookInterview(id, "2026-11-02T08:00:00Z"); // still to come
+  expect((await needsAttentionSummary(NOW, db)).resultsToRecord).toBe(2);
+});
+
+it("reads nothing to act on when nothing is waiting", async () => {
+  expect(await needsAttentionSummary(NOW, db)).toEqual({ toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0 });
 });

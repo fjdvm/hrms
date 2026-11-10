@@ -1,3 +1,4 @@
+import { applicantsHref } from "@/lib/application-view";
 import type { Module } from "@/lib/modules";
 
 /** Data each owning Module supplies for its Key Summary Cards. Absent until the Module has data. */
@@ -15,6 +16,8 @@ export interface DashboardSummary {
   applicantsByJob?: { total: number; jobs: { id: string; title: string; count: number }[] };
   /** Applications received in the Dashboard Range, and how many of them have ever reached each later Stage (from stage history, so a later Rejected still counts). */
   hiringPipeline?: HiringPipelineCounts;
+  /** What Staff should act on now (not range-based): Applications at New, at Screening with no Interview booked, and Interviews that ended with no result. */
+  needsAttention?: NeedsAttentionCounts;
   /** Decided offers (accepted of decided) with a decision date in the range and in its Previous period. */
   offers?: { current: OfferOutcomes; previous: OfferOutcomes };
   /** Applications Hired in the range and in its Previous period, with the mean whole days from applying to being Hired (null with no hires). */
@@ -489,6 +492,34 @@ export interface HiringPipelineCounts {
   hired: number;
 }
 
+export interface NeedsAttentionCounts {
+  /** Applications at New, and when the oldest of them was received (null with none). */
+  toReview: { count: number; oldestAppliedAt: string | null };
+  /** Applications at Screening with no Interview booked, and the Job Posting with the most of them (ties by title; null with none). */
+  toSchedule: { count: number; topJob: { title: string; count: number } | null };
+  /** Interviews that ended with no result recorded. */
+  resultsToRecord: number;
+}
+
+export interface NeedsAttentionRow {
+  id: "review" | "schedule" | "results";
+  title: string;
+  /** Supporting line; null when there is nothing to say. */
+  detail: string | null;
+  count: number;
+  /** Where Staff act on it. */
+  href: string;
+  /** True for a zero count: the row stays, muted. */
+  muted: boolean;
+}
+
+export interface NeedsAttentionData {
+  /** "3 things to do today", or "Nothing needs your attention." */
+  headline: string;
+  /** Always the same three rows, in this order. */
+  rows: NeedsAttentionRow[];
+}
+
 export interface HiringPipelineBar {
   stage: "Applied" | "Screening" | "Interview" | "Offer" | "Hired";
   count: number;
@@ -528,6 +559,7 @@ export type DetailWidget = {
   rangeDependent?: boolean;
 } & (
   | { id: "hiring-pipeline"; data: HiringPipelineData | null }
+  | { id: "needs-attention"; data: NeedsAttentionData | null }
   | { id: "applicants-by-job"; data: ApplicantsByJobData | null }
   | { id: "headcount-trend"; data: HeadcountPoint[] | null }
   | { id: "department-distribution"; data: DepartmentSlice[] | null }
@@ -677,6 +709,54 @@ function hiringPipeline(summary: DashboardSummary, range: DashboardRange): Hirin
   };
 }
 
+/** Whole Manila days from `from` to `now`, never below zero. */
+function manilaDaysSince(from: string, now: Date): number {
+  const OFFSET = 8 * 3600_000;
+  const DAY = 86400_000;
+  return Math.max(Math.floor((now.getTime() + OFFSET) / DAY) - Math.floor((Date.parse(from) + OFFSET) / DAY), 0);
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * The three things Staff should act on now, always in the same order, a zero count muted. The headline sums the counts.
+ * Null only when the Module has not been read at all.
+ */
+function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionData | null {
+  const data = summary.needsAttention;
+  if (!data) return null;
+  const { toReview, toSchedule, resultsToRecord } = data;
+  const ago = toReview.oldestAppliedAt === null ? 0 : manilaDaysSince(toReview.oldestAppliedAt, now);
+  const rows: NeedsAttentionRow[] = [
+    {
+      id: "review",
+      title: "Applications to review",
+      detail: toReview.count === 0 || toReview.oldestAppliedAt === null ? null : `Oldest applied ${ago === 0 ? "today" : `${plural(ago, "day")} ago`}`,
+      count: toReview.count,
+      href: applicantsHref({ stage: "New" }),
+      muted: toReview.count === 0,
+    },
+    {
+      id: "schedule",
+      title: "Interviews to schedule",
+      detail: toSchedule.topJob ? `Most waiting: ${toSchedule.topJob.title}` : null,
+      count: toSchedule.count,
+      href: applicantsHref({ stage: "Screening" }),
+      muted: toSchedule.count === 0,
+    },
+    {
+      id: "results",
+      title: "Results to record",
+      detail: resultsToRecord === 0 ? null : "Interviews that ended with no result",
+      count: resultsToRecord,
+      href: "/interviews",
+      muted: resultsToRecord === 0,
+    },
+  ];
+  const total = rows.reduce((sum, row) => sum + row.count, 0);
+  return { headline: total === 0 ? "Nothing needs your attention." : `${plural(total, "thing")} to do today`, rows };
+}
+
 const BY_JOB_LIMIT = 5;
 
 /** The top Job Postings by Applications received in the range, with percent of all received and bars scaled to the largest. Null when none were received. */
@@ -791,7 +871,10 @@ export function dashboardLayoutFor(
 
   const hiringRows: DetailWidget[][] = permittedPages.includes("/job-postings")
     ? [
-        [{ id: "hiring-pipeline", label: "Hiring pipeline", module: "Recruitment and Hiring", rangeDependent: true, data: hiringPipeline(summary, range) }],
+        [
+          { id: "hiring-pipeline", label: "Hiring pipeline", module: "Recruitment and Hiring", rangeDependent: true, data: hiringPipeline(summary, range) },
+          { id: "needs-attention", label: "Needs attention", module: "Recruitment and Hiring", data: needsAttention(summary, now) },
+        ],
         [
           { id: "applicants-by-job", label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true, data: applicantsByJob(summary, range) },
           { id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) },

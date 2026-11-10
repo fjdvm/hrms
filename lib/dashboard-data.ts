@@ -60,6 +60,41 @@ export async function hiringPipelineSummary(range: DashboardRange, db: Database 
 }
 
 /**
+ * What Staff should act on now: Applications at New (with the oldest one's date), Applications at Screening with no
+ * Interview booked (with the Job Posting holding the most), and Interviews that ended with no result recorded.
+ */
+export async function needsAttentionSummary(now: Date, db: Database = database): Promise<NonNullable<DashboardSummary["needsAttention"]>> {
+  const [review, schedule, results] = await Promise.all([
+    db.query<{ count: number; oldest: string | null }>(
+      `SELECT count(*)::int AS count, min(applied_at) AS oldest FROM public.hrms_all_applications WHERE stage = 'New'`,
+    ),
+    db.query<{ title: string; count: number }>(
+      `SELECT min(job_posting_title) AS title, count(*)::int AS count
+       FROM public.hrms_all_applications a
+       WHERE a.stage = 'Screening'
+         AND NOT EXISTS (SELECT 1 FROM public.hrms_application_interviews i WHERE i.application_id = a.id)
+       GROUP BY job_posting_id
+       ORDER BY count DESC, min(job_posting_title), job_posting_id`,
+    ),
+    db.query<{ count: number }>(
+      `SELECT count(*)::int AS count
+       FROM public.hrms_application_interviews i
+       JOIN public.hrms_all_applications a ON a.id = i.application_id
+       WHERE i.ends_at <= $1 AND i.result IS NULL`,
+      [now.toISOString()],
+    ),
+  ]);
+  return {
+    toReview: { count: review.rows[0].count, oldestAppliedAt: review.rows[0].oldest === null ? null : new Date(review.rows[0].oldest).toISOString() },
+    toSchedule: {
+      count: schedule.rows.reduce((sum, row) => sum + row.count, 0),
+      topJob: schedule.rows[0] ?? null,
+    },
+    resultsToRecord: results.rows[0].count,
+  };
+}
+
+/**
  * Interviews starting this Manila week, finished ones included, and the ones starting today. The only place that
  * reads interviews for the Dashboard: change it when real interview data lands somewhere else.
  */
@@ -149,15 +184,16 @@ export async function dashboardSummaryFor(
   db: Database = database,
 ): Promise<DashboardSummary> {
   if (!permittedPages.includes("/job-postings")) return {};
-  const [openJobs, applicants, hiringPipeline, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
+  const [openJobs, applicants, hiringPipeline, needsAttention, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
     openJobsSummary(db),
     applicantsSummary(range, db),
     hiringPipelineSummary(range, db),
+    needsAttentionSummary(now, db),
     applicantsByJobSummary(range, db),
     interviewsSummary(now, db),
     upcomingInterviewsSummary(now, db),
     offersSummary(range, db),
     timeToHireSummary(range, db),
   ]);
-  return { openJobs, applicants, hiringPipeline, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
+  return { openJobs, applicants, hiringPipeline, needsAttention, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
 }
