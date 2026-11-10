@@ -1,3 +1,4 @@
+import { MANUAL_SOURCES, type ApplicationSource } from "@/lib/application-sources";
 import { applicantsHref } from "@/lib/application-view";
 import type { Module } from "@/lib/modules";
 
@@ -18,6 +19,8 @@ export interface DashboardSummary {
   hiringPipeline?: HiringPipelineCounts;
   /** What Staff should act on now (not range-based): Applications at New, at Screening with no Interview booked, and Interviews that ended with no result. */
   needsAttention?: NeedsAttentionCounts;
+  /** Applications received in the Dashboard Range per Source, with how many of them have ever reached Hired. Only Sources that have Applications need appear. */
+  applicantSources?: { source: ApplicationSource; count: number; hired: number }[];
   /** Decided offers (accepted of decided) with a decision date in the range and in its Previous period. */
   offers?: { current: OfferOutcomes; previous: OfferOutcomes };
   /** Applications Hired in the range and in its Previous period, with the mean whole days from applying to being Hired (null with no hires). */
@@ -520,6 +523,24 @@ export interface NeedsAttentionData {
   rows: NeedsAttentionRow[];
 }
 
+export interface ApplicantSourceRow {
+  source: ApplicationSource;
+  count: number;
+  /** Whole percent of every Application received in the range; the rows shown add up to 100 (largest remainder), or all 0 with none. */
+  percent: number;
+  /** Whole percent of this Source's Applications that have reached Hired; null with none from it. */
+  hireRate: number | null;
+  /** Bar length as a whole percent of the largest count. */
+  bar: number;
+}
+
+export interface ApplicantSourcesData {
+  /** "Facebook brings the most applicants. Referral applicants are hired most often." */
+  headline: string;
+  /** Largest first; the five Sources always, "Unspecified" only when it has Applications. */
+  rows: ApplicantSourceRow[];
+}
+
 export interface HiringPipelineBar {
   stage: "Applied" | "Screening" | "Interview" | "Offer" | "Hired";
   count: number;
@@ -560,6 +581,7 @@ export type DetailWidget = {
 } & (
   | { id: "hiring-pipeline"; data: HiringPipelineData | null }
   | { id: "needs-attention"; data: NeedsAttentionData | null }
+  | { id: "applicant-sources"; data: ApplicantSourcesData | null }
   | { id: "applicants-by-job"; data: ApplicantsByJobData | null }
   | { id: "headcount-trend"; data: HeadcountPoint[] | null }
   | { id: "department-distribution"; data: DepartmentSlice[] | null }
@@ -757,6 +779,55 @@ function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionDat
   return { headline: total === 0 ? "Nothing needs your attention." : `${plural(total, "thing")} to do today`, rows };
 }
 
+/** The Sources in the order that breaks ties; "Unspecified" comes last and never wins a headline. */
+const SOURCE_ORDER: ApplicationSource[] = [...MANUAL_SOURCES, "Careers page"];
+const ALL_SOURCES: ApplicationSource[] = [...SOURCE_ORDER, "Unspecified"];
+
+/** Whole percents of `counts` that add up to exactly 100 (largest remainder, ties to the earlier entry); all 0 when nothing was counted. */
+function sharesOf(counts: number[]): number[] {
+  const total = counts.reduce((sum, n) => sum + n, 0);
+  if (total === 0) return counts.map(() => 0);
+  const exact = counts.map((n) => (n / total) * 100);
+  const shares = exact.map(Math.floor);
+  const order = exact.map((e, i) => ({ i, rest: e - Math.floor(e) })).sort((a, b) => b.rest - a.rest || a.i - b.i);
+  for (let k = 0; k < 100 - shares.reduce((sum, n) => sum + n, 0); k++) shares[order[k].i] += 1;
+  return shares;
+}
+
+/**
+ * One row per Source, largest first (ties in Source order): its share of the Applications received in the range, its
+ * hire rate and a bar. "Unspecified" is a row only when it has Applications and never wins a headline sentence.
+ */
+function applicantSources(summary: DashboardSummary): ApplicantSourcesData | null {
+  const data = summary.applicantSources;
+  if (!data) return null;
+  const byName = new Map(data.map((d) => [d.source, d]));
+  const present = ALL_SOURCES.filter((source) => SOURCE_ORDER.includes(source) || (byName.get(source)?.count ?? 0) > 0).map((source) => ({
+    source,
+    count: byName.get(source)?.count ?? 0,
+    hired: byName.get(source)?.hired ?? 0,
+  }));
+  const ranked = [...present].sort((a, b) => b.count - a.count || ALL_SOURCES.indexOf(a.source) - ALL_SOURCES.indexOf(b.source));
+  const shares = sharesOf(ranked.map((r) => r.count));
+  const largest = ranked[0].count;
+  const rows = ranked.map((r, i) => ({
+    source: r.source,
+    count: r.count,
+    percent: shares[i],
+    hireRate: r.count === 0 ? null : Math.round((r.hired / r.count) * 100),
+    bar: largest === 0 ? 0 : Math.round((r.count / largest) * 100),
+  }));
+
+  const named = present.filter((r) => r.source !== "Unspecified");
+  const most = named.reduce((best, r) => (r.count > best.count ? r : best), named[0]);
+  // Compare hire rates as fractions, so two close rates never tie by rounding; the earlier Source wins a tie.
+  const hiring = named
+    .filter((r) => r.hired > 0)
+    .reduce<(typeof named)[number] | null>((best, r) => (best === null || r.hired * best.count > best.hired * r.count ? r : best), null);
+  const first = `${most.count === 0 ? "Careers page" : most.source} brings the most applicants.`;
+  return { headline: hiring ? `${first} ${hiring.source} applicants are hired most often.` : first, rows };
+}
+
 const BY_JOB_LIMIT = 5;
 
 /** The top Job Postings by Applications received in the range, with percent of all received and bars scaled to the largest. Null when none were received. */
@@ -877,6 +948,7 @@ export function dashboardLayoutFor(
         ],
         [
           { id: "applicants-by-job", label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true, data: applicantsByJob(summary, range) },
+          { id: "applicant-sources", label: "Where applicants come from", module: "Recruitment and Hiring", rangeDependent: true, data: applicantSources(summary) },
           { id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) },
         ],
       ]

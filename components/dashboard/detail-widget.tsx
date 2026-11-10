@@ -1,4 +1,5 @@
 import { ApplicantsByJobList } from "@/components/dashboard/applicants-by-job-list";
+import { ApplicantSourcesList } from "@/components/dashboard/applicant-sources-list";
 import { DepartmentDonut } from "@/components/dashboard/department-donut";
 import { HiringPipelineBars } from "@/components/dashboard/hiring-pipeline-bars";
 import { HeadcountTrendChart } from "@/components/dashboard/headcount-trend-chart";
@@ -29,6 +30,9 @@ export function DetailWidget({ stretch, ...widget }: DetailWidgetData & { stretc
       )}
       {widget.id === "needs-attention" && widget.data && (
         <NeedsAttentionList data={widget.data} />
+      )}
+      {widget.id === "applicant-sources" && widget.data && (
+        <ApplicantSourcesList data={widget.data} />
       )}
       {widget.id === "applicants-by-job" && widget.data && (
         <ApplicantsByJobList data={widget.data} />
