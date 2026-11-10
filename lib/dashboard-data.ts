@@ -40,6 +40,26 @@ export async function applicantsByJobSummary(range: DashboardRange, db: Database
 }
 
 /**
+ * Applications received in the range (counted as in applicantsSummary), and how many of them ever reached each later
+ * Stage according to stage history, so one later Rejected still counts. "Applied" has no history row: it is every Application.
+ */
+export async function hiringPipelineSummary(range: DashboardRange, db: Database = database): Promise<NonNullable<DashboardSummary["hiringPipeline"]>> {
+  const reached = (stage: string) =>
+    `count(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.hrms_application_stage_history h WHERE h.application_id = a.id AND h.stage = '${stage}'))::int`;
+  const { rows } = await db.query<NonNullable<DashboardSummary["hiringPipeline"]>>(
+    `SELECT count(*)::int AS applied,
+            ${reached("Screening")} AS screening,
+            ${reached("Interview")} AS interview,
+            ${reached("Offer")} AS offer,
+            ${reached("Hired")} AS hired
+     FROM public.hrms_all_applications a
+     WHERE a.applied_at >= $1 AND a.applied_at < $2`,
+    [range.from.toISOString(), range.to.toISOString()],
+  );
+  return rows[0];
+}
+
+/**
  * Interviews starting this Manila week, finished ones included, and the ones starting today. The only place that
  * reads interviews for the Dashboard: change it when real interview data lands somewhere else.
  */
@@ -129,14 +149,15 @@ export async function dashboardSummaryFor(
   db: Database = database,
 ): Promise<DashboardSummary> {
   if (!permittedPages.includes("/job-postings")) return {};
-  const [openJobs, applicants, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
+  const [openJobs, applicants, hiringPipeline, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
     openJobsSummary(db),
     applicantsSummary(range, db),
+    hiringPipelineSummary(range, db),
     applicantsByJobSummary(range, db),
     interviewsSummary(now, db),
     upcomingInterviewsSummary(now, db),
     offersSummary(range, db),
     timeToHireSummary(range, db),
   ]);
-  return { openJobs, applicants, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
+  return { openJobs, applicants, hiringPipeline, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
 }

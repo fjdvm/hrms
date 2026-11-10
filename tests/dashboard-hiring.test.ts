@@ -10,6 +10,7 @@ import {
   rangeSearch,
   type DashboardSummary,
   type ApplicantsByJobData,
+  type HiringPipelineData,
   type UpcomingInterviewsData,
 } from "@/lib/dashboard";
 
@@ -319,5 +320,53 @@ describe("Applicants by job widget", () => {
   it("has no data, so shows Nothing to show yet, when no Application was received or none is loaded", () => {
     expect(data({ total: 0, jobs: [] })).toBeNull();
     expect(data(undefined)).toBeNull();
+  });
+});
+
+describe("Hiring pipeline widget", () => {
+  const widget = (pages: string[], hiringPipeline: DashboardSummary["hiringPipeline"], range = RANGE) =>
+    dashboardLayoutFor(pages, { hiringPipeline }, range, NOW).hiringRows.flat().find((w) => w.id === "hiring-pipeline");
+  const data = (counts: [number, number, number, number, number], range = RANGE) =>
+    widget(["/job-postings"], { applied: counts[0], screening: counts[1], interview: counts[2], offer: counts[3], hired: counts[4] }, range)!
+      .data as HiringPipelineData | null;
+
+  it("is shown only to Staff holding Recruitment and Hiring, and follows the range", () => {
+    expect(widget(["/dashboard", "/attendance"], { applied: 1, screening: 0, interview: 0, offer: 0, hired: 0 })).toBeUndefined();
+    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Hiring pipeline", module: "Recruitment and Hiring", rangeDependent: true });
+  });
+
+  it("shows five bars, each a whole percent of all Applications received", () => {
+    expect(data([20, 12, 6, 3, 1])!.bars).toEqual([
+      { stage: "Applied", count: 20, percent: 100 },
+      { stage: "Screening", count: 12, percent: 60 },
+      { stage: "Interview", count: 6, percent: 30 },
+      { stage: "Offer", count: 3, percent: 15 },
+      { stage: "Hired", count: 1, percent: 5 },
+    ]);
+  });
+
+  it("names the odds of a hire and the Stage with the largest loss", () => {
+    expect(data([20, 12, 6, 3, 1])!.headline).toBe("About 1 in 20 applicants gets hired. Most drop off at Applied.");
+    expect(data([20, 18, 6, 4, 2])!.headline).toBe("About 1 in 10 applicants gets hired. Most drop off at Screening.");
+    expect(data([20, 18, 16, 4, 2])!.headline).toBe("About 1 in 10 applicants gets hired. Most drop off at Interview.");
+    expect(data([20, 18, 16, 14, 2])!.headline).toBe("About 1 in 10 applicants gets hired. Most drop off at Offer.");
+  });
+
+  it("gives a tie to the earlier Stage", () => {
+    expect(data([10, 8, 6, 4, 2])!.headline).toBe("About 1 in 5 applicants gets hired. Most drop off at Applied.");
+  });
+
+  it("never loses a negative amount when a Stage was skipped", () => {
+    expect(data([10, 2, 5, 5, 5])!.headline).toBe("About 1 in 2 applicants gets hired. Most drop off at Applied.");
+  });
+
+  it("falls back to a neutral line with no hires", () => {
+    expect(data([4, 2, 1, 0, 0])!.headline).toBe("No one has been hired this month yet.");
+    expect(data([4, 2, 1, 0, 0], dashboardRange("last-30-days", NOW))!.headline).toBe("No one has been hired in the last 30 days yet.");
+  });
+
+  it("has no data, so shows its empty state, with no Applications", () => {
+    expect(data([0, 0, 0, 0, 0])).toBeNull();
+    expect(widget(["/job-postings"], undefined)!.data).toBeNull();
   });
 });
