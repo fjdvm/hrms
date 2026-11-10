@@ -14,7 +14,7 @@ describe("Key Summary Cards", () => {
   it("put the hiring cards in their own row above the existing cards, in fixed order", () => {
     expect(rowLabels([...ALL].reverse())).toEqual([
       ["Open jobs", "Applicants", "Interviews this week", "Offer acceptance", "Average time to hire"],
-      ["Total Employee", "New Hire", "Attendance Rate", "Pending Leaves"],
+      ["Total Employee", "Attendance Rate"],
     ]);
   });
 
@@ -23,8 +23,9 @@ describe("Key Summary Cards", () => {
   });
 
   it("only include rows and cards whose Module is held", () => {
-    expect(rowLabels(["/attendance"])).toEqual([["Attendance Rate", "Pending Leaves"]]);
-    expect(rowLabels(["/employee-information"])).toEqual([["Total Employee", "New Hire"]]);
+    expect(rowLabels(["/attendance"])).toEqual([["Attendance Rate"]]);
+    expect(rowLabels(["/employee-information"])).toEqual([["Total Employee"]]);
+    expect(rowLabels(["/attendance", "/employee-information"])).toEqual([["Total Employee", "Attendance Rate"]]);
     expect(rowLabels(["/job-postings"])).toEqual([["Open jobs", "Applicants", "Interviews this week", "Offer acceptance", "Average time to hire"]]);
   });
 
@@ -33,18 +34,13 @@ describe("Key Summary Cards", () => {
   });
 
   it("have no figure or caption when their data is missing", () => {
-    expect(cards(ALL).map((c) => c.figure)).toEqual(Array(9).fill(null));
-    expect(cards(ALL).map((c) => c.caption)).toEqual(Array(9).fill(null));
+    expect(cards(ALL).map((c) => c.figure)).toEqual(Array(7).fill(null));
+    expect(cards(ALL).map((c) => c.caption)).toEqual(Array(7).fill(null));
   });
 
   it("derive the Total Employee figure as the sum of statuses", () => {
     const total = cards(ALL, { totalEmployee: { regular: 10, probationary: 3, ojt: 2 } }).find((c) => c.label === "Total Employee");
     expect(total?.figure).toBe("15");
-  });
-
-  it("show New Hire and Pending Leaves figures", () => {
-    const found = cards(ALL, { newHire: { count: 4 }, pendingLeaves: { total: 0 } });
-    expect(found.slice(5).map((c) => c.figure)).toEqual([null, "4", null, "0"]);
   });
 
   it("show Open jobs as the count of Open Job Postings with openings and locations in the caption", () => {

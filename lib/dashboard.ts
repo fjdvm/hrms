@@ -3,7 +3,6 @@ import type { Module } from "@/lib/modules";
 /** Data each owning Module supplies for its Key Summary Cards. Absent until the Module has data. */
 export interface DashboardSummary {
   totalEmployee?: { regular: number; probationary: number; ojt: number };
-  newHire?: { count: number };
   /** Open Job Postings: how many, the openings they list in total (postings that give no number add none) and their distinct locations. */
   openJobs?: { count: number; openings: number; locations: number };
   /** Applications received in the Dashboard Range and in its Previous period. */
@@ -15,7 +14,6 @@ export interface DashboardSummary {
   /** Applications Hired in the range and in its Previous period, with the mean whole days from applying to being Hired (null with no hires). */
   timeToHire?: { current: HireTimes; previous: HireTimes };
   attendanceRate?: { present: number; expected: number };
-  pendingLeaves?: { total: number };
   /** Month-end Total Employee figures, `month` as "YYYY-MM". The current month is taken from `totalEmployee`. */
   headcountHistory?: { month: string; total: number }[];
   /** Employee count per department; a null department means the employee has none. */
@@ -357,26 +355,12 @@ const CARDS: readonly CardSpec[] = [
       d ? String(d.regular + d.probationary + d.ojt) : null,
   },
   {
-    label: "New Hire",
-    module: "Employee Information",
-    href: "/employee-information",
-    row: "people",
-    figure: ({ newHire: d }) => (d ? String(d.count) : null),
-  },
-  {
     label: "Attendance Rate",
     module: "Attendance",
     href: "/attendance",
     row: "people",
     figure: ({ attendanceRate: d }) =>
       d && d.expected > 0 ? `${Math.round((d.present / d.expected) * 100)}%` : null,
-  },
-  {
-    label: "Pending Leaves",
-    module: "Attendance",
-    href: "/attendance",
-    row: "people",
-    figure: ({ pendingLeaves: d }) => (d ? String(d.total) : null),
   },
 ];
 
