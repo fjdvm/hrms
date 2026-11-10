@@ -2,6 +2,7 @@ import { Download } from "lucide-react";
 import { KeySummaryCard } from "@/components/dashboard/key-summary-card";
 import { DashboardGrid } from "@/components/dashboard/dashboard-grid";
 import { DetailWidget } from "@/components/dashboard/detail-widget";
+import { DETAIL_WIDGET_HEIGHT } from "@/components/dashboard/detail-widget-card";
 import { DateRangeSelect } from "@/components/dashboard/date-range-select";
 import { RangeDependent, RangeProvider } from "@/components/dashboard/range-pending";
 import { dashboardLayoutFor, dashboardRange, manilaToday, rangeSearch } from "@/lib/dashboard";
@@ -65,7 +66,15 @@ export default async function Page({ searchParams }: PageProps<"/dashboard">) {
                 <KeySummaryCard key={card.label} {...card} />
               )
             }
-            widget={(widget, stretch) => <DetailWidget key={widget.id} {...widget} stretch={stretch} />}
+            widget={(widget, stretch) =>
+              widget.rangeDependent ? (
+                <RangeDependent key={widget.id} height={DETAIL_WIDGET_HEIGHT}>
+                  <DetailWidget {...widget} stretch={stretch} />
+                </RangeDependent>
+              ) : (
+                <DetailWidget key={widget.id} {...widget} stretch={stretch} />
+              )
+            }
           />
         )}
       </div>

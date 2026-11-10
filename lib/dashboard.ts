@@ -11,6 +11,8 @@ export interface DashboardSummary {
   interviews?: { thisWeek: number; today: number };
   /** Interviews that start after now and before the end of the current Manila week, any order. Every one is needed for the widget's headline; it lists the first five. */
   upcomingInterviews?: UpcomingInterview[];
+  /** Applications received in the Dashboard Range: the total and the five Job Postings with the most (ties by title), closed and filled ones included. */
+  applicantsByJob?: { total: number; jobs: { id: string; title: string; count: number }[] };
   /** Decided offers (accepted of decided) with a decision date in the range and in its Previous period. */
   offers?: { current: OfferOutcomes; previous: OfferOutcomes };
   /** Applications Hired in the range and in its Previous period, with the mean whole days from applying to being Hired (null with no hires). */
@@ -128,6 +130,8 @@ export interface DashboardRange extends RangePeriod {
   name: string;
   /** "This month · 1–28 Oct 2026". */
   label: string;
+  /** The range in a sentence: "this month", "in the last 30 days". */
+  phrase: string;
   /** Manila midnight starting the first day, and starting the day after the last: query `>= from AND < to`. */
   from: Date;
   to: Date;
@@ -203,7 +207,7 @@ export function dashboardRange(id: unknown, now: Date, custom?: { from: unknown;
   const [y, mo] = [m.getUTCFullYear(), m.getUTCMonth()];
   const today = day(y, mo, m.getUTCDate());
 
-  let start: Date, end: Date, previousStart: Date, previousEnd: Date, wording: string;
+  let start: Date, end: Date, previousStart: Date, previousEnd: Date, wording: string, phrase: string;
   if (customRange) {
     start = parseDay(customRange.from)!;
     end = parseDay(customRange.to)!;
@@ -211,24 +215,28 @@ export function dashboardRange(id: unknown, now: Date, custom?: { from: unknown;
     previousEnd = addDays(start, -1);
     previousStart = addDays(previousEnd, 1 - length);
     wording = "vs previous period";
+    phrase = "in this period";
   } else if (rangeId === "this-month") {
     start = day(y, mo, 1);
     end = today;
     previousStart = day(y, mo - 1, 1);
     previousEnd = monthsBack(today, 1);
     wording = "vs last month";
+    phrase = "this month";
   } else if (rangeId === "last-month") {
     start = day(y, mo - 1, 1);
     end = day(y, mo, 0);
     previousStart = day(y, mo - 2, 1);
     previousEnd = day(y, mo - 1, 0);
     wording = "vs month before";
+    phrase = "last month";
   } else if (rangeId === "year-to-date") {
     start = day(y, 0, 1);
     end = today;
     previousStart = day(y - 1, 0, 1);
     previousEnd = monthsBack(today, 12);
     wording = "vs last year";
+    phrase = "so far this year";
   } else {
     const days = rangeId === "last-30-days" ? 30 : 90;
     start = addDays(today, 1 - days);
@@ -236,6 +244,7 @@ export function dashboardRange(id: unknown, now: Date, custom?: { from: unknown;
     previousStart = addDays(start, -days);
     previousEnd = addDays(start, -1);
     wording = `vs previous ${days} days`;
+    phrase = `in the last ${days} days`;
   }
 
   const name = rangeId === "custom" ? "Custom" : RANGE_OPTIONS.find((o) => o.id === rangeId)!.name;
@@ -243,6 +252,7 @@ export function dashboardRange(id: unknown, now: Date, custom?: { from: unknown;
     id: rangeId,
     name,
     label: `${name} · ${periodLabel(start, end)}`,
+    phrase,
     start: iso(start),
     end: iso(end),
     from: manilaMidnight(start),
@@ -468,11 +478,31 @@ export interface UpcomingInterviewsData {
   items: UpcomingInterviewItem[];
 }
 
+export interface ApplicantsByJobRow {
+  id: string;
+  title: string;
+  count: number;
+  /** Whole percent of every Application received in the range, not of the top five. */
+  percent: number;
+  /** Bar length as a whole percent of the largest count. */
+  bar: number;
+}
+
+export interface ApplicantsByJobData {
+  /** "Cashier draws the most applicants this month." */
+  headline: string;
+  /** At most five, largest first. */
+  rows: ApplicantsByJobRow[];
+}
+
 /** A Detail Widget and the data it shows; `data` is null when its owning Module has none yet. */
 export type DetailWidget = {
   label: string;
   module: Module["name"];
+  /** True when the Dashboard Range changes the widget, so it shows a skeleton while the range reloads. */
+  rangeDependent?: boolean;
 } & (
+  | { id: "applicants-by-job"; data: ApplicantsByJobData | null }
   | { id: "headcount-trend"; data: HeadcountPoint[] | null }
   | { id: "department-distribution"; data: DepartmentSlice[] | null }
   | { id: "recent-activity"; data: ActivityItem[] | null }
@@ -584,6 +614,26 @@ function upcomingInterviews(summary: DashboardSummary, now: Date): UpcomingInter
   };
 }
 
+const BY_JOB_LIMIT = 5;
+
+/** The top Job Postings by Applications received in the range, with percent of all received and bars scaled to the largest. Null when none were received. */
+function applicantsByJob(summary: DashboardSummary, range: DashboardRange): ApplicantsByJobData | null {
+  const data = summary.applicantsByJob;
+  if (!data || data.total === 0 || data.jobs.length === 0) return null;
+  const jobs = [...data.jobs].sort((a, b) => b.count - a.count || a.title.localeCompare(b.title) || a.id.localeCompare(b.id)).slice(0, BY_JOB_LIMIT);
+  const largest = jobs[0].count;
+  return {
+    headline: `${jobs[0].title} draws the most applicants ${range.phrase}.`,
+    rows: jobs.map((j) => ({
+      id: j.id,
+      title: j.title,
+      count: j.count,
+      percent: Math.round((j.count / data.total) * 100),
+      bar: Math.round((j.count / largest) * 100),
+    })),
+  };
+}
+
 interface DetailWidgetSpec {
   href: Module["href"];
   build: (summary: DashboardSummary, now: Date) => DetailWidget;
@@ -677,7 +727,10 @@ export function dashboardLayoutFor(
   ].filter((w): w is DetailWidget => w !== null);
 
   const hiringRows: DetailWidget[][] = permittedPages.includes("/job-postings")
-    ? [[{ id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) }]]
+    ? [[
+        { id: "applicants-by-job", label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true, data: applicantsByJob(summary, range) },
+        { id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) },
+      ]]
     : [];
 
   return {

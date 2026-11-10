@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { dashboardRange } from "@/lib/dashboard";
-import { applicantsSummary, dashboardSummaryFor, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
+import { applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, interviewsSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
 
 const NOW = new Date("2026-10-28T12:05:00Z");
 const RANGE = dashboardRange("this-month", NOW);
@@ -57,6 +57,7 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
   expect(await dashboardSummaryFor(["/dashboard", "/job-postings"], RANGE, NOW, db)).toEqual({
     openJobs: { count: 1, openings: 2, locations: 1 },
     applicants: { current: 0, previous: 0 },
+    applicantsByJob: { total: 0, jobs: [] },
     interviews: { thisWeek: 0, today: 0 },
     upcomingInterviews: [],
     offers: { current: { accepted: 0, decided: 0 }, previous: { accepted: 0, decided: 0 } },
@@ -70,13 +71,13 @@ it("does not read the database for Staff who do not hold Recruitment and Hiring"
 });
 
 let received = 0;
-async function receive(appliedAt: string, status = "Received"): Promise<number> {
+async function receive(appliedAt: string, status = "Received", job = "a"): Promise<number> {
   received += 1;
   await db.query("INSERT INTO applicant_profiles VALUES ($1, 'Someone', $2)", [`p${received}`, `p${received}@example.test`]);
   await db.query(
     `INSERT INTO applications (applicant_id, job_posting_id, reference_number, status, profile_snapshot, documents_snapshot, consented_at, created_at)
-     VALUES ($1, 'a', $1, $2, '{"fullName":"Someone"}', '[]', $3, $3)`,
-    [`p${received}`, status, appliedAt],
+     VALUES ($1, $4, $1, $2, '{"fullName":"Someone"}', '[]', $3, $3)`,
+    [`p${received}`, status, appliedAt, job],
   );
   return (await db.query<{ id: number }>("SELECT max(id)::int AS id FROM applications")).rows[0].id;
 }
@@ -209,4 +210,27 @@ it("reads interviews still to start this Manila week, with applicant and Job Pos
 
 it("reads no upcoming interviews when none is stored", async () => {
   expect(await upcomingInterviewsSummary(NOW, db)).toEqual([]);
+});
+
+it("ranks the top five Job Postings by Applications in the range, closed and filled ones included, with the total of all", async () => {
+  for (const [id, status] of [["a", "open"], ["b", "closed"], ["c", "filled"], ["d", "open"], ["e", "open"], ["f", "open"]]) await post(id, status, "Antipolo", 1);
+  for (const [job, n] of [["b", 3], ["a", 2], ["c", 2], ["d", 1], ["e", 1], ["f", 1]] as const) {
+    for (let i = 0; i < n; i++) await receive("2026-10-10T08:00:00Z", "Received", job);
+  }
+  const { total, jobs } = await applicantsByJobSummary(RANGE, db);
+  expect(total).toBe(10);
+  expect(jobs.map((j) => [j.id, j.count])).toEqual([["b", 3], ["a", 2], ["c", 2], ["d", 1], ["e", 1]]); // ties by title
+});
+
+it("counts only the range, on Manila days, not the Previous period", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await receive("2026-09-30T16:00:00Z"); // 1 Oct 00:00 Manila: in
+  await receive("2026-10-28T15:59:00Z"); // 28 Oct 23:59 Manila: in
+  await receive("2026-10-28T16:00:00Z"); // after
+  await receive("2026-09-30T15:59:00Z"); // Previous period
+  expect(await applicantsByJobSummary(RANGE, db)).toEqual({ total: 2, jobs: [{ id: "a", title: "a", count: 2 }] });
+});
+
+it("reads no jobs when no Application was received", async () => {
+  expect(await applicantsByJobSummary(RANGE, db)).toEqual({ total: 0, jobs: [] });
 });
