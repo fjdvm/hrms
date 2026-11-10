@@ -9,6 +9,7 @@ import {
   manilaWeek,
   rangeSearch,
   type DashboardSummary,
+  type ApplicantsByJobData,
   type UpcomingInterviewsData,
 } from "@/lib/dashboard";
 
@@ -277,5 +278,46 @@ describe("Upcoming interviews widget", () => {
     expect(dashboardLayoutFor(["/job-postings"], { upcomingInterviews: list }, other, NOW).hiringRows).toEqual(
       dashboardLayoutFor(["/job-postings"], { upcomingInterviews: list }, RANGE, NOW).hiringRows,
     );
+  });
+});
+
+describe("Applicants by job widget", () => {
+  const widget = (pages: string[], applicantsByJob: DashboardSummary["applicantsByJob"], range = RANGE) =>
+    dashboardLayoutFor(pages, { applicantsByJob }, range, NOW).hiringRows.flat().find((w) => w.id === "applicants-by-job");
+  const data = (applicantsByJob: DashboardSummary["applicantsByJob"], range = RANGE) =>
+    widget(["/job-postings"], applicantsByJob, range)!.data as ApplicantsByJobData | null;
+  const job = (id: string, count: number, title = id) => ({ id, title, count });
+
+  it("is shown only to Staff holding Recruitment and Hiring, and follows the range", () => {
+    expect(widget(["/dashboard", "/attendance"], { total: 1, jobs: [job("a", 1)] })).toBeUndefined();
+    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true });
+  });
+
+  it("takes percent of all Applications in the range, not of the top five, and scales bars to the largest", () => {
+    const d = data({ total: 20, jobs: [job("a", 8, "Cashier"), job("b", 4, "Cook"), job("c", 1, "Guard")] })!;
+    expect(d.rows).toEqual([
+      { id: "a", title: "Cashier", count: 8, percent: 40, bar: 100 },
+      { id: "b", title: "Cook", count: 4, percent: 20, bar: 50 },
+      { id: "c", title: "Guard", count: 1, percent: 5, bar: 13 },
+    ]);
+  });
+
+  it("names the top job with the range's wording", () => {
+    const summary = { total: 5, jobs: [job("a", 5, "Cashier")] };
+    expect(data(summary)!.headline).toBe("Cashier draws the most applicants this month.");
+    expect(data(summary, dashboardRange("last-30-days", NOW))!.headline).toBe("Cashier draws the most applicants in the last 30 days.");
+    expect(data(summary, dashboardRange("year-to-date", NOW))!.headline).toBe("Cashier draws the most applicants so far this year.");
+  });
+
+  it("lists at most five, largest first, ties by title", () => {
+    const jobs = [job("f", 1, "F"), job("b", 2, "B"), job("a", 2, "A"), job("c", 1, "C"), job("d", 1, "D"), job("e", 1, "E")];
+    const d = data({ total: 8, jobs })!;
+    expect(d.rows.map((r) => r.id)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(d.headline).toBe("A draws the most applicants this month.");
+  });
+
+  it("has no data, so shows Nothing to show yet, when no Application was received or none is loaded", () => {
+    expect(data({ total: 0, jobs: [] })).toBeNull();
+    expect(data(undefined)).toBeNull();
   });
 });

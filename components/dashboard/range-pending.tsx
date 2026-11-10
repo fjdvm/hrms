@@ -16,8 +16,8 @@ export function RangeProvider({ children }: { children: ReactNode }) {
 
 export const useRangeNavigation = () => useContext(RangeContext);
 
-/** A card the range changes: a skeleton at the card's own height while the new range loads. */
-export function RangeDependent({ children }: { children: ReactNode }) {
+/** A card or widget the range changes: a skeleton at its own height (a card's by default) while the new range loads. */
+export function RangeDependent({ children, height = KEY_SUMMARY_CARD_HEIGHT }: { children: ReactNode; height?: string }) {
   const { pending } = useRangeNavigation();
-  return pending ? <Skeleton className={`${KEY_SUMMARY_CARD_HEIGHT} rounded-xl`} /> : children;
+  return pending ? <Skeleton className={`${height} rounded-xl`} /> : children;
 }

@@ -21,6 +21,24 @@ export async function applicantsSummary(range: DashboardRange, db: Database = da
   return rows[0];
 }
 
+/** Applications received in the range (counted as in applicantsSummary) per Job Posting, whatever its status: the total and the top five, ties by title. */
+export async function applicantsByJobSummary(range: DashboardRange, db: Database = database): Promise<NonNullable<DashboardSummary["applicantsByJob"]>> {
+  const params = [range.from.toISOString(), range.to.toISOString()];
+  const [top, total] = await Promise.all([
+    db.query<{ id: string; title: string; count: number }>(
+      `SELECT job_posting_id AS id, min(job_posting_title) AS title, count(*)::int AS count
+       FROM public.hrms_all_applications
+       WHERE applied_at >= $1 AND applied_at < $2
+       GROUP BY job_posting_id
+       ORDER BY count DESC, min(job_posting_title), job_posting_id
+       LIMIT 5`,
+      params,
+    ),
+    db.query<{ total: number }>(`SELECT count(*)::int AS total FROM public.hrms_all_applications WHERE applied_at >= $1 AND applied_at < $2`, params),
+  ]);
+  return { total: total.rows[0].total, jobs: top.rows };
+}
+
 /**
  * Interviews starting this Manila week, finished ones included, and the ones starting today. The only place that
  * reads interviews for the Dashboard: change it when real interview data lands somewhere else.
@@ -111,13 +129,14 @@ export async function dashboardSummaryFor(
   db: Database = database,
 ): Promise<DashboardSummary> {
   if (!permittedPages.includes("/job-postings")) return {};
-  const [openJobs, applicants, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
+  const [openJobs, applicants, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
     openJobsSummary(db),
     applicantsSummary(range, db),
+    applicantsByJobSummary(range, db),
     interviewsSummary(now, db),
     upcomingInterviewsSummary(now, db),
     offersSummary(range, db),
     timeToHireSummary(range, db),
   ]);
-  return { openJobs, applicants, interviews, upcomingInterviews, offers, timeToHire };
+  return { openJobs, applicants, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
 }
