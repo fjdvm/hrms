@@ -5,9 +5,9 @@ import { UpcomingEventsList } from "@/components/dashboard/upcoming-events-list"
 import { DetailWidgetCard } from "@/components/dashboard/detail-widget-card";
 import type { DetailWidget as DetailWidgetData } from "@/lib/dashboard";
 
-export function DetailWidget(widget: DetailWidgetData) {
+export function DetailWidget({ stretch, ...widget }: DetailWidgetData & { stretch?: boolean }) {
   return (
-    <DetailWidgetCard title={widget.label} empty={widget.data === null}>
+    <DetailWidgetCard title={widget.label} empty={widget.data === null} stretch={stretch}>
       {widget.id === "headcount-trend" && widget.data && (
         <HeadcountTrendChart points={widget.data} />
       )}

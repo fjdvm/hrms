@@ -8,18 +8,24 @@ export const DETAIL_WIDGET_HEIGHT = "h-96";
 export const detailWidgetRowClass = (count: number) =>
   count > 1 ? "grid gap-md lg:grid-cols-2" : "grid gap-md";
 
+/** Height of a widget in the People block: at least the standard height, stretching with its grid cell from `xl`. Shared with the skeleton. */
+export const PEOPLE_WIDGET_HEIGHT = "min-h-96 xl:h-full";
+
 export function DetailWidgetCard({
   title,
   empty,
+  stretch = false,
   children,
 }: {
   title: string;
   /** True when the owning Module has no data to show yet. */
   empty: boolean;
+  /** Fill the grid cell instead of the fixed height (the People block). */
+  stretch?: boolean;
   children: ReactNode;
 }) {
   return (
-    <Card className={`${DETAIL_WIDGET_HEIGHT} flex flex-col`}>
+    <Card className={`${stretch ? PEOPLE_WIDGET_HEIGHT : DETAIL_WIDGET_HEIGHT} flex flex-col`}>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
       </CardHeader>

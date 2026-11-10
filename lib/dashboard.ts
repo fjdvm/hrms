@@ -376,19 +376,23 @@ export function cardRowsFor(
   summary: DashboardSummary,
   range: DashboardRange,
 ): KeySummaryCard[][] {
-  return CARD_ROWS.map((row) =>
-    CARDS.filter((c) => c.row === row && permittedPages.includes(c.href)).map((c) => {
-      const comparison = c.comparison?.(summary, range) ?? null;
-      return {
-        label: c.label,
-        module: c.module,
-        figure: c.figure(summary),
-        caption: c.caption?.(summary) ?? null,
-        comparison,
-        rangeDependent: c.rangeDependent ?? false,
-      };
-    }),
-  ).filter((cards) => cards.length > 0);
+  return CARD_ROWS.map((row) => cardsInRow(row, permittedPages, summary, range)).filter((cards) => cards.length > 0);
+}
+
+function cardsInRow(
+  row: CardRow,
+  permittedPages: readonly string[],
+  summary: DashboardSummary,
+  range: DashboardRange,
+): KeySummaryCard[] {
+  return CARDS.filter((c) => c.row === row && permittedPages.includes(c.href)).map((c) => ({
+    label: c.label,
+    module: c.module,
+    figure: c.figure(summary),
+    caption: c.caption?.(summary) ?? null,
+    comparison: c.comparison?.(summary, range) ?? null,
+    rangeDependent: c.rangeDependent ?? false,
+  }));
 }
 
 /** The current Monday-to-Sunday week and today, as Manila days: query `starts_at >= from AND starts_at < to`. Pure: `now` is passed in. */
@@ -449,7 +453,8 @@ export type DetailWidget = {
 );
 
 const TREND_MONTHS = 12;
-const ACTIVITY_LIMIT = 10;
+/** About five items, so the left People block ends level with Headcount Trend. */
+const ACTIVITY_LIMIT = 5;
 const EVENT_LIMIT = 10;
 const EVENT_WINDOW_DAYS = 30;
 const UNASSIGNED = "Unassigned";
@@ -523,7 +528,6 @@ interface DetailWidgetSpec {
   build: (summary: DashboardSummary, now: Date) => DetailWidget;
 }
 
-/** Fixed order; consecutive pairs form the rows of the Dashboard grid. */
 const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
   {
     href: "/employee-information",
@@ -563,22 +567,55 @@ const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
   },
 ];
 
-/**
- * The Detail Widgets a Staff member sees, grouped into the two fixed grid rows (Headcount Trend |
- * Department Distribution, then Recent Activity | Upcoming Events). Detail Widgets whose Module is not held
- * are dropped; a row left with one Detail Widget spans the full width and an empty row disappears.
- */
-export function detailWidgetRowsFor(
+const widgetFor = (
+  id: DetailWidget["id"],
   permittedPages: readonly string[],
   summary: DashboardSummary,
   now: Date,
-): DetailWidget[][] {
-  const rows: DetailWidget[][] = [];
-  for (let i = 0; i < DETAIL_WIDGETS.length; i += 2) {
-    const row = DETAIL_WIDGETS.slice(i, i + 2)
-      .filter((w) => permittedPages.includes(w.href))
-      .map((w) => w.build(summary, now));
-    if (row.length > 0) rows.push(row);
-  }
-  return rows;
+): DetailWidget | null => {
+  const spec = DETAIL_WIDGETS.find((w) => w.build({}, now).id === id)!;
+  return permittedPages.includes(spec.href) ? spec.build(summary, now) : null;
+};
+
+/** The left half of the People block: its cards side by side, Recent Activity below. */
+export interface PeopleLeft {
+  /** Total Employee and Attendance Rate; a lone card spans both columns. */
+  cards: KeySummaryCard[];
+  activity: DetailWidget | null;
+}
+
+/** Where everything sits on the Dashboard for one Staff member. Absent pieces are left out, never rendered empty. */
+export interface DashboardLayout {
+  /** Row 1: the hiring cards. */
+  hiringCards: KeySummaryCard[];
+  /** The People block: `left` and `trend` side by side (2 and 3 of five columns) from `xl`; whichever is alone takes the full width. Null when both are absent. */
+  people: { left: PeopleLeft | null; trend: DetailWidget | null } | null;
+  /** Rows of Detail Widgets below: Department Distribution | Upcoming Events, half and half, a lone one full width. */
+  rows: DetailWidget[][];
+}
+
+/**
+ * The Dashboard layout from the Modules a Staff member holds: hiring cards, the People block, then the
+ * Detail Widget rows. Pure: every Module combination is decided here, so the page only draws it.
+ */
+export function dashboardLayoutFor(
+  permittedPages: readonly string[],
+  summary: DashboardSummary,
+  range: DashboardRange,
+  now: Date,
+): DashboardLayout {
+  const peopleCards = cardsInRow("people", permittedPages, summary, range);
+  const activity = widgetFor("recent-activity", permittedPages, summary, now);
+  const trend = widgetFor("headcount-trend", permittedPages, summary, now);
+  const left = peopleCards.length > 0 || activity ? { cards: peopleCards, activity } : null;
+  const bottom = [
+    widgetFor("department-distribution", permittedPages, summary, now),
+    widgetFor("upcoming-events", permittedPages, summary, now),
+  ].filter((w): w is DetailWidget => w !== null);
+
+  return {
+    hiringCards: cardsInRow("hiring", permittedPages, summary, range),
+    people: left || trend ? { left, trend } : null,
+    rows: bottom.length > 0 ? [bottom] : [],
+  };
 }

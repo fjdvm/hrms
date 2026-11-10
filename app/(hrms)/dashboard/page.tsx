@@ -1,10 +1,10 @@
 import { Download } from "lucide-react";
 import { KeySummaryCard } from "@/components/dashboard/key-summary-card";
+import { DashboardGrid } from "@/components/dashboard/dashboard-grid";
 import { DetailWidget } from "@/components/dashboard/detail-widget";
-import { detailWidgetRowClass } from "@/components/dashboard/detail-widget-card";
 import { DateRangeSelect } from "@/components/dashboard/date-range-select";
 import { RangeDependent, RangeProvider } from "@/components/dashboard/range-pending";
-import { cardRowsFor, dashboardRange, detailWidgetRowsFor, manilaToday, rangeSearch } from "@/lib/dashboard";
+import { dashboardLayoutFor, dashboardRange, manilaToday, rangeSearch } from "@/lib/dashboard";
 import { dashboardSummaryFor } from "@/lib/dashboard-data";
 import { getShell, requireModule } from "@/lib/portal/staff";
 
@@ -18,8 +18,8 @@ export default async function Page({ searchParams }: PageProps<"/dashboard">) {
   const params = await searchParams;
   const range = dashboardRange(firstValue(params.range), now, { from: firstValue(params.from), to: firstValue(params.to) });
   const summary = await dashboardSummaryFor(permittedPages, range, now);
-  const cardRows = cardRowsFor(permittedPages, summary, range);
-  const widgetRows = detailWidgetRowsFor(permittedPages, {}, now);
+  const layout = dashboardLayoutFor(permittedPages, summary, range, now);
+  const empty = layout.hiringCards.length === 0 && !layout.people && layout.rows.length === 0;
   const hiring = permittedPages.includes("/job-postings");
 
   return (
@@ -49,36 +49,24 @@ export default async function Page({ searchParams }: PageProps<"/dashboard">) {
           )}
         </div>
 
-        {cardRows.length === 0 && widgetRows.length === 0 ? (
+        {empty ? (
           <p className="text-body-sm text-muted-foreground">
             You hold no Modules with a summary yet.
           </p>
         ) : (
-          <>
-            {cardRows.map((row) => (
-              <div key={row[0].label} className="grid gap-md sm:grid-cols-2 xl:grid-cols-5">
-                {row.map((card) =>
-                  card.rangeDependent ? (
-                    <RangeDependent key={card.label}>
-                      <KeySummaryCard {...card} />
-                    </RangeDependent>
-                  ) : (
-                    <KeySummaryCard key={card.label} {...card} />
-                  ),
-                )}
-              </div>
-            ))}
-            {widgetRows.map((row) => (
-              <div
-                key={row[0].id}
-                className={detailWidgetRowClass(row.length)}
-              >
-                {row.map((widget) => (
-                  <DetailWidget key={widget.id} {...widget} />
-                ))}
-              </div>
-            ))}
-          </>
+          <DashboardGrid
+            layout={layout}
+            card={(card) =>
+              card.rangeDependent ? (
+                <RangeDependent key={card.label}>
+                  <KeySummaryCard {...card} />
+                </RangeDependent>
+              ) : (
+                <KeySummaryCard key={card.label} {...card} />
+              )
+            }
+            widget={(widget, stretch) => <DetailWidget key={widget.id} {...widget} stretch={stretch} />}
+          />
         )}
       </div>
     </RangeProvider>
