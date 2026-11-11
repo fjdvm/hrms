@@ -42,7 +42,7 @@ function JobCard({ job, now }: { job: InterviewJobSummary; now: Date }) {
       <div className="flex items-center gap-sm border-t border-border-subtle pt-[12px]">
         <Calendar className={cn("size-[14px] shrink-0", nextInterview ? "text-primary" : "text-zinc-400")} />
         <span className={cn("flex-1 truncate text-[13px]", nextInterview ? "font-medium text-foreground" : "text-zinc-500")}>
-          {nextInterview ? `Next: ${nextInterviewLabel(nextInterview, now)}` : nextInterviewLabel(null, now)}
+          {nextInterview ? `Next: ${nextInterviewLabel(nextInterview, now)}` : "No upcoming interviews"}
         </span>
       </div>
     </Link>

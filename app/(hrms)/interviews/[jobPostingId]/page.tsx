@@ -5,8 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MapPin, Video } from "lucide-react";
-import { BackLink, CELL, HEAD, InfoNote, PAGE, PageHeader } from "@/components/hiring/parts";
-import { Initials } from "@/components/hiring/parts";
+import { BackLink, CELL, HEAD, InfoNote, Initials, PAGE, PageHeader } from "@/components/hiring/parts";
 import { InterviewResult } from "@/components/hiring/interview-result";
 import { ScheduleInterview } from "@/components/hiring/schedule-interview";
 import { interviewJobRow, interviewTabFromParam, type InterviewJobRowView } from "@/lib/application-view";
@@ -125,7 +124,7 @@ export default async function Page({ params, searchParams }: PageProps<"/intervi
                           interviewId={row.interview.id}
                           startsAt={row.interview.startsAt}
                           applicantName={row.applicantName}
-                          subtitle={`${row.applicantName} · ${job.title} · ${view.date}, ${view.type?.toLowerCase()} with ${view.interviewer}`}
+                          subtitle={`${row.applicantName} · ${job.title} · ${view.date}, ${row.interview.type.toLowerCase()} with ${row.interview.interviewerName}`}
                         />
                       ) : (
                         <ScheduleInterview

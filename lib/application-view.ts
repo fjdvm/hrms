@@ -185,16 +185,20 @@ export function activityEntries({ activity, interviews, jobPostingTitle, applied
   return [...entries, { tone: "purple", title: "Applied", detail: `${day(appliedAt)} · ${jobPostingTitle}` }];
 }
 
+/** "10:00 – 10:45 AM"; am/pm is kept on both ends only when the Interview crosses noon. */
+const timeRange = (startsAt: Date, endsAt: Date) => {
+  const clock = (date: Date) => manila(date, { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
+  const [start, end] = [clock(startsAt), clock(endsAt)];
+  return `${start.slice(-2) === end.slice(-2) ? start.slice(0, -3) : start} – ${end}`;
+};
+
 export type InterviewRow = { date: string; time: string; type: string; interviewer: string; score: string; status: "Scheduled" | "Completed" };
 
 /** One line of the profile's Interviews card: "30 Oct 2026", "10:00 – 10:45 AM", "In person · Cainta branch". Completed once a result is recorded. */
 export function interviewRow(interview: ApplicationInterview): InterviewRow {
-  const clock = (date: Date) => manila(date, { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
-  const [start, end] = [clock(interview.startsAt), clock(interview.endsAt)];
-  const meridiem = (text: string) => text.slice(-2);
   return {
     date: formatApplied(interview.startsAt),
-    time: `${meridiem(start) === meridiem(end) ? start.slice(0, -3) : start} – ${end}`,
+    time: timeRange(interview.startsAt, interview.endsAt),
     type: interview.type === "Online" ? "Online" : `In person · ${interview.location.split(" · ")[0]}`,
     interviewer: interview.interviewerName,
     score: interview.score === null ? "—" : `${interview.score} / 5`,
@@ -209,7 +213,7 @@ export const interviewsSubtitle = ({ jobs, interviewsThisWeek, interviewsToday }
   `${plural(jobs, "posted job")} · ${plural(interviewsThisWeek, "interview")} this week · ${interviewsToday} today`;
 
 /** "Today, 2:00 PM · Jomar Villanueva", "31 Oct, 2:00 PM · Patricia Lim", or "No upcoming interviews". */
-export function nextInterviewLabel(next: { startsAt: Date; interviewerName: string } | null, now: Date) {
+export function nextInterviewLabel(next: Pick<ApplicationInterview, "startsAt" | "interviewerName"> | null, now: Date) {
   if (!next) return "No upcoming interviews";
   const day = (date: Date) => manila(date, { day: "numeric", month: "short" });
   const when = day(next.startsAt) === day(now) ? `Today, ${dayTime(next.startsAt).split(", ")[1]}` : dayTime(next.startsAt);
@@ -219,13 +223,11 @@ export function nextInterviewLabel(next: { startsAt: Date; interviewerName: stri
 export type InterviewJobRowView = { date: string | null; time: string | null; type: string | null; interviewer: string | null; status: "Waiting" | "Scheduled" };
 
 /** One line of a job's Interview list; a row with no Interview reads Waiting with blanks. */
-export function interviewJobRow(interview: { startsAt: Date; endsAt: Date; type: "Online" | "In person"; interviewerName: string } | null): InterviewJobRowView {
+export function interviewJobRow(interview: Pick<ApplicationInterview, "startsAt" | "endsAt" | "type" | "interviewerName"> | null): InterviewJobRowView {
   if (!interview) return { date: null, time: null, type: null, interviewer: null, status: "Waiting" };
-  const clock = (date: Date) => manila(date, { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
-  const [start, end] = [clock(interview.startsAt), clock(interview.endsAt)];
   return {
     date: formatApplied(interview.startsAt),
-    time: `${start.slice(-2) === end.slice(-2) ? start.slice(0, -3) : start} – ${end}`,
+    time: timeRange(interview.startsAt, interview.endsAt),
     type: interview.type, interviewer: interview.interviewerName, status: "Scheduled",
   };
 }
