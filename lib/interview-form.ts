@@ -35,6 +35,7 @@ export function interviewFormErrors(form: InterviewFormValues, now = Date.now())
   else if ([0, 6].includes(dayToDate(form.date).getDay())) errors.date = "Interviews are Monday to Friday.";
   if (!form.start) errors.start = "Choose a start time.";
   else if (form.start < "08:00") errors.start = "Start time must be 8 AM or later.";
+  else if (form.start >= "17:00") errors.start = "Start time must be before 5 PM.";
   else if (form.date && !errors.date && Date.parse(`${form.date}T${form.start}:00+08:00`) <= now) errors.start = "That start time has already passed.";
   if (!form.end) errors.end = "Choose an end time.";
   else if (form.end > "17:00") errors.end = "End time must be 5 PM or earlier.";

@@ -81,6 +81,7 @@ function ScheduleForm({ applicationId, stage, interview, applicantName, applican
     const [from, to] = [manilaParts(slot.startsAt), manilaParts(slot.endsAt)];
     setForm((current) => ({ ...current, date: from.date, start: from.time, end: to.time }));
     setConflict(undefined);
+    setFailure(undefined);
   };
   const week = `/interviews?view=calendar&interviewer=${encodeURIComponent(form.interviewerId)}&date=${form.date}`;
   const firstName = (interviewer?.name ?? "").split(" ")[0] || "The Interviewer";
