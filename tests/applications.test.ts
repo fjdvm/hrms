@@ -334,6 +334,16 @@ it("downloads only a submitted document owned by this Application's Applicant", 
   await expect(applications.downloadDocument(id, 7)).rejects.toMatchObject({ reason: "invalid" });
 });
 
+it("rejects Document download for an HR-added Application, which has no submitted Documents", async () => {
+  await seed(1);
+  const files = { viewUrl: vi.fn().mockResolvedValue("https://files.test/signed") };
+  const applications = applicationsFor(handle, db, files);
+  const id = await applications.addApplicant(manual);
+  expect(id).toBeLessThan(0);
+  await expect(applications.downloadDocument(id, 7)).rejects.toMatchObject({ reason: "validation" });
+  expect(files.viewUrl).not.toHaveBeenCalled();
+});
+
 it.each(["denied", "invalid", "unavailable"] as const)("document download fails closed on %s", async (reason) => {
   const restricted = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";

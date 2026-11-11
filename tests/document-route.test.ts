@@ -70,6 +70,22 @@ it("refuses Staff without the Module", async () => {
   expect((await request()).status).toBe(403);
   expect(state.viewUrl).not.toHaveBeenCalled();
 });
+it("refuses an HR-added Application id", async () => {
+  expect((await request("-1")).status).toBe(400);
+  expect(state.viewUrl).not.toHaveBeenCalled();
+});
+it("never caches a refusal", async () => {
+  for (const [id, documentId] of [["1", "8"], ["99", "7"], ["0", "7"]]) {
+    expect((await request(id, documentId)).headers.get("cache-control")).toBe("private, no-store");
+  }
+  state.handle = undefined;
+  expect((await request()).headers.get("cache-control")).toBe("private, no-store");
+});
+it("answers a File-less Document as not found without calling file-storage", async () => {
+  await db.exec("UPDATE applicant_documents SET file_id = NULL WHERE id = 7");
+  expect((await request()).status).toBe(404);
+  expect(state.viewUrl).not.toHaveBeenCalled();
+});
 it.each(["0", "-1", "NaN", "1.5", "2147483648"])("rejects invalid ids %s", async (id) => {
   expect((await request(id)).status).toBe(400);
   expect((await request("1", id)).status).toBe(400);
