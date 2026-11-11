@@ -131,7 +131,10 @@ const RESULT_MESSAGES: Record<ApplicationError["reason"], string> = {
 export async function recordInterviewResult(applicationId: number, interviewId: number, previous: ResultState, data: FormData): Promise<ResultState> {
   const result = data.get("result");
   try {
-    await (await applicationsForRequest()).recordInterviewResult(applicationId, interviewId, { score: Number(data.get("score")), result: result as "Passed" | "Not passed" });
+    await (await applicationsForRequest()).recordInterviewResult(applicationId, interviewId, { score: Number(data.get("score")), result: result as "Passed" | "Not passed",
+      ...(data.has("privateNotes") && { privateNotes: String(data.get("privateNotes")) }),
+      ...(data.has("resultEmailAt") && { resultEmailAt: String(data.get("resultEmailAt")) }),
+    });
   } catch (error) {
     if (!(error instanceof ApplicationError)) throw error;
     if (error.reason === "denied") redirect(NO_ACCESS_PATH);
@@ -139,5 +142,6 @@ export async function recordInterviewResult(applicationId: number, interviewId: 
     return { error: RESULT_MESSAGES[error.reason] };
   }
   revalidatePath(`/applicants/${applicationId}`);
+  after(() => retryApplicationNotifications());
   return { recorded: (previous.recorded ?? 0) + 1 };
 }
