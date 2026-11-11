@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { BackLink, CardTitle, PAGE, PageHeader, ProfileColumns } from "@/components/hiring/parts";
 import { ApplicationError, type ApplicationProfile } from "@/lib/applications";
+import type { Interviewer } from "@/lib/interviewers";
 import { STAGE_BADGE, canReject, detailOrDash, formatAppliedFor, formatAvailableFrom, formatSalary, formatSource, trackerSteps } from "@/lib/application-view";
 import { applicationsForRequest } from "@/lib/portal/applications";
 import { requireModule } from "@/lib/portal/staff";
@@ -77,8 +78,12 @@ function ApplicationDetails({ profile }: { profile: ApplicationProfile }) {
 
 async function Profile({ id }: { id: number }) {
   let profile: ApplicationProfile;
+  let interviewers: Interviewer[] = [];
   try {
-    profile = await (await applicationsForRequest()).readProfile(id);
+    const applications = await applicationsForRequest();
+    profile = await applications.readProfile(id);
+    // The Interviewer picker is only needed to book; the profile still opens when the Portal cannot answer.
+    if (profile.stage === "Interview") interviewers = await applications.interviewers().catch(() => []);
   } catch (error) {
     if (error instanceof ApplicationError && (error.reason === "not-found" || error.reason === "validation")) notFound();
     throw error;
@@ -92,7 +97,7 @@ async function Profile({ id }: { id: number }) {
         badge={<Badge variant={STAGE_BADGE[profile.stage]}>{profile.stage}</Badge>}
       >
         {canReject(profile.stage) && <RejectApplication applicationId={id} stage={profile.stage} applicantName={profile.applicantName} />}
-        <StageActions applicationId={id} stage={profile.stage} applicantName={profile.applicantName} jobTitle={profile.jobPostingTitle} location={profile.location} />
+        <StageActions applicationId={id} stage={profile.stage} applicantName={profile.applicantName} jobTitle={profile.jobPostingTitle} location={profile.location} interviewers={interviewers} interviews={profile.interviews} />
       </PageHeader>
       <Tracker profile={profile} />
       <ProfileColumns main={<><ApplicationDetails profile={profile} /><ApplicationInterviews applicationId={id} applicantName={profile.applicantName} jobTitle={profile.jobPostingTitle} interviews={profile.interviews} /></>} aside={<><ApplicationActivity profile={profile} /><ApplicationNotes applicationId={id} notes={profile.notes} /></>} />

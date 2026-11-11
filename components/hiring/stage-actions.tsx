@@ -2,16 +2,18 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import type { ApplicationStage } from "@/lib/applications";
+import type { ApplicationInterview, ApplicationStage } from "@/lib/applications";
+import type { Interviewer } from "@/lib/interviewers";
 import { stageActions } from "@/lib/application-view";
 import { ScheduleInterview } from "./schedule-interview";
 import { moveApplication } from "@/app/(hrms)/applicants/[id]/actions";
 
-/** The forward buttons for the current Stage. */
-export function StageActions({ applicationId, stage, applicantName, jobTitle, location }: { applicationId: number; stage: ApplicationStage; applicantName: string; jobTitle: string; location: string }) {
+/** The forward buttons for the current Stage; Schedule/Reschedule interview opens the shared dialog. */
+export function StageActions({ applicationId, stage, applicantName, jobTitle, location, interviewers, interviews }: { applicationId: number; stage: ApplicationStage; applicantName: string; jobTitle: string; location: string; interviewers: Interviewer[]; interviews: ApplicationInterview[] }) {
   const [error, setError] = useState<string>();
   const [pending, start] = useTransition();
-  const actions = stageActions(stage);
+  const booked = interviews.find((interview) => interview.result === null);
+  const actions = stageActions(stage, booked ? "booked" : interviews.length > 0 ? "done" : "none");
   if (actions.length === 0) return null;
   return (
     <>
@@ -27,7 +29,7 @@ export function StageActions({ applicationId, stage, applicantName, jobTitle, lo
             {action.label}
           </Button>
         ) : (
-          <ScheduleInterview key={action.label} applicationId={applicationId} stage={stage} applicantName={applicantName} jobTitle={jobTitle} location={location} label={action.label} />
+          <ScheduleInterview key={action.label} applicationId={applicationId} applicantName={applicantName} jobTitle={jobTitle} location={location} label={action.label} interviewers={interviewers} interview={booked} />
         ),
       )}
     </>

@@ -24,6 +24,8 @@ function Calendar({ className, classNames, ...props }: React.ComponentProps<type
         day_button:
           "inline-flex size-9 cursor-pointer items-center justify-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         today: "font-semibold text-[#5b2a86]",
+        selected: "[&>button]:bg-[#5b2a86] [&>button]:text-white [&>button]:hover:bg-[#5b2a86]",
+        disabled: "text-muted-foreground opacity-40 [&>button]:cursor-not-allowed [&>button]:hover:bg-transparent",
         outside: "text-muted-foreground opacity-50",
         range_start: "rounded-l-md bg-[#efe6f8] [&>button]:bg-[#5b2a86] [&>button]:text-white [&>button]:hover:bg-[#5b2a86]",
         range_end: "rounded-r-md bg-[#efe6f8] [&>button]:bg-[#5b2a86] [&>button]:text-white [&>button]:hover:bg-[#5b2a86]",

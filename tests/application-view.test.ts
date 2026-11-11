@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, readInterviewForm, type InterviewForm, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
+import { formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, readInterviewForm, type InterviewForm, stageActions, invitePreview, isBookableDay, manilaParts, manilaToday, slotLabel, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
 
 describe("application list view", () => {
   it("reads the page from the URL, defaulting to the first", () => {
@@ -172,8 +172,13 @@ describe("rejecting from the profile", () => {
 describe("stageActions", () => {
   it("offers the forward buttons for each Stage", () => {
     expect(stageActions("New").map((a) => a.label)).toEqual(["Move to Screening"]);
-    expect(stageActions("Screening").map((a) => a.label)).toEqual(["Schedule interview"]);
+    expect(stageActions("Screening").map((a) => a.label)).toEqual(["Move to Interview"]);
     expect(stageActions("Interview").map((a) => a.label)).toEqual(["Schedule interview", "Move to Offer"]);
+  });
+
+  it("offers Reschedule once booked and nothing to book once a result is recorded", () => {
+    expect(stageActions("Interview", "booked").map((a) => a.label)).toEqual(["Reschedule interview", "Move to Offer"]);
+    expect(stageActions("Interview", "done").map((a) => a.label)).toEqual(["Move to Offer"]);
   });
 
   it("offers no forward action from Offer onward", () => {
@@ -182,24 +187,74 @@ describe("stageActions", () => {
 });
 
 describe("schedule interview form", () => {
-  const form: InterviewForm = { type: "Online", date: "2026-10-29", start: "15:00", end: "15:30", interviewer: " Paolo Garcia ", meetingLink: "https://meet.google.com/xqp-rtke-vbn", location: "", mapLink: "" };
+  const now = Date.parse("2026-10-28T02:00:00Z"); // Wed 28 Oct 2026, 10:00 Manila
+  const form: InterviewForm = { type: "Online", date: "2026-10-29", start: "15:00", end: "15:30", interviewerId: "staff-1", interviewerName: " Paolo Garcia ", meetingLink: "https://meet.google.com/xqp-rtke-vbn", province: "", city: "", address: "", mapLink: "" };
+  const errorsOf = (changes: Partial<InterviewForm>) => readInterviewForm({ ...form, ...changes }, now).errors;
 
-  it("builds the interview in Manila time with the meeting link as the place", () => {
-    expect(readInterviewForm(form)).toEqual({ input: { startsAt: "2026-10-29T15:00:00+08:00", endsAt: "2026-10-29T15:30:00+08:00", type: "Online", interviewerName: "Paolo Garcia", location: "https://meet.google.com/xqp-rtke-vbn" } });
+  it("builds an Online interview in Manila time with its meeting link", () => {
+    expect(readInterviewForm(form, now)).toEqual({ input: { startsAt: "2026-10-29T15:00:00+08:00", endsAt: "2026-10-29T15:30:00+08:00", type: "Online", interviewerId: "staff-1", interviewerName: "Paolo Garcia", meetingLink: "https://meet.google.com/xqp-rtke-vbn" } });
   });
 
-  it("joins an in-person location with its map link", () => {
-    const result = readInterviewForm({ ...form, type: "In person", location: "Cainta branch", mapLink: "https://maps.app.goo.gl/x" });
-    expect(result.input?.location).toBe("Cainta branch · https://maps.app.goo.gl/x");
-    expect(readInterviewForm({ ...form, type: "In person", location: "Cainta branch" }).input?.location).toBe("Cainta branch");
+  it("builds an In person interview from province, city, address and an optional map link", () => {
+    const place = { type: "In person" as const, meetingLink: "", province: "Rizal", city: "Cainta", address: " 12 Rizal Ave ", mapLink: "" };
+    expect(readInterviewForm({ ...form, ...place }, now).input).toEqual({ startsAt: "2026-10-29T15:00:00+08:00", endsAt: "2026-10-29T15:30:00+08:00", type: "In person", interviewerId: "staff-1", interviewerName: "Paolo Garcia", province: "Rizal", city: "Cainta", address: "12 Rizal Ave" });
+    expect(readInterviewForm({ ...form, ...place, mapLink: "https://maps.app.goo.gl/x" }, now).input?.mapLink).toBe("https://maps.app.goo.gl/x");
   });
 
-  it("names every missing or invalid field", () => {
-    expect(readInterviewForm({ ...form, date: "", start: "", end: "", interviewer: " ", meetingLink: "" }).errors).toEqual({
-      date: "Choose a date.", start: "Choose a start time.", end: "Choose an end time.", interviewer: "Enter the interviewer.", place: "Enter the meeting link.",
+  it("names every missing field", () => {
+    expect(errorsOf({ date: "", start: "", end: "", interviewerId: "", meetingLink: "" })).toEqual({
+      date: "Choose a date.", start: "Choose a start time.", end: "Choose an end time.", interviewer: "Choose an interviewer.", meetingLink: "Enter the meeting link.",
     });
-    expect(readInterviewForm({ ...form, type: "In person", location: "" }).errors).toEqual({ place: "Enter the location." });
-    expect(readInterviewForm({ ...form, end: "15:00" }).errors).toEqual({ end: "End time must be after the start." });
+    expect(errorsOf({ type: "In person", meetingLink: "" })).toEqual({ province: "Choose a province.", city: "Choose a city or municipality.", address: "Enter the street, building and barangay." });
+  });
+
+  it("refuses times outside 8 AM to 5 PM with a message", () => {
+    expect(errorsOf({ start: "07:30", end: "08:30" })).toEqual({ start: "Start time must be 8:00 AM or later." });
+    expect(errorsOf({ start: "16:30", end: "17:30" })).toEqual({ end: "End time must be 5:00 PM or earlier." });
+    expect(errorsOf({ start: "17:00", end: "17:30" })).toEqual({ start: "Start time must be before 5:00 PM.", end: "End time must be 5:00 PM or earlier." });
+    expect(errorsOf({ start: "08:00", end: "17:00" })).toBeUndefined();
+    expect(errorsOf({ end: "15:00" })).toEqual({ end: "End time must be after the start." });
+  });
+
+  it("refuses past days, weekends and a start that has already passed today", () => {
+    expect(errorsOf({ date: "2026-10-27" })).toEqual({ date: "Choose a weekday that is not in the past." });
+    expect(errorsOf({ date: "2026-10-31" })).toEqual({ date: "Choose a weekday that is not in the past." }); // Saturday
+    expect(errorsOf({ date: "2026-10-28", start: "09:00", end: "09:30" })).toEqual({ start: "That start time has already passed." });
+    expect(errorsOf({ date: "2026-10-28", start: "10:30", end: "11:00" })).toBeUndefined();
+  });
+
+  it("requires links to be web addresses", () => {
+    expect(errorsOf({ meetingLink: "meet me tomorrow" })).toEqual({ meetingLink: "Enter a valid link starting with https://." });
+    expect(errorsOf({ type: "In person", meetingLink: "", province: "Rizal", city: "Cainta", address: "x", mapLink: "nope" })).toEqual({ mapLink: "Enter a valid link starting with https://." });
+  });
+});
+
+describe("interview scheduling helpers", () => {
+  it("tells a bookable day from a past day or a weekend, in Manila time", () => {
+    const now = Date.parse("2026-10-28T18:00:00Z"); // 02:00 Thu 29 Oct in Manila
+    expect(manilaToday(now)).toBe("2026-10-29");
+    expect(isBookableDay("2026-10-28", now)).toBe(false);
+    expect(isBookableDay("2026-10-29", now)).toBe(true);
+    expect(isBookableDay("2026-10-31", now)).toBe(false);
+    expect(isBookableDay("2026-11-01", now)).toBe(false);
+    expect(isBookableDay("2026-11-02", now)).toBe(true);
+    expect(isBookableDay("not a date", now)).toBe(false);
+  });
+
+  it("reads Manila date and time from an instant and labels a free slot", () => {
+    expect(manilaParts("2026-10-29T07:30:00Z")).toEqual({ date: "2026-10-29", time: "15:30" });
+    expect(slotLabel("2026-10-29T06:00:00Z", "2026-10-29T06:45:00Z")).toBe("Thu 29 Oct · 2:00 – 2:45 PM");
+  });
+
+  it("previews the invite in fixed wording for both interview types", () => {
+    const base = { applicantName: "Ellaine Torres", jobTitle: "Branch Cashier", date: "2026-10-29", start: "15:00", end: "15:30", interviewerName: "Paolo Garcia", province: "Rizal", city: "Cainta", address: "12 Rizal Ave", mapLink: "", meetingLink: "https://meet.google.com/x" };
+    const online = invitePreview({ ...base, type: "Online" });
+    expect(online.subject).toBe("Your interview for Branch Cashier");
+    expect(online.lines).toContain("Hi Ellaine,");
+    expect(online.lines.join("\n")).toContain("Thursday, 29 October 2026, 3:00 PM – 3:30 PM (Manila time)");
+    expect(online.lines).toContain("Join online: https://meet.google.com/x");
+    expect(invitePreview({ ...base, type: "In person", mapLink: "https://maps.app.goo.gl/x" }).lines).toContain("Venue: 12 Rizal Ave, Cainta, Rizal\nMap: https://maps.app.goo.gl/x");
+    expect(invitePreview({ ...base, type: "Online", date: "", meetingLink: "" }).lines.join("\n")).toContain("When: To be set");
   });
 });
 
