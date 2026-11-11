@@ -1,5 +1,7 @@
 "use server";
 
+import { after } from "next/server";
+import { retryApplicationNotifications } from "@/lib/application-notifications";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { ApplicationError, type ApplicationStage, type InterviewInput } from "@/lib/applications";
@@ -108,6 +110,7 @@ export async function saveInterview(applicationId: number, stage: ApplicationSta
     if (error.reason === "invalid") redirect(LOGIN_PATH);
     return { error: error.detail ?? SCHEDULE_MESSAGES[error.reason], conflicts: error.conflicts, freeSlots: error.freeSlots };
   }
+  after(() => retryApplicationNotifications());
   revalidatePath(`/applicants/${applicationId}`);
   revalidatePath("/applicants");
   return { saved: true };
