@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { applicationsFor } from "@/lib/applications";
+import { INTERVIEWER_COLOURS } from "@/lib/interviewers";
 import { needsAttentionSummary } from "@/lib/dashboard-data";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
@@ -938,4 +939,62 @@ it("keeps the Interview Stage date tied to a move rather than a booking", async 
   expect(reachedAt).not.toEqual(new Date(interview.startsAt));
   await applications.moveStage(id, "Interview", "Rejected");
   expect((await applications.readProfile(id)).stageDates.Interview).toEqual(reachedAt);
+});
+
+
+it("lists only Recruitment and Hiring Interviewers with Portal display names and stable colours", async () => {
+  portal.directory = [
+    { id: "staff-1", username: "ada", name: "Ada Okafor", modules: ["Recruitment and Hiring"] },
+    { id: "staff-2", username: "pay", name: "Payroll Staff", modules: ["Payroll & ESS"] },
+  ];
+  const applications = applicationsFor(handle, db);
+  const first = await applications.interviewers();
+  expect(first).toEqual([{ id: "staff-1", name: "Ada Okafor", colour: expect.stringMatching(/^#[0-9a-f]{6}$/i) }]);
+  portal.directory.unshift({ id: "staff-0", username: "ben", name: "Ben Santos", modules: ["Recruitment and Hiring"] });
+  portal.directory.reverse();
+  expect((await applications.interviewers()).find(member => member.id === "staff-1")).toEqual(first[0]);
+});
+
+
+it("repeats the fixed palette for a large directory and keeps colours across reads", async () => {
+  portal.directory = Array.from({ length: 30 }, (_, index) => ({ id: `staff-${index}`, username: `staff${index}`, name: `Staff ${index}`, modules: ["Recruitment and Hiring"] }));
+  const applications = applicationsFor(handle, db);
+  const first = await applications.interviewers();
+  expect(first).toHaveLength(30);
+  expect(first.every(member => INTERVIEWER_COLOURS.includes(member.colour as typeof INTERVIEWER_COLOURS[number]))).toBe(true);
+  expect(new Set(first.map(member => member.colour)).size).toBeLessThan(first.length);
+  portal.directory.reverse();
+  expect(await applications.interviewers()).toEqual(first);
+});
+
+it("reports a directory outage and recovers on the next read without caching it", async () => {
+  const applications = applicationsFor(handle, db);
+  const boundary = portalFetch(portal);
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith("/recipients") ? Promise.resolve(Response.json({}, { status: 503 })) : boundary(input, init));
+  await expect(applications.interviewers()).rejects.toMatchObject({ reason: "unavailable" });
+  vi.stubGlobal("fetch", boundary);
+  expect(await applications.interviewers()).toEqual([]);
+  portal.directory = [{ id: "ada", username: "ada", name: "Ada Okafor", modules: ["Recruitment and Hiring"] }];
+  expect(await applications.interviewers()).toMatchObject([{ id: "ada", name: "Ada Okafor" }]);
+});
+
+it.each([
+  { staff: [{ id: "ada", username: "ada", modules: ["Recruitment and Hiring"] }] },
+  { staff: [null] },
+  { staff: [{ id: "ada", name: "Ada", modules: "Recruitment and Hiring" }] },
+  { staff: [{ id: "", name: "Ada", modules: ["Recruitment and Hiring"] }] },
+  { staff: [{ id: "ada", name: " ", modules: ["Recruitment and Hiring"] }] },
+  { staff: null },
+])("reports malformed directory data as unavailable: %j", async body => {
+  const boundary = portalFetch(portal);
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith("/recipients") ? Promise.resolve(Response.json(body)) : boundary(input, init));
+  await expect(applicationsFor(handle, db).interviewers()).rejects.toMatchObject({ reason: "unavailable" });
+});
+
+it("requires Recruitment and Hiring before reading the Interviewer directory", async () => {
+  const denied = portal.signIn(staff, ["Dashboard"]);
+  await expect(applicationsFor(denied, db).interviewers()).rejects.toMatchObject({ reason: "denied" });
+  await expect(applicationsFor(undefined, db).interviewers()).rejects.toMatchObject({ reason: "invalid" });
 });

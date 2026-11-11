@@ -21,7 +21,7 @@ export class FakePortal {
   private nextHandle = 1;
 
   /** Staff the recipients directory lists, with the Modules each holds. */
-  directory: { id: string; username: string; modules: string[] }[] = [];
+  directory: { id: string; username: string; name?: string; modules: string[] }[] = [];
 
   /** The Portal cannot decide: it answers 503 until restored. */
   unavailable = false;
