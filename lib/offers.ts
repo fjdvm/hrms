@@ -2,6 +2,7 @@ import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 import { listStaffNames } from "./portal/client";
 import { isValidDate } from "./offer-terms";
+import { OFFER_ANSWERS, replyEmail, type OfferReply } from "./offer-reply";
 import {
   DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS, matchDocumentType, requestEmail, requestProblem, requestSummary,
   type DocumentRequestInput, type DocumentStatus, type DocumentType,
@@ -42,13 +43,15 @@ export type OfferDraft = OfferTerms & {
   branch: string;
   status: OfferDisplayStatus;
 };
-export type OfferActivityKind = "sent" | "reply-by-extended" | "email-scheduled" | "email-sent" | "documents-requested";
+export type OfferActivityKind = "sent" | "accepted" | "declined" | "reply-by-extended" | "email-scheduled" | "email-sent" | "documents-requested";
 export type OfferActivity = { kind: OfferActivityKind; actorName: string | null; detail: string | null; occurredAt: Date };
 export type OfferStageName = "New" | "Screening" | "Interview" | "Offer" | "Hired" | "Rejected" | "Withdrawn";
 /** Everything the Offer page shows. */
 export type OfferDetail = OfferDraft & {
   sentAt: Date | null;
   replyBy: string | null;
+  /** When the Applicant's reply came in, once there is one. */
+  repliedAt: Date | null;
   stage: OfferStageName;
   stageDates: Partial<Record<OfferStageName, Date>>;
   activity: OfferActivity[];
@@ -86,7 +89,7 @@ const validApplicationId = (id: unknown) => Number.isInteger(id) && id !== 0 && 
 type OfferRow = {
   id: number; applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string;
   monthlySalary: number; startDate: string; employmentType: EmploymentType; schedule: string; probation: ProbationPeriod;
-  reportsTo: string; sentAt: string | null; replyBy: string | null; status: OfferDisplayStatus;
+  reportsTo: string; sentAt: string | null; replyBy: string | null; repliedAt: string | null; status: OfferDisplayStatus;
 };
 
 const SELECT_OFFERS = `
@@ -94,7 +97,7 @@ const SELECT_OFFERS = `
     a.applicant_email AS "applicantEmail", a.job_posting_title AS role, o.branch,
     o.monthly_salary AS "monthlySalary", o.start_date::text AS "startDate",
     o.employment_type AS "employmentType", o.schedule, o.probation, o.reports_to AS "reportsTo",
-    o.sent_at AS "sentAt", o.reply_by::text AS "replyBy",
+    o.sent_at AS "sentAt", o.reply_by::text AS "replyBy", o.replied_at AS "repliedAt",
     CASE WHEN a.stage = 'Withdrawn' THEN 'Withdrawn' ELSE o.status END AS status
   FROM public.hrms_offers o
   JOIN public.hrms_all_applications a ON a.id = o.application_id`;
@@ -153,8 +156,8 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       if (!validId(id)) throw new OfferError("validation");
       const { rows } = await db.query<OfferRow>(`${SELECT_OFFERS} WHERE o.id = $1`, [id]);
       if (!rows[0]) throw new OfferError("not-found");
-      const { sentAt, replyBy, ...draft } = rows[0];
-      void sentAt; void replyBy;
+      const { sentAt, replyBy, repliedAt, ...draft } = rows[0];
+      void sentAt; void replyBy; void repliedAt;
       return draft;
     },
     /** The Offer page: terms, dates, stage dates and history. */
@@ -170,9 +173,9 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
         FROM (${SELECT_OFFERS} WHERE o.id = $1) x
         JOIN public.hrms_all_applications a ON a.id = x."applicationId"`, [id]);
       if (!rows[0]) throw new OfferError("not-found");
-      const { sentAt, stageDates, activity, ...rest } = rows[0];
+      const { sentAt, repliedAt, stageDates, activity, ...rest } = rows[0];
       return {
-        ...rest, sentAt: sentAt ? new Date(sentAt) : null,
+        ...rest, sentAt: sentAt ? new Date(sentAt) : null, repliedAt: repliedAt ? new Date(repliedAt) : null,
         stageDates: Object.fromEntries(Object.entries(stageDates).map(([stage, date]) => [stage, new Date(date)])),
         activity: activity.map((entry) => ({ ...entry, occurredAt: new Date(entry.occurredAt) })),
       };
@@ -235,6 +238,70 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       if (row.updated) return;
       if (row.status === null) throw new OfferError("not-found");
       throw new OfferError(row.status === "Sent" && row.stage !== "Withdrawn" ? "validation" : "conflict");
+    },
+    /**
+     * Records the Applicant's reply to a Sent Offer. It is final. Declining moves the Application to Rejected
+     * with its history, accepting leaves the Stage at Offer. The reply email is queued for `sendAt` (null: now)
+     * and cannot be edited or cancelled. A Withdrawn Application's Offer allows nothing. One statement or nothing.
+     */
+    async recordReply(id: number, reply: OfferReply): Promise<void> {
+      const staff = await authorise();
+      const repliedAt = new Date(reply.repliedAt);
+      const sendAt = reply.sendAt === null ? null : new Date(reply.sendAt);
+      const now = Date.now();
+      if (!validId(id) || !OFFER_ANSWERS.includes(reply.answer) || !Number.isFinite(repliedAt.getTime()) || repliedAt.getTime() > now + 60_000
+        || (sendAt !== null && (!Number.isFinite(sendAt.getTime()) || sendAt.getTime() < now - 60_000))) throw new OfferError("validation");
+      const { rows: found } = await db.query<OfferRow>(`${SELECT_OFFERS} WHERE o.id = $1`, [id]);
+      const offer = found[0];
+      if (!offer) throw new OfferError("not-found");
+      if (offer.status !== "Sent") throw new OfferError("conflict");
+      if (offer.sentAt && repliedAt < new Date(offer.sentAt)) throw new OfferError("validation");
+      const email = replyEmail(reply.answer, { applicantName: offer.applicantName, role: offer.role, startDate: offer.startDate });
+      const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
+      const kind = reply.answer === "Accepted" ? "accepted" : "declined";
+      const { rows } = await db.query<{ recorded: boolean }>(`
+        WITH replied AS (
+          UPDATE public.hrms_offers o SET status = $2, replied_at = $3::timestamptz, updated_at = clock_timestamp()
+          FROM public.hrms_all_applications a
+          WHERE o.id = $1 AND o.status = 'Sent' AND a.id = o.application_id AND a.stage = 'Offer'
+          RETURNING o.id, o.application_id
+        ), moved_careers AS (
+          UPDATE public.applications SET status = 'Rejected', updated_at = statement_timestamp()
+          WHERE id = (SELECT application_id FROM replied) AND status = 'Offer' AND $2 = 'Declined'
+          RETURNING id, applicant_id, updated_at
+        ), moved_manual AS (
+          UPDATE public.hrms_manual_applications SET status = 'Rejected', updated_at = statement_timestamp()
+          WHERE id = (SELECT application_id FROM replied) AND status = 'Offer' AND $2 = 'Declined'
+          RETURNING id, NULL::text AS applicant_id, updated_at
+        ), moved AS (
+          SELECT * FROM moved_careers UNION ALL SELECT * FROM moved_manual
+        ), history AS (
+          INSERT INTO public.hrms_application_stage_history (application_id, stage, reached_at)
+          SELECT id, 'Rejected', updated_at FROM moved
+        ), stage_activity AS (
+          INSERT INTO public.hrms_application_activity (application_id, from_stage, to_stage, actor_name, reason, occurred_at)
+          SELECT id, 'Offer', 'Rejected', $4, 'Declined the offer', updated_at FROM moved
+        ), notification AS (
+          INSERT INTO public.hrms_application_notifications (id, payload)
+          SELECT 'application.stage:' || m.id || ':Rejected', jsonb_build_object(
+            'sendingApp', 'hrms', 'targetApp', 'careers', 'userIds', jsonb_build_array(m.applicant_id),
+            'type', 'application.rejected', 'title', 'Application update: Rejected',
+            'body', 'Thank you for your interest. Your Application was not selected.',
+            'idempotencyKey', 'application.stage:' || m.id || ':Rejected')
+          FROM moved m WHERE m.applicant_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = m.applicant_id)
+          ON CONFLICT (id) DO NOTHING
+        ), activity AS (
+          INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail, occurred_at)
+          SELECT id, $5, $4, 'Reply received', $3::timestamptz FROM replied
+          UNION ALL SELECT id, 'email-scheduled', NULL, $6, clock_timestamp() FROM replied
+        ), email AS (
+          INSERT INTO public.hrms_offer_emails (id, offer_id, payload, next_attempt_at)
+          SELECT 'offer.' || $5 || ':' || id, id, $7::jsonb, COALESCE($8::timestamptz, clock_timestamp()) FROM replied
+        )
+        SELECT EXISTS (SELECT 1 FROM replied) AS recorded`,
+      [id, reply.answer, repliedAt.toISOString(), staff.name, kind, `Email to ${offer.applicantEmail}`, JSON.stringify(payload), sendAt?.toISOString() ?? null]);
+      if (!rows[0].recorded) throw new OfferError("conflict");
     },
     /**
      * The seven Pre-employment Documents with their status. One the Applicant already sent with the Application

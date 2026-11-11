@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { deliverOfferEmails } from "@/lib/offer-emails";
 import { revalidatePath } from "next/cache";
 import { OfferError } from "@/lib/offers";
+import { manilaToInstant } from "@/lib/offer-reply";
 import { requestProblem, type DocumentType } from "@/lib/offer-documents";
 import { TERM_FIELDS, readOfferForm, type OfferFormErrors } from "@/lib/offer-view";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
@@ -69,6 +70,24 @@ export async function sendOffer(offerId: number, replyBy: string): Promise<{ err
   after(() => deliverOfferEmails());
   revalidatePath("/offers");
   redirect(`/offers/${offerId}`);
+}
+
+/** Records the Applicant's reply. `repliedAt` and `sendAt` are Manila wall-clock times ("YYYY-MM-DDTHH:mm"); no `sendAt` means the email goes out now. */
+export async function recordReply(offerId: number, answer: string, repliedAt: string, sendAt: string | null): Promise<{ error?: string }> {
+  const replied = manilaToInstant(repliedAt);
+  const send = sendAt === null ? null : manilaToInstant(sendAt);
+  if (!replied || (sendAt !== null && !send) || (answer !== "Accepted" && answer !== "Declined")) return { error: "Check the answer and the times and try again." };
+  try {
+    await (await offersForRequest()).recordReply(offerId, { answer, repliedAt: replied, sendAt: send });
+  } catch (error) {
+    if (error instanceof OfferError && error.reason === "validation") return { error: "The reply can't have come in before the offer was sent or in the future, and the email can't be sent in the past." };
+    if (error instanceof OfferError && error.reason === "conflict") return { error: "This offer has already been answered or can no longer be answered. Replies are final." };
+    return { error: fail(error) };
+  }
+  after(() => deliverOfferEmails());
+  revalidatePath("/offers");
+  revalidatePath(`/offers/${offerId}`);
+  return {};
 }
 
 /** Gives a Sent offer more time to reply. */
