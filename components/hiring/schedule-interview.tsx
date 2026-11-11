@@ -233,16 +233,20 @@ type Props = {
   interview?: ApplicationInterview;
   /** "YYYY-MM-DD" in Manila; defaults to today. Tests pin it. */
   today?: string;
+  /** The filled button with a calendar icon the Interviews list uses, instead of the outlined profile one. */
+  compact?: boolean;
 };
 
 /** The one Schedule interview dialog: books an Interview, or reschedules `interview`. Used on the Application profile and the Interviews tab. */
-export function ScheduleInterview({ label, today, ...props }: Props) {
+export function ScheduleInterview({ label, today, compact, ...props }: Props) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] text-sm font-medium shadow-none">{label}</Button>
+        {compact
+          ? <Button className="h-auto gap-[6px] rounded-lg px-[12px] py-[6px] text-[13px] font-medium shadow-none [&_svg]:size-[14px]"><CalendarIcon /> {label}</Button>
+          : <Button variant="outline" className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] text-sm font-medium shadow-none">{label}</Button>}
       </DialogTrigger>
       <DialogContent
         showClose={false}
