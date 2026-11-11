@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { applicationsFor } from "@/lib/applications";
+import { needsAttentionSummary } from "@/lib/dashboard-data";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
 let db: PGlite;
@@ -481,6 +482,7 @@ const interview = { startsAt: '2026-11-03T09:00:00+08:00', endsAt: '2026-11-03T1
 it('books without moving Stage, then permits moving to Interview without another booking', async () => {
   const id = await seed(1, 'Screening');
   const applications = applicationsFor(handle, db);
+  expect((await needsAttentionSummary(new Date(), db)).toSchedule.count).toBe(0);
   await applications.scheduleInterview(id, 'Screening', interview);
   const profile = await applications.readProfile(id);
   expect(profile.stage).toBe('Screening');
@@ -492,6 +494,7 @@ it('books without moving Stage, then permits moving to Interview without another
   const unbooked = await seed(2, 'Screening');
   await applications.moveStage(unbooked, 'Screening', 'Interview');
   expect(await applications.readProfile(unbooked)).toMatchObject({ stage: 'Interview', interviews: [] });
+  expect((await needsAttentionSummary(new Date(), db)).toSchedule.count).toBe(1);
 });
 
 it('settles concurrent bookings with one Interview and one activity', async () => {
@@ -909,8 +912,8 @@ it("preserves legacy rounds and their activity while migrating the current Inter
     VALUES ($1, '2020-01-01T01:00:00Z', '2020-01-01T02:00:00Z', 'In person', 'Legacy Staff', 'Original office address', 4, 'Passed')`, [id]);
   await db.query(`INSERT INTO hrms_application_interviews (application_id, starts_at, ends_at, type, interviewer_name, location)
     VALUES ($1, '2020-01-02T01:00:00Z', '2020-01-02T02:00:00Z', 'Online', 'Other Staff', 'Original meeting link')`, [id]);
-  await db.query(`INSERT INTO hrms_application_activity (application_id, from_stage, to_stage, actor_name, interview_id)
-    VALUES ($1, 'Interview', 'Interview', 'HR Staff', 1), ($1, 'Interview', 'Interview', 'HR Staff', 2)`, [id]);
+  await db.query(`INSERT INTO hrms_application_activity (application_id, from_stage, to_stage, actor_name, interview_id, occurred_at)
+    VALUES ($1, 'Interview', 'Interview', 'HR Staff', 1, now()), ($1, 'Interview', 'Interview', 'HR Staff', 2, now())`, [id]);
   await db.exec(await readFile(new URL("0021-interview-model.sql", directory), "utf8"));
   const profile = await applicationsFor(handle, db).readProfile(id);
   expect(profile.interviews).toMatchObject([{ id: 2, type: "Online", interviewerName: "Other Staff", interviewerId: null,
