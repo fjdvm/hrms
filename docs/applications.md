@@ -162,8 +162,8 @@ HR-added ids are negative (counting down from -1) so they never collide with Car
 ids and behave as for any Application. The profile returns the added name, email, mobile, address,
 expected salary and availability, and every Job Posting Required Document as `Requested` (HR-added
 Applications have no submitted documents). The Stage lives in `hrms_manual_applications.status`;
-history, activity, interviews and notes use the shared HRMS tables. No Applicant notification is
-queued, since there is no Careers user. Document download rejects these ids with `validation`, as they have no submitted documents.
+history, activity, interviews and notes use the shared HRMS tables. Stage changes do not queue a Careers notification for HR-added Applications. Interview
+invites always send email, and also notify a matching Careers account when one exists. Document download rejects these ids with `validation`, as they have no submitted documents.
 Migration `0018-manual-application-workflow.sql` adds the status column and drops the foreign keys
 from those HRMS tables to Careers' `applications` so they can hold HR-added ids. Run `npm run db:migrate`.
 
@@ -189,8 +189,16 @@ serializes Interview saves with an advisory transaction lock, locks the
 Application against concurrent Stage changes, and writes the Interview and
 activity together. The lock is intentionally global for this low-volume HR
 workflow, including moves between Interviewers. Existing rows are unchanged.
-Invite delivery is handled by follow-up #271; saves make no external delivery
-call. The shared Schedule interview dialog (`components/hiring/schedule-interview.tsx`)
+Migration `0024-interview-invites.sql` adds a channel to the notification outbox
+and queues invite email plus a Careers notification atomically with each booking
+or reschedule. Everyone receives email; Careers recipients must have an account,
+resolved by Applicant id for Careers Applications or profile email for HR-added
+Applications. The fixed wording is shared with the read-only invite preview;
+updated invites have an "Updated:" title. Online email has a Join meeting button;
+In person email has View map only when a map link was supplied. Stage notifications
+remain brief and separate. The server action drains the outbox after the response;
+the existing cron retries failed deliveries with stable per-event/channel keys.
+Older callers without invite data remain compatible during migration rollout. The shared Schedule interview dialog (`components/hiring/schedule-interview.tsx`)
 calls the `saveInterview` server action, which books or, given an Interview id,
 reschedules. Screening now offers Move to Interview; booking never moves a Stage.
 Client-side checks (`lib/interview-form.ts`) only guide HR; the server decides.

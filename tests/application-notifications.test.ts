@@ -233,3 +233,34 @@ it('retains a saved Interview when email fails, retries its stable key, and deli
     expect(new Set(attempts.slice(3).map(a => a.key)).size).toBe(2);
   } finally { log.mockRestore(); }
 });
+
+
+it('also tells a manually-added Applicant whose email belongs to a Careers account', async () => {
+  await seed(1);
+  await seed(2);
+  await db.exec(`INSERT INTO neon_auth."user" VALUES ('person-1')`);
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  const sends: Record<string, unknown>[] = [];
+  const boundary = portalFetch(portal);
+  vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
+  vi.stubEnv('API_GATEWAY_KEY', 'key');
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).startsWith('https://gateway.test')) return boundary(input, init);
+    sends.push(JSON.parse(String(init?.body)));
+    return new Response(null, { status: 202 });
+  });
+  const applications = applicationsFor(handle, db);
+  const id = await applications.addApplicant({ fullName: 'Applicant One', email: 'PERSON1@example.test', mobile: '09171234567', address: 'Manila', jobPostingId: 'posting-2', expectedSalary: 20000, availableFrom: '2099-11-01', source: 'Referral', referredBy: 'Ada' });
+  await applications.moveStage(id, 'New', 'Screening');
+  await applications.moveStage(id, 'Screening', 'Interview');
+  await applications.scheduleInterview(id, 'Interview', invite);
+  await retryApplicationNotifications(db);
+  expect(sends).toHaveLength(2);
+  expect(sends).toContainEqual(expect.objectContaining({ userIds: ['person-1'], type: 'interview.invite' }));
+  expect(sends).toContainEqual(expect.objectContaining({ to: 'PERSON1@example.test', app: 'HRMS' }));
+  const booked = (await applications.readProfile(id)).interviews[0];
+  await applications.rescheduleInterview(id, booked.id, { ...invite, startsAt: '2099-11-03T11:00:00+08:00', endsAt: '2099-11-03T12:00:00+08:00' });
+  await retryApplicationNotifications(db);
+  expect(sends).toHaveLength(4);
+  expect(sends.slice(2)).toContainEqual(expect.objectContaining({ userIds: ['person-1'], title: 'Updated: Your online interview for Cashier' }));
+});

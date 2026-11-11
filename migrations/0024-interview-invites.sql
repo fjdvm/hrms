@@ -52,6 +52,8 @@ BEGIN
   END IF;
   INSERT INTO public.hrms_application_activity(application_id, from_stage, to_stage, actor_name, interview_id, reason, occurred_at)
     VALUES (p_application, 'Interview', 'Interview', p_actor, booked_id, CASE WHEN p_interview IS NOT NULL THEN 'Interview rescheduled' END, clock_timestamp());
+  -- Older deployed callers may omit notification during the migration/deploy window.
+  IF p_details->'notification' IS NOT NULL THEN
   -- The Interview and both delivery intents commit together. Retries never rebook it.
   INSERT INTO public.hrms_application_notifications(id, channel, payload)
     SELECT 'interview.email:' || (p_details->'notification'->>'eventId'), 'email',
@@ -68,8 +70,14 @@ BEGIN
         'type', 'interview.invite', 'title', p_details->'notification'->>'title',
         'body', p_details->'notification'->>'body',
         'idempotencyKey', 'interview.careers:' || (p_details->'notification'->>'eventId'))
-    FROM public.applications c WHERE c.id = p_application
-      AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = c.applicant_id);
+    FROM (
+      SELECT applicant_id FROM public.applications WHERE id = p_application
+      UNION
+      SELECT p.applicant_id FROM public.hrms_manual_applications m
+        JOIN public.applicant_profiles p ON lower(p.email) = lower(m.email)
+        WHERE m.id = p_application
+    ) c WHERE EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = c.applicant_id);
+  END IF;
   RETURN jsonb_build_object('id', booked_id);
 END;
 $$;
