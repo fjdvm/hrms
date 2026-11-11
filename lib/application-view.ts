@@ -185,10 +185,10 @@ export function activityEntries({ activity, interviews, jobPostingTitle, applied
   return [...entries, { tone: "purple", title: "Applied", detail: `${day(appliedAt)} · ${jobPostingTitle}` }];
 }
 
-export type InterviewRow = { date: string; time: string; type: string; interviewer: string; score: string; status: "Scheduled" | "Completed" | "Dropped" };
+export type InterviewRow = { date: string; time: string; type: string; interviewer: string; score: string; status: "Scheduled" | "Completed" | "Dropped"; /** Still to be held: it can be rescheduled and given a result. */ live: boolean };
 
 /** One line of the profile's Interviews card: "30 Oct 2026", "10:00 – 10:45 AM", "In person · Cainta branch". Completed once a result is recorded. */
-export function interviewRow(interview: ApplicationInterview, stage: ApplicationStage = "Interview"): InterviewRow {
+export function interviewRow(interview: ApplicationInterview, stage: ApplicationStage): InterviewRow {
   const clock = (date: Date) => manila(date, { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
   const [start, end] = [clock(interview.startsAt), clock(interview.endsAt)];
   const meridiem = (text: string) => text.slice(-2);
@@ -200,6 +200,7 @@ export function interviewRow(interview: ApplicationInterview, stage: Application
     score: interview.score === null ? "—" : `${interview.score} / 5`,
     // An Interview with no result whose Application left the Interview Stage is not taking place: off the Calendar, kept here.
     status: interview.result !== null ? "Completed" : stage === "Interview" ? "Scheduled" : "Dropped",
+    live: interview.result === null && stage === "Interview",
   };
 }
 

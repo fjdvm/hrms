@@ -85,6 +85,9 @@ A Key Summary Card, owned by Recruitment and Hiring, that shows how many Applica
 **Interviews this week**:
 A Key Summary Card, owned by Recruitment and Hiring, that shows how many Interviews start in the current Monday-to-Sunday week (Manila time), finished ones included, with how many start today. It shows 0, not "Nothing to show yet", when there are none. It is not affected by the Dashboard Range and makes no comparison.
 
+**Dropped Interview**:
+An Interview with no result whose Application has left the Interview Stage (Rejected, Withdrawn, or moved on). It is treated as not taking place: off the list and Calendar and ignored by conflicts, but kept on the Application profile's Interviews table, where its status reads "Dropped". Rescheduling and recording a result are no longer offered.
+
 **Decided offer**:
 An Application that reached the Offer Stage and then left it with an answer: reached Hired (accepted) or Rejected (not accepted). It is dated by when it was decided, not when the offer was made. An offer still waiting is not a decided offer. An Applicant who withdraws after an offer has no decision date to read, so is not counted.
 
