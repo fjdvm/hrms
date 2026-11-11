@@ -110,7 +110,11 @@ it("totals jobs, Interviews this week and Interviews today in Manila time", asyn
     await book(ids[1], "2026-11-13T01:00:00Z", "2026-11-13T02:00:00Z"); // Fri, this week
     await book(ids[2], "2026-11-16T01:00:00Z", "2026-11-16T02:00:00Z"); // next week
     await book(ids[3], "2026-11-10T16:30:00Z", "2026-11-10T17:30:00Z"); // 00:30 Manila on the 11th: today
-    expect((await applicationsFor(handle, db).interviewJobs()).totals).toEqual({ jobs: 5, interviewsThisWeek: 3, interviewsToday: 2 });
+    // Finished Interviews still count, matching the Dashboard.
+    const done = await seed(6, "Offer");
+    const doneId = await book(done, "2026-11-10T01:00:00Z", "2026-11-10T02:00:00Z");
+    await db.query("UPDATE hrms_application_interviews SET result = 'Passed', score = 4 WHERE id = $1", [doneId]);
+    expect((await applicationsFor(handle, db).interviewJobs()).totals).toEqual({ jobs: 5, interviewsThisWeek: 4, interviewsToday: 2 });
   } finally { vi.useRealTimers(); }
 });
 

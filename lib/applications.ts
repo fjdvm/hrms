@@ -5,6 +5,7 @@ import { listModuleStaff } from "./portal/client";
 import { INTERVIEWER_COLOURS, type Interviewer } from "./interviewers";
 import { gatewayDocumentFiles, type DocumentFiles } from "@/lib/document-files";
 import { MANUAL_SOURCES, type ApplicationSource, type ManualSource } from "./application-sources";
+import { interviewsSummary } from "./dashboard-data";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 
@@ -465,15 +466,12 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     async interviewJobs(): Promise<{ jobs: InterviewJobSummary[]; totals: { jobs: number; interviewsThisWeek: number; interviewsToday: number } }> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
-      const { rows } = await db.query<{ jobs: (Omit<InterviewJobSummary, "nextInterview"> & { next: { applicantName: string; startsAt: string; interviewerName: string } | null })[]; this_week: number; today: number }>(`
+      const { rows } = await db.query<{ jobs: (Omit<InterviewJobSummary, "nextInterview"> & { next: { applicantName: string; startsAt: string; interviewerName: string } | null })[] }>(`
         WITH live AS (
           SELECT a.id, a.applicant_name, a.job_posting_id, i.starts_at, i.interviewer_name
           FROM public.hrms_all_applications a
           LEFT JOIN public.hrms_application_interviews i ON i.application_id = a.id AND i.result IS NULL
           WHERE a.stage = 'Interview'
-        ), bounds AS (
-          SELECT date_trunc('day', $1::timestamptz AT TIME ZONE 'Asia/Manila') AS today,
-            date_trunc('week', $1::timestamptz AT TIME ZONE 'Asia/Manila') AS week
         )
         SELECT COALESCE((SELECT jsonb_agg(to_jsonb(card) ORDER BY card.title, card."jobPostingId") FROM (
           SELECT j.id AS "jobPostingId", j.title, j.location, j.employment_type AS "employmentType",
@@ -485,15 +483,10 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
               ORDER BY n.starts_at, n.id LIMIT 1) AS next
           FROM live l JOIN public.job_postings j ON j.id = l.job_posting_id
           GROUP BY j.id, j.title, j.location, j.employment_type, j.status
-        ) card), '[]'::jsonb) AS jobs,
-          (SELECT count(*)::integer FROM live, bounds WHERE starts_at IS NOT NULL
-            AND starts_at AT TIME ZONE 'Asia/Manila' >= bounds.week
-            AND starts_at AT TIME ZONE 'Asia/Manila' < bounds.week + INTERVAL '7 days') AS this_week,
-          (SELECT count(*)::integer FROM live, bounds WHERE starts_at IS NOT NULL
-            AND starts_at AT TIME ZONE 'Asia/Manila' >= bounds.today
-            AND starts_at AT TIME ZONE 'Asia/Manila' < bounds.today + INTERVAL '1 day') AS today`, [new Date().toISOString()]);
+        ) card), '[]'::jsonb) AS jobs`, [new Date().toISOString()]);
+      const { thisWeek, today } = await interviewsSummary(new Date(), db);
       const jobs = rows[0].jobs.map(({ next, ...job }) => ({ ...job, nextInterview: next ? { ...next, startsAt: new Date(next.startsAt) } : null }));
-      return { jobs, totals: { jobs: jobs.length, interviewsThisWeek: rows[0].this_week, interviewsToday: rows[0].today } };
+      return { jobs, totals: { jobs: jobs.length, interviewsThisWeek: thisWeek, interviewsToday: today } };
     },
     /** A job's Interview Stage Applications; an Application leaves once its result is recorded or it leaves the Stage. */
     async interviewJob(jobPostingId: string, tab: InterviewJobTab = "All"): Promise<{ job: InterviewJobSummary; counts: Record<InterviewJobTab, number>; rows: InterviewJobRow[] }> {
