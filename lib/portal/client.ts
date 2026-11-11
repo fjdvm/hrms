@@ -128,3 +128,25 @@ export async function listModuleHolders(module: string): Promise<string[] | null
     typeof member.id === "string" && Array.isArray(member.modules) && member.modules.includes(module) ? [member.id] : [],
   );
 }
+
+/** Names of the Staff the Portal lists, for the "Reports to" picker. `null` means the Portal could not answer. */
+export async function listStaffNames(): Promise<string[] | null> {
+  const response = await postJson("/api/integrations/recipients", {});
+
+  if (!response?.ok) {
+    return null;
+  }
+
+  const body = (await response.json().catch(() => null)) as { staff?: { name?: unknown; username?: unknown }[] } | null;
+
+  if (!Array.isArray(body?.staff)) {
+    return null;
+  }
+
+  const names = body.staff.flatMap((member) => {
+    const name = typeof member.name === "string" && member.name.trim() ? member.name : member.username;
+    return typeof name === "string" && name.trim() ? [name.trim()] : [];
+  });
+
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
