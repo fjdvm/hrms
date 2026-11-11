@@ -19,18 +19,11 @@ export function canReject(stage: ApplicationStage): boolean {
 /** The forward buttons a Stage offers, in display order. Offer and later offer none: Hired is reached elsewhere. */
 export type StageAction = { kind: "move"; label: string; to: ApplicationStage } | { kind: "schedule"; label: string };
 
-/**
- * An Application enters Interview by a move from Screening; booking never moves the Stage. In Interview it offers
- * "Schedule interview" until one is booked, then "Reschedule interview" until a result is recorded.
- */
-export function stageActions(stage: ApplicationStage, interview: "none" | "booked" | "done" = "none"): StageAction[] {
+export function stageActions(stage: ApplicationStage): StageAction[] {
   switch (stage) {
     case "New": return [{ kind: "move", label: "Move to Screening", to: "Screening" }];
     case "Screening": return [{ kind: "move", label: "Move to Interview", to: "Interview" }];
-    case "Interview": return [
-      ...(interview === "done" ? [] : [{ kind: "schedule" as const, label: interview === "booked" ? "Reschedule interview" : "Schedule interview" }]),
-      { kind: "move", label: "Move to Offer", to: "Offer" },
-    ];
+    case "Interview": return [{ kind: "schedule", label: "Schedule interview" }, { kind: "move", label: "Move to Offer", to: "Offer" }];
     default: return [];
   }
 }
@@ -214,106 +207,6 @@ export const SCORE_LABELS = ["Poor", "Fair", "Good", "Strong", "Outstanding"];
 
 /** A result can be recorded once the interview has started, and only once. */
 export const canRecordResult = (interview: ApplicationInterview, now: Date) => interview.result === null && interview.startsAt <= now;
-
-export type InterviewForm = {
-  type: InterviewInput["type"]; date: string; start: string; end: string;
-  interviewerId: string; interviewerName: string;
-  meetingLink: string; province: string; city: string; address: string; mapLink: string;
-};
-export type InterviewFormErrors = Partial<Record<"date" | "start" | "end" | "interviewer" | "meetingLink" | "province" | "city" | "address" | "mapLink", string>>;
-
-const MANILA_OFFSET = 8 * 3600000;
-/** Interviews run Monday to Friday, 8 AM to 5 PM Manila time. */
-export const INTERVIEW_DAY = { opens: "08:00", closes: "17:00" } as const;
-
-/** Today in Manila as YYYY-MM-DD. */
-export const manilaToday = (now = Date.now()) => new Date(now + MANILA_OFFSET).toISOString().slice(0, 10);
-
-/** The Manila date (YYYY-MM-DD) and clock time (HH:MM) of an instant. */
-export function manilaParts(instant: string | Date): { date: string; time: string } {
-  const iso = new Date(new Date(instant).getTime() + MANILA_OFFSET).toISOString();
-  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
-}
-
-/** A day HR may book: today or later, Monday to Friday. */
-export function isBookableDay(date: string, now = Date.now()): boolean {
-  const day = new Date(`${date}T00:00:00Z`);
-  return Number.isFinite(day.getTime()) && date >= manilaToday(now) && ![0, 6].includes(day.getUTCDay());
-}
-
-/** A suggested free slot, e.g. "Thu 12 Nov · 2:00 – 3:00 PM". */
-export function slotLabel(startsAt: string, endsAt: string): string {
-  const clock = (iso: string) => manila(new Date(iso), { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
-  const [from, to] = [clock(startsAt), clock(endsAt)];
-  const day = manila(new Date(startsAt), { weekday: "short", day: "numeric", month: "short" }).replace(",", "");
-  return `${day} · ${from.slice(-2) === to.slice(-2) ? from.slice(0, -3) : from} – ${to}`;
-}
-
-const isWebLink = (value: string) => {
-  try { return ["https:", "http:"].includes(new URL(value).protocol); } catch { return false; }
-};
-
-/**
- * Reads the Schedule interview form: times are Manila wall-clock and must fall within 8 AM to 5 PM on a weekday that
- * has not passed. The server re-checks every rule, so this only gives HR early, specific messages.
- */
-export function readInterviewForm(form: InterviewForm, now = Date.now()): { input?: InterviewInput; errors?: InterviewFormErrors } {
-  const errors: InterviewFormErrors = {};
-  const online = form.type === "Online";
-  const [meetingLink, address, mapLink] = [form.meetingLink.trim(), form.address.trim(), form.mapLink.trim()];
-  if (!form.date) errors.date = "Choose a date.";
-  else if (!isBookableDay(form.date, now)) errors.date = "Choose a weekday that is not in the past.";
-  if (!form.start) errors.start = "Choose a start time.";
-  else if (form.start < INTERVIEW_DAY.opens) errors.start = "Start time must be 8:00 AM or later.";
-  else if (form.start >= INTERVIEW_DAY.closes) errors.start = "Start time must be before 5:00 PM.";
-  if (!form.end) errors.end = "Choose an end time.";
-  else if (form.end > INTERVIEW_DAY.closes) errors.end = "End time must be 5:00 PM or earlier.";
-  else if (form.start && form.end <= form.start) errors.end = "End time must be after the start.";
-  if (!errors.date && !errors.start && Date.parse(`${form.date}T${form.start}:00+08:00`) <= now) errors.start = "That start time has already passed.";
-  if (!form.interviewerId) errors.interviewer = "Choose an interviewer.";
-  if (online) {
-    if (!meetingLink) errors.meetingLink = "Enter the meeting link.";
-    else if (!isWebLink(meetingLink)) errors.meetingLink = "Enter a valid link starting with https://.";
-  } else {
-    if (!form.province) errors.province = "Choose a province.";
-    if (!form.city) errors.city = "Choose a city or municipality.";
-    if (!address) errors.address = "Enter the street, building and barangay.";
-    if (mapLink && !isWebLink(mapLink)) errors.mapLink = "Enter a valid link starting with https://.";
-  }
-  if (Object.keys(errors).length > 0) return { errors };
-  return {
-    input: {
-      startsAt: `${form.date}T${form.start}:00+08:00`, endsAt: `${form.date}T${form.end}:00+08:00`, type: form.type,
-      interviewerId: form.interviewerId, interviewerName: form.interviewerName.trim(),
-      ...(online ? { meetingLink } : { province: form.province, city: form.city, address, ...(mapLink ? { mapLink } : {}) }),
-    },
-  };
-}
-
-/** The invite the Applicant will get, in fixed wording HR can read but not edit. */
-export function invitePreview(details: { applicantName: string; jobTitle: string; type: InterviewInput["type"]; date: string; start: string; end: string; interviewerName: string; meetingLink: string; province: string; city: string; address: string; mapLink: string }): { subject: string; lines: string[] } {
-  const clock = (time: string) => {
-    const [hours, minutes] = time.split(":").map(Number);
-    return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${hours >= 12 ? "PM" : "AM"}`;
-  };
-  const when = details.date && details.start && details.end
-    ? `${new Date(`${details.date}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}, ${clock(details.start)} – ${clock(details.end)} (Manila time)`
-    : "To be set";
-  const where = details.type === "Online"
-    ? `Join online: ${details.meetingLink.trim() || "meeting link to be added"}`
-    : `Venue: ${[details.address.trim(), details.city, details.province].filter(Boolean).join(", ") || "to be added"}${details.mapLink.trim() ? `\nMap: ${details.mapLink.trim()}` : ""}`;
-  return {
-    subject: `Your interview for ${details.jobTitle}`,
-    lines: [
-      `Hi ${details.applicantName.split(" ")[0]},`,
-      `We'd like to invite you to an interview for the ${details.jobTitle} role at Bren Raphael's.`,
-      `When: ${when}`,
-      `Interviewer: ${details.interviewerName || "To be set"}`,
-      where,
-      "If you can't make it, reply to this email so we can find another time.",
-    ],
-  };
-}
 
 export type ApplicantForm = Record<"fullName" | "email" | "mobile" | "address" | "jobPostingId" | "expectedSalary" | "availableFrom" | "source" | "referredBy", string>;
 export type ApplicantFormErrors = Partial<Record<keyof ApplicantForm, string>>;

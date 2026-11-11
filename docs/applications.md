@@ -190,7 +190,10 @@ Application against concurrent Stage changes, and writes the Interview and
 activity together. The lock is intentionally global for this low-volume HR
 workflow, including moves between Interviewers. Existing rows are unchanged.
 Invite delivery is handled by follow-up #271; saves make no external delivery
-call. The shared dialog migration is follow-up #270.
+call. The shared Schedule interview dialog (`components/hiring/schedule-interview.tsx`)
+calls the `saveInterview` server action, which books or, given an Interview id,
+reschedules. Screening now offers Move to Interview; booking never moves a Stage.
+Client-side checks (`lib/interview-form.ts`) only guide HR; the server decides.
 
 The regular Applications tests use PGlite. To also run the independent-session
 PostgreSQL concurrency acceptance check, set `TEST_POSTGRES_URL` to a disposable

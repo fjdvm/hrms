@@ -82,8 +82,7 @@ async function Profile({ id }: { id: number }) {
   try {
     const applications = await applicationsForRequest();
     profile = await applications.readProfile(id);
-    // The Interviewer picker is only needed to book; the profile still opens when the Portal cannot answer.
-    if (profile.stage === "Interview") interviewers = await applications.interviewers().catch(() => []);
+    if (profile.stage === "Interview") interviewers = await applications.interviewers();
   } catch (error) {
     if (error instanceof ApplicationError && (error.reason === "not-found" || error.reason === "validation")) notFound();
     throw error;
@@ -97,7 +96,7 @@ async function Profile({ id }: { id: number }) {
         badge={<Badge variant={STAGE_BADGE[profile.stage]}>{profile.stage}</Badge>}
       >
         {canReject(profile.stage) && <RejectApplication applicationId={id} stage={profile.stage} applicantName={profile.applicantName} />}
-        <StageActions applicationId={id} stage={profile.stage} applicantName={profile.applicantName} jobTitle={profile.jobPostingTitle} location={profile.location} interviewers={interviewers} interviews={profile.interviews} />
+        <StageActions applicationId={id} stage={profile.stage} applicantName={profile.applicantName} applicantEmail={profile.applicantEmail} jobTitle={profile.jobPostingTitle} location={profile.location} interviewers={interviewers} booked={profile.interviews.find((interview) => interview.result === null)} />
       </PageHeader>
       <Tracker profile={profile} />
       <ProfileColumns main={<><ApplicationDetails profile={profile} /><ApplicationInterviews applicationId={id} applicantName={profile.applicantName} jobTitle={profile.jobPostingTitle} interviews={profile.interviews} /></>} aside={<><ApplicationActivity profile={profile} /><ApplicationNotes applicationId={id} notes={profile.notes} /></>} />
