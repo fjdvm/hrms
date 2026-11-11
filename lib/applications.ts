@@ -319,24 +319,12 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         || (outcome.privateNotes !== undefined && typeof outcome.privateNotes !== "string")
         || (outcome.resultEmailAt !== undefined && (typeof outcome.resultEmailAt !== "string"
           || !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(outcome.resultEmailAt) || !Number.isFinite(Date.parse(outcome.resultEmailAt))))) throw new ApplicationError("validation");
-      // Keep the private result and its Staff activity in the same atomic statement.
-      // The database clock enforces the start-time boundary for every caller.
-      const { rows } = await db.query<{ recorded: boolean; exists: boolean }>(`
-        WITH recorded AS (
-          UPDATE public.hrms_application_interviews SET score = $3, result = $4, private_notes = $7, result_email_at = $8::timestamptz
-          WHERE application_id = $1 AND id = $2 AND starts_at <= statement_timestamp()
-          RETURNING id, application_id
-        ), activity AS (
-          INSERT INTO public.hrms_application_activity
-            (application_id, from_stage, to_stage, actor_name, reason, interview_id, occurred_at)
-          SELECT a.id, a.stage, a.stage, $5, $6, r.id, statement_timestamp()
-          FROM recorded r JOIN public.hrms_all_applications a ON a.id = r.application_id
-        )
-        SELECT EXISTS(SELECT 1 FROM recorded) AS recorded,
-          EXISTS(SELECT 1 FROM public.hrms_application_interviews WHERE application_id = $1 AND id = $2) AS exists`,
-      [id, interviewId, outcome.score, outcome.result, access.staff.name,
-        `Interview result: ${outcome.result} (score: ${outcome.score}/5)`, outcome.privateNotes ?? null, outcome.resultEmailAt ?? null]);
-      if (!rows[0].recorded) throw new ApplicationError(rows[0].exists ? "conflict" : "not-found");
+      // The function locks the Application and Interview, then saves the private
+      // fields, Stage and history together using the database clock.
+      const { rows } = await db.query<{ saved: { error?: ApplicationError["reason"]; detail?: string } }>(
+        "SELECT public.hrms_record_interview_result($1, $2, $3::jsonb, $4) AS saved",
+        [id, interviewId, JSON.stringify(outcome), access.staff.name]);
+      if (rows[0].saved.error) throw new ApplicationError(rows[0].saved.error, rows[0].saved.detail);
     },
     async downloadDocument(id: number, documentId: number): Promise<Response> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
