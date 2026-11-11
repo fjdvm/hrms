@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { database, type Database } from "./database";
+import { retryJobPostingAudit } from "./job-posting-audit";
+import { hiredEmail } from "./offer-reply";
 import { accessFor } from "./portal/access";
 import { listStaffNames } from "./portal/client";
 import { isValidDate } from "./offer-terms";
@@ -43,7 +46,7 @@ export type OfferDraft = OfferTerms & {
   branch: string;
   status: OfferDisplayStatus;
 };
-export type OfferActivityKind = "sent" | "accepted" | "declined" | "reply-by-extended" | "email-scheduled" | "email-sent" | "documents-requested";
+export type OfferActivityKind = "sent" | "accepted" | "declined" | "reply-by-extended" | "email-scheduled" | "email-sent" | "documents-requested" | "hired";
 export type OfferActivity = { kind: OfferActivityKind; actorName: string | null; detail: string | null; occurredAt: Date };
 export type OfferStageName = "New" | "Screening" | "Interview" | "Offer" | "Hired" | "Rejected" | "Withdrawn";
 /** Everything the Offer page shows. */
@@ -74,7 +77,12 @@ export type OfferChecklist = {
   /** Documents may be requested from Sent onward, never on a Draft, Declined or Withdrawn Offer. */
   canRequest: boolean;
 };
-export type OfferCandidate = { applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string };
+export type EmployeeRecord = {
+  id: number; employeeNumber: string; name: string; email: string; position: string; department: string | null;
+  branch: string; startDate: string; status: "Onboarding" | "Active";
+};
+export type EmployeeList = { rows: EmployeeRecord[]; onboarding: number };
+export type OfferCandidate ={ applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string };
 
 export class OfferError extends Error {
   /** `detail` says why a conflict happened when the caller needs to tell its user (the Careers endpoint does). */
@@ -400,6 +408,112 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
         SELECT EXISTS (SELECT 1 FROM activity) AS requested`,
       [id, input.types, input.dueDate, message ?? null, staff.name, requestSummary(input.types, input.dueDate), offer.email, email.title, email.body]);
       if (!rows[0].requested) throw new OfferError("conflict");
+    },
+    /**
+     * Marks an Accepted Offer's Application as Hired. In one statement: the Application moves to Hired (with history),
+     * the Employee record is created with the Offer's terms and links to the same document files, the hired welcome
+     * email is queued, and the Job Posting becomes Filled once hires reach its openings (a Closed one stays Closed).
+     * If any part fails, none apply. Needs the Offer Accepted and all seven documents Submitted.
+     */
+    async hire(id: number): Promise<{ employeeId: number }> {
+      const staff = await authorise();
+      if (!validId(id)) throw new OfferError("validation");
+      const checklist = await this.documents(id);
+      const { rows: found } = await db.query<OfferRow>(`${SELECT_OFFERS} WHERE o.id = $1`, [id]);
+      const offer = found[0];
+      if (!offer) throw new OfferError("not-found");
+      if (offer.status !== "Accepted" || checklist.submitted < checklist.total) throw new OfferError("conflict");
+      const files = checklist.items.map((item) => ({
+        type: item.type, source: item.source,
+        fileId: item.source === "application" ? item.file?.downloadUrl?.split("/").pop() ?? null : null,
+        fileName: item.file?.name ?? null,
+      }));
+      const { rows: stored } = await db.query<{ type: DocumentType; fileId: string | null }>(
+        `SELECT document_type AS type, file_id AS "fileId" FROM public.hrms_offer_documents WHERE offer_id = $1 AND status = 'Submitted'`, [id]);
+      for (const row of stored) { const file = files.find((item) => item.type === row.type); if (file) file.fileId = row.fileId; }
+      const email = hiredEmail({ applicantName: offer.applicantName, role: offer.role, startDate: offer.startDate });
+      const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
+      const auditId = randomUUID();
+      const event = {
+        source: "HRMS", module: "Recruitment and Hiring", action: "job_posting.filled", outcome: "success",
+        actor: { type: "user", id: staff.id ?? staff.username, display_name: staff.name },
+        customer_description: null, occurred_at: new Date().toISOString(), idempotency_key: auditId,
+        description: `${staff.name} performed job_posting.filled.`,
+      };
+      const { rows } = await db.query<{ employeeId: number | null; filled: boolean }>(`
+        WITH ok AS (
+          SELECT o.id, o.application_id, o.monthly_salary, o.start_date, o.employment_type, o.schedule, o.probation, o.reports_to, o.branch,
+            a.applicant_name, a.applicant_email, a.job_posting_id, a.job_posting_title
+          FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id
+          WHERE o.id = $1 AND o.status = 'Accepted' AND a.stage = 'Offer'
+            AND NOT EXISTS (SELECT 1 FROM public.hrms_offer_documents d WHERE d.offer_id = o.id AND d.status = 'Requested')
+        ), moved_careers AS (
+          UPDATE public.applications SET status = 'Hired', updated_at = statement_timestamp()
+          WHERE id = (SELECT application_id FROM ok) AND status = 'Offer'
+          RETURNING id, applicant_id, updated_at
+        ), moved_manual AS (
+          UPDATE public.hrms_manual_applications SET status = 'Hired', updated_at = statement_timestamp()
+          WHERE id = (SELECT application_id FROM ok) AND status = 'Offer'
+          RETURNING id, NULL::text AS applicant_id, updated_at
+        ), moved AS (
+          SELECT * FROM moved_careers UNION ALL SELECT * FROM moved_manual
+        ), history AS (
+          INSERT INTO public.hrms_application_stage_history (application_id, stage, reached_at) SELECT id, 'Hired', updated_at FROM moved
+        ), stage_activity AS (
+          INSERT INTO public.hrms_application_activity (application_id, from_stage, to_stage, actor_name, occurred_at)
+          SELECT id, 'Offer', 'Hired', $2, updated_at FROM moved
+        ), notification AS (
+          INSERT INTO public.hrms_application_notifications (id, payload)
+          SELECT 'application.stage:' || m.id || ':Hired', jsonb_build_object(
+            'sendingApp', 'hrms', 'targetApp', 'careers', 'userIds', jsonb_build_array(m.applicant_id),
+            'type', 'application.hired', 'title', 'Application update: Hired',
+            'body', 'Your Application has moved to Hired.', 'idempotencyKey', 'application.stage:' || m.id || ':Hired')
+          FROM moved m WHERE m.applicant_id IS NOT NULL AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = m.applicant_id)
+          ON CONFLICT (id) DO NOTHING
+        ), employee AS (
+          INSERT INTO public.hrms_employees (employee_number, offer_id, application_id, full_name, email, position, department, branch,
+            start_date, monthly_salary, employment_type, schedule, probation, reports_to, hired_by_name)
+          SELECT 'BR-EMP-' || lpad(nextval('public.hrms_employee_number_seq')::text, 4, '0'), ok.id, ok.application_id, ok.applicant_name,
+            ok.applicant_email, ok.job_posting_title, (SELECT j.department FROM public.job_postings j WHERE j.id = ok.job_posting_id), ok.branch,
+            ok.start_date, ok.monthly_salary, ok.employment_type, ok.schedule, ok.probation, ok.reports_to, $2
+          FROM ok WHERE EXISTS (SELECT 1 FROM moved)
+          RETURNING id
+        ), employee_documents AS (
+          INSERT INTO public.hrms_employee_documents (employee_id, document_type, source, file_id, file_name)
+          SELECT employee.id, f.type, f.source, f."fileId", f."fileName"
+          FROM employee, jsonb_to_recordset($3::jsonb) AS f(type text, source text, "fileId" text, "fileName" text)
+        ), activity AS (
+          INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail)
+          SELECT ok.id, 'hired', $2, 'Employee record created' FROM ok WHERE EXISTS (SELECT 1 FROM employee)
+          UNION ALL SELECT ok.id, 'email-scheduled', NULL, 'Welcome email to ' || ok.applicant_email FROM ok WHERE EXISTS (SELECT 1 FROM employee)
+        ), email AS (
+          INSERT INTO public.hrms_offer_emails (id, offer_id, payload)
+          SELECT 'offer.hired:' || ok.id, ok.id, $4::jsonb FROM ok WHERE EXISTS (SELECT 1 FROM employee)
+        ), filled AS (
+          UPDATE public.job_postings p SET status = 'filled', updated_at = clock_timestamp()
+          FROM ok
+          WHERE p.id = ok.job_posting_id AND p.status = 'open' AND p.openings IS NOT NULL AND EXISTS (SELECT 1 FROM employee)
+            AND (SELECT count(*) FROM public.hrms_all_applications h WHERE h.job_posting_id = p.id AND h.stage = 'Hired') + 1 >= p.openings
+          RETURNING p.id, p.title
+        ), audit AS (
+          INSERT INTO public.hrms_audit_outbox (id, payload)
+          SELECT $5, $6::jsonb || jsonb_build_object('target', jsonb_build_object('type', 'job_posting', 'id', id, 'display_name', COALESCE(NULLIF(title, ''), id)))
+          FROM filled
+        )
+        SELECT (SELECT id FROM employee) AS "employeeId", EXISTS (SELECT 1 FROM filled) AS filled`,
+      [id, staff.name, JSON.stringify(files), JSON.stringify(payload), auditId, JSON.stringify(event)]);
+      if (rows[0].employeeId === null) throw new OfferError("conflict");
+      if (rows[0].filled) await retryJobPostingAudit(db, auditId);
+      return { employeeId: rows[0].employeeId };
+    },
+    /** The Hired list: real Employee records, newest first, with tab counts from the same snapshot. */
+    async employees(): Promise<EmployeeList> {
+      await authorise();
+      const { rows } = await db.query<Omit<EmployeeRecord, "startDate"> & { startDate: string }>(`
+        SELECT id, employee_number AS "employeeNumber", full_name AS name, email, position, department, branch,
+          start_date::text AS "startDate", status
+        FROM public.hrms_employees ORDER BY created_at DESC, id DESC`);
+      return { rows, onboarding: rows.filter((row) => row.status === "Onboarding").length };
     },
     /** Names for the "Reports to" picker. */
     async staff(): Promise<string[]> {

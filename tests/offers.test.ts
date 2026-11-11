@@ -478,3 +478,123 @@ it("refuses documents and requests without the Module", async () => {
   await expect(offers(other).documents(1)).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).requestDocuments(1, { types: ["nbi"], dueDate: DUE })).rejects.toMatchObject({ reason: "denied" });
 });
+
+// ---- Mark as hired (#287) ----
+
+/** An Accepted offer; `docs` of the seven are Submitted (resume and ID came with the Application). */
+async function acceptedOffer(index = 1, docs = 7, openings: number | null = null) {
+  const { id, applicationId } = await sentForReply(index);
+  await db.query(`UPDATE job_postings SET openings = $2 WHERE id = $1`, [`posting-${index}`, openings]);
+  await db.query(`UPDATE applications SET documents_snapshot = $1::jsonb WHERE id = $2`, [JSON.stringify([
+    { id: 11, name: "resume.pdf", requiredFor: "Resume or CV" }, { id: 12, name: "id.png", requiredFor: "Valid government ID" },
+  ]), applicationId]);
+  await offers().recordReply(id, { answer: "Accepted", repliedAt: justNow(), sendAt: null });
+  const missing = ["nbi", "health", "sss", "philhealth", "pagibig"];
+  await request(id, missing);
+  for (const type of missing.slice(0, Math.max(0, docs - 2))) {
+    await db.query(`UPDATE hrms_offer_documents SET status = 'Submitted', file_id = $3, file_name = $3 || '.pdf' WHERE offer_id = $1 AND document_type = $2`, [id, type, `file-${type}`]);
+  }
+  return { id, applicationId };
+}
+const count = async (sql: string) => (await db.query(sql)).rows.length;
+
+it("hires in one step: Hired Stage, an Employee record with details, terms and the same document files, and a welcome email", async () => {
+  const { id, applicationId } = await acceptedOffer();
+  const { employeeId } = await offers().hire(id);
+  expect(await stageOf(applicationId)).toBe("Hired");
+  const employee = (await db.query(`SELECT * FROM hrms_employees WHERE id = $1`, [employeeId])).rows[0] as Record<string, unknown>;
+  expect(employee).toMatchObject({ full_name: "Applicant 1", email: "person1@example.test", position: "Cashier", branch: "Cainta branch",
+    monthly_salary: 19000, employment_type: "Full-time", probation: "6 months", reports_to: "Paolo Garcia", status: "Onboarding", employee_number: "BR-EMP-0001" });
+  const documents = (await db.query<{ document_type: string; source: string; file_id: string | null }>(
+    `SELECT document_type, source, file_id FROM hrms_employee_documents WHERE employee_id = $1 ORDER BY document_type`, [employeeId])).rows;
+  expect(documents).toHaveLength(7);
+  expect(documents.find((d) => d.document_type === "resume")).toMatchObject({ source: "application", file_id: "11" });
+  expect(documents.find((d) => d.document_type === "nbi")).toMatchObject({ source: "upload", file_id: "file-nbi" });
+  const email = (await db.query<{ payload: { to: string; title: string } }>(`SELECT payload FROM hrms_offer_emails WHERE id = $1`, [`offer.hired:${id}`])).rows;
+  expect(email).toHaveLength(1);
+  expect(email[0].payload.to).toBe("person1@example.test");
+  expect(email[0].payload.title).not.toBe((await db.query<{ payload: { title: string } }>(`SELECT payload FROM hrms_offer_emails WHERE id = $1`, [`offer.accepted:${id}`])).rows[0].payload.title);
+  expect((await offers().detail(id)).activity.map((entry) => entry.kind)).toContain("hired");
+});
+
+it("lists the Hired employees as Onboarding, newest first", async () => {
+  const first = await acceptedOffer(1);
+  const second = await acceptedOffer(2);
+  await offers().hire(first.id);
+  await offers().hire(second.id);
+  const list = await offers().employees();
+  expect(list.onboarding).toBe(2);
+  expect(list.rows.map((row) => [row.name, row.employeeNumber, row.status, row.startDate])).toEqual([
+    ["Applicant 2", "BR-EMP-0002", "Onboarding", "2099-11-03"], ["Applicant 1", "BR-EMP-0001", "Onboarding", "2099-11-03"],
+  ]);
+  expect(list.rows[0]).toMatchObject({ position: "Cashier", department: "Retail", branch: "Cainta branch" });
+});
+
+it("stays locked until the offer is Accepted and all seven documents are Submitted", async () => {
+  const partial = await acceptedOffer(1, 4);
+  await expect(offers().hire(partial.id)).rejects.toMatchObject({ reason: "conflict" });
+  const waiting = await sentForReply(2);
+  await expect(offers().hire(waiting.id)).rejects.toMatchObject({ reason: "conflict" });
+  const declined = await sentForReply(3);
+  await offers().recordReply(declined.id, { answer: "Declined", repliedAt: justNow(), sendAt: null });
+  await expect(offers().hire(declined.id)).rejects.toMatchObject({ reason: "conflict" });
+  await expect(offers().hire(9999)).rejects.toMatchObject({ reason: "not-found" });
+  expect(await count(`SELECT 1 FROM hrms_employees`)).toBe(0);
+  expect(await stageOf(partial.applicationId)).toBe("Offer");
+});
+
+it("blocks hiring a Withdrawn Application and a document that was requested again", async () => {
+  const withdrawn = await acceptedOffer(1);
+  await db.query(`UPDATE applications SET status = 'Withdrawn' WHERE id = $1`, [withdrawn.applicationId]);
+  await expect(offers().hire(withdrawn.id)).rejects.toMatchObject({ reason: "conflict" });
+  const again = await acceptedOffer(2);
+  await request(again.id, ["nbi"]);
+  await expect(offers().hire(again.id)).rejects.toMatchObject({ reason: "conflict" });
+  expect(await count(`SELECT 1 FROM hrms_employees`)).toBe(0);
+});
+
+it("cannot hire twice", async () => {
+  const { id } = await acceptedOffer();
+  await offers().hire(id);
+  await expect(offers().hire(id)).rejects.toMatchObject({ reason: "conflict" });
+  expect(await count(`SELECT 1 FROM hrms_employees`)).toBe(1);
+  expect(await count(`SELECT 1 FROM hrms_offer_emails WHERE id LIKE 'offer.hired:%'`)).toBe(1);
+});
+
+it("rolls everything back when any part fails", async () => {
+  const { id, applicationId } = await acceptedOffer(1, 7, 1);
+  await db.exec(`CREATE FUNCTION boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$;
+    CREATE TRIGGER fail_hired_email BEFORE INSERT ON hrms_offer_emails FOR EACH ROW WHEN (NEW.id LIKE 'offer.hired:%') EXECUTE FUNCTION boom();`);
+  await expect(offers().hire(id)).rejects.toThrow(/forced failure/);
+  expect(await stageOf(applicationId)).toBe("Offer");
+  expect(await count(`SELECT 1 FROM hrms_employees`)).toBe(0);
+  expect(await count(`SELECT 1 FROM hrms_employee_documents`)).toBe(0);
+  expect(await count(`SELECT 1 FROM hrms_offer_emails WHERE id LIKE 'offer.hired:%'`)).toBe(0);
+  expect((await db.query<{ status: string }>(`SELECT status FROM job_postings WHERE id = 'posting-1'`)).rows[0].status).toBe("open");
+  expect(await count(`SELECT 1 FROM hrms_audit_outbox`)).toBe(0);
+  expect((await offers().detail(id)).activity.map((entry) => entry.kind)).not.toContain("hired");
+});
+
+it("fills the Job Posting only when hires reach its openings, and a Closed posting stays Closed", async () => {
+  const postingStatus = async (n: number) => (await db.query<{ status: string }>(`SELECT status FROM job_postings WHERE id = $1`, [`posting-${n}`])).rows[0].status;
+  const noLimit = await acceptedOffer(1, 7, null);
+  await offers().hire(noLimit.id);
+  expect(await postingStatus(1)).toBe("open");
+  const two = await acceptedOffer(2, 7, 2);
+  await offers().hire(two.id);
+  expect(await postingStatus(2)).toBe("open");
+  const three = await acceptedOffer(3, 7, 1);
+  await db.query(`UPDATE job_postings SET status = 'closed' WHERE id = 'posting-3'`);
+  await offers().hire(three.id);
+  expect(await postingStatus(3)).toBe("closed");
+  const one = await acceptedOffer(4, 7, 1);
+  await offers().hire(one.id);
+  expect(await postingStatus(4)).toBe("filled");
+  expect(await count(`SELECT 1 FROM hrms_audit_outbox WHERE payload->>'action' = 'job_posting.filled'`)).toBe(1);
+});
+
+it("refuses hiring and the Hired list without the Module", async () => {
+  const other = portal.signIn(staff, ["Attendance"]);
+  await expect(offers(other).hire(1)).rejects.toMatchObject({ reason: "denied" });
+  await expect(offers(other).employees()).rejects.toMatchObject({ reason: "denied" });
+});

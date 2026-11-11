@@ -103,6 +103,21 @@ export async function extendReplyBy(offerId: number, replyBy: string): Promise<{
   return {};
 }
 
+/** Marks an Accepted offer's Applicant as Hired: creates the Employee record and queues the welcome email. */
+export async function markAsHired(offerId: number): Promise<{ error?: string }> {
+  try {
+    await (await offersForRequest()).hire(offerId);
+  } catch (error) {
+    if (error instanceof OfferError && error.reason === "conflict") return { error: "This offer can't be marked as hired yet. It must be accepted, with all 7 documents submitted, and the Application must not have withdrawn or already been hired." };
+    return { error: fail(error) };
+  }
+  after(() => deliverOfferEmails());
+  revalidatePath("/offers");
+  revalidatePath(`/offers/${offerId}`);
+  revalidatePath("/hired");
+  return {};
+}
+
 /** Asks the Applicant for documents. The email goes out at once through the outbox. */
 export async function requestOfferDocuments(offerId: number, types: DocumentType[], dueDate: string, message: string): Promise<{ error?: string }> {
   const problem = requestProblem({ types, dueDate, message }, new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }));

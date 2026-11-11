@@ -185,11 +185,18 @@ describe("interview rows", () => {
   const base = { id: 1, startsAt: new Date("2026-10-30T02:00:00Z"), endsAt: new Date("2026-10-30T02:45:00Z"), type: "In person" as const, interviewerName: "Paolo Garcia", location: "Cainta branch · https://maps.example/x", interviewerId: null, meetingLink: null, mapLink: null, province: null, city: null, address: null, privateNotes: null, resultEmailAt: null, score: null, result: null };
 
   it("reads a booked interview as Scheduled with no score", () => {
-    expect(interviewRow(base)).toEqual({ date: "30 Oct 2026", time: "10:00 – 10:45 AM", type: "In person · Cainta branch", interviewer: "Paolo Garcia", score: "—", status: "Scheduled" });
+    expect(interviewRow(base, "Interview")).toEqual({ date: "30 Oct 2026", time: "10:00 – 10:45 AM", type: "In person · Cainta branch", interviewer: "Paolo Garcia", score: "—", status: "Scheduled", live: true });
   });
 
   it("reads a recorded result as Completed with its score", () => {
-    expect(interviewRow({ ...base, score: 4, result: "Passed" })).toMatchObject({ score: "4 / 5", status: "Completed" });
+    expect(interviewRow({ ...base, score: 4, result: "Passed" }, "Offer")).toMatchObject({ score: "4 / 5", status: "Completed" });
+  });
+
+  it("keeps an interview dropped from the Calendar as a Dropped record", () => {
+    for (const stage of ["Rejected", "Withdrawn", "Offer"] as const) expect(interviewRow(base, stage).status).toBe("Dropped");
+    expect(interviewRow(base, "Interview").status).toBe("Scheduled");
+    expect(interviewRow(base, "Rejected").live).toBe(false);
+    expect(interviewRow({ ...base, score: 4, result: "Passed" }, "Rejected").status).toBe("Completed");
   });
 
   it("offers a result only once the interview has started and has none", () => {
@@ -204,11 +211,11 @@ describe("interview rows", () => {
   });
 
   it("shows an Online interview as just Online", () => {
-    expect(interviewRow({ ...base, type: "Online", location: "https://meet.example/abc" }).type).toBe("Online");
+    expect(interviewRow({ ...base, type: "Online", location: "https://meet.example/abc" }, "Interview").type).toBe("Online");
   });
 
   it("keeps am/pm on both ends when the interview crosses noon", () => {
-    expect(interviewRow({ ...base, startsAt: new Date("2026-10-30T03:30:00Z"), endsAt: new Date("2026-10-30T04:15:00Z") }).time).toBe("11:30 AM – 12:15 PM");
+    expect(interviewRow({ ...base, startsAt: new Date("2026-10-30T03:30:00Z"), endsAt: new Date("2026-10-30T04:15:00Z") }, "Interview").time).toBe("11:30 AM – 12:15 PM");
   });
 });
 

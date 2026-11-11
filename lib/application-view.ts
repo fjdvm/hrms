@@ -192,17 +192,19 @@ const timeRange = (startsAt: Date, endsAt: Date) => {
   return `${start.slice(-2) === end.slice(-2) ? start.slice(0, -3) : start} – ${end}`;
 };
 
-export type InterviewRow = { date: string; time: string; type: string; interviewer: string; score: string; status: "Scheduled" | "Completed" };
+export type InterviewRow = { date: string; time: string; type: string; interviewer: string; score: string; status: "Scheduled" | "Completed" | "Dropped"; /** Still to be held: it can be rescheduled and given a result. */ live: boolean };
 
 /** One line of the profile's Interviews card: "30 Oct 2026", "10:00 – 10:45 AM", "In person · Cainta branch". Completed once a result is recorded. */
-export function interviewRow(interview: ApplicationInterview): InterviewRow {
+export function interviewRow(interview: ApplicationInterview, stage: ApplicationStage): InterviewRow {
   return {
     date: formatApplied(interview.startsAt),
     time: timeRange(interview.startsAt, interview.endsAt),
     type: interview.type === "Online" ? "Online" : `In person · ${interview.location.split(" · ")[0]}`,
     interviewer: interview.interviewerName,
     score: interview.score === null ? "—" : `${interview.score} / 5`,
-    status: interview.result === null ? "Scheduled" : "Completed",
+    // An Interview with no result whose Application left the Interview Stage is not taking place: off the Calendar, kept here.
+    status: interview.result !== null ? "Completed" : stage === "Interview" ? "Scheduled" : "Dropped",
+    live: interview.result === null && stage === "Interview",
   };
 }
 
