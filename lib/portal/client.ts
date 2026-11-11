@@ -130,6 +130,27 @@ export async function listModuleHolders(module: string): Promise<string[] | null
   );
 }
 
+/** Names of the Staff the Portal lists, for the "Reports to" picker. `null` means the Portal could not answer. */
+export async function listStaffNames(): Promise<string[] | null> {
+  const response = await postJson("/api/integrations/recipients", {});
+
+  if (!response?.ok) {
+    return null;
+  }
+
+  const body = (await response.json().catch(() => null)) as { staff?: { name?: unknown; username?: unknown }[] } | null;
+
+  if (!Array.isArray(body?.staff)) {
+    return null;
+  }
+
+  const names = body.staff.flatMap((member) => {
+    const name = typeof member.name === "string" && member.name.trim() ? member.name : member.username;
+    return typeof name === "string" && name.trim() ? [name.trim()] : [];
+  });
+
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
 
 /** Named directory for Interviewer selection. Missing names are a contract failure, never usernames. */
 export async function listModuleStaff(module: string): Promise<{ id: string; name: string }[] | null> {

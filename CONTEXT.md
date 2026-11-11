@@ -21,7 +21,7 @@ The company's Applicant Tracking System, which is the Recruitment and Hiring Mod
 _Avoid_: ATS app, recruitment app
 
 **Job Posting**:
-One open role that Staff author in HR-ATS and Applicants see on the Careers site. It can be started from a Job Template or typed from scratch, and is Draft, Open, Closed or Filled. Staff see the Open status labelled "Published", and publishing a Draft is what makes it Open. Filled means the role was filled by a hire, and Closed means it ended otherwise (Staff closed it or its deadline passed). Only an Open Job Posting is visible on Careers. HRMS and Careers share one database, so a Job Posting is one record seen by both.
+One open role that Staff author in HR-ATS and Applicants see on the Careers site. It can be started from a Job Template or typed from scratch, and is Draft, Open, Closed or Filled. Staff see the Open status labelled "Published", and publishing a Draft is what makes it Open. Filled means the role was filled by a hire (it becomes Filled when the number of Hired Applications for it reaches its openings; a Closed one stays Closed), and Closed means it ended otherwise (Staff closed it or its deadline passed). Only an Open Job Posting is visible on Careers. HRMS and Careers share one database, so a Job Posting is one record seen by both.
 _Avoid_: Job, listing, vacancy
 
 **Applicant**:
@@ -35,6 +35,18 @@ _Avoid_: Applicant (for the row), submission, candidacy
 **Stage**:
 Where an Application stands in the hiring workflow: New, Screening, Interview, Offer, Hired or Rejected. The tracker on an Application's page labels New as "Applied". An Applicant who withdraws puts the Application in a Withdrawn state that Staff cannot change; it is shown under All only and is not a Stage Staff can move an Application into. The Careers site shows the same value as the Application's status.
 _Avoid_: Status (in the HRMS UI), step
+
+**Offer**:
+One written job offer made to one Application, with its own status: Draft, Sent, Accepted or Declined. An Application has at most one Offer. Declining moves the Application to Rejected, so it is a Decided offer; accepting leaves the Application at the Offer Stage until Staff mark it Hired. An Offer is created as a Draft for an Application at the Offer Stage with no Offer yet; a Draft can be edited or deleted, and sending it locks its terms. Its terms are monthly salary, start date, employment type, schedule, probation period and who the person reports to. They are delivered in the offer email and shown identically on the Applicant's Careers page; there is no offer letter file. An Offer's reply is final: Accepted and Declined cannot be changed, and the email they send cannot be edited or cancelled once queued. When Staff record a reply they choose when its email goes out; a reply the Applicant makes on Careers sends its email at once. When the Applicant withdraws the Application, its Offer (Draft, Sent or Accepted) shows as Withdrawn, is not counted as waiting for a reply, and allows no further action; it is listed under the Offers tab's Withdrawn tab only, never under All. A Sent Offer past its reply-by date stays Sent and is flagged overdue; nothing expires automatically, Staff can extend the date, and a reply can still be recorded. The Offers tab lists Offers by their status, whereas the Applicants tab lists Applications by their Stage.
+_Avoid_: Job offer (alone), Offer Stage (for the Offer itself)
+
+**Pre-employment Document**:
+One of the seven documents an Offer's checklist tracks before Staff may mark the person Hired: résumé, valid ID, NBI clearance, health certificate, SSS, PhilHealth, and Pag-IBIG MID and TIN. Each is Submitted, Requested or Not requested. One the Applicant already sent with the Application starts as Submitted, so Staff can only request the missing ones. An upload counts as Submitted at once, with no Staff approval; Staff can request it again, which resets it to Requested, and the new upload replaces the old file. Not the same as a Required Document, which is what a Job Posting asks for at application time.
+_Avoid_: Requirement, onboarding document
+
+**Employee record**:
+The record of a person who works for Bren Raphael's, created when Staff mark an Offer's Application as Hired. It carries over the Applicant's details, the Offer's terms and the Pre-employment Documents (their Digital 201 folder), and starts as Onboarding. It is created together with the move to Hired, never separately. Unrelated to Staff, even for the same person.
+_Avoid_: Employee (for the record), Staff
 
 **Source**:
 Where an Application came from: Careers page, Facebook, JobStreet, Walk-in or Referral. Every Application the Applicant submits on the Careers site is "Careers page", even if they first saw the job elsewhere, because the Careers site does not ask. Staff choose the Source when they add an Applicant by hand, and for a Referral they also record who referred the Applicant as free text, not linked to a Staff member. An Application added by hand before Sources were recorded has no Source and is shown as "Unspecified".
