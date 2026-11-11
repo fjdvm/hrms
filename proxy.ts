@@ -6,6 +6,8 @@ export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   // The maintenance route authenticates its own scheduler bearer token.
   if (pathname === "/api/cron/job-postings") return NextResponse.next();
+  // Careers calls these as a service (ADR-0002); each route checks the Careers caller key itself.
+  if (pathname.startsWith("/api/careers/")) return NextResponse.next();
   const returnTo = `${pathname}${search}`;
 
   if (!devBypassEnabled() && !request.cookies.get(SESSION_COOKIE)?.value) {

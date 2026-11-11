@@ -2,7 +2,7 @@ import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 import { listStaffNames } from "./portal/client";
 import { isValidDate } from "./offer-terms";
-import { OFFER_ANSWERS, replyEmail, type OfferReply } from "./offer-reply";
+import { OFFER_ANSWERS, replyEmail, type OfferAnswer, type OfferReply } from "./offer-reply";
 import {
   DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS, matchDocumentType, requestEmail, requestProblem, requestSummary,
   type DocumentRequestInput, type DocumentStatus, type DocumentType,
@@ -77,7 +77,8 @@ export type OfferChecklist = {
 export type OfferCandidate = { applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string };
 
 export class OfferError extends Error {
-  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict") {
+  /** `detail` says why a conflict happened when the caller needs to tell its user (the Careers endpoint does). */
+  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict", public readonly detail?: "withdrawn" | "draft" | "already-answered" | "declined") {
     super(`Offer: ${reason}`);
   }
 }
@@ -86,13 +87,13 @@ const manilaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "As
 const validId = (id: unknown) => Number.isInteger(id) && (id as number) > 0 && (id as number) <= 2_147_483_647;
 const validApplicationId = (id: unknown) => Number.isInteger(id) && id !== 0 && Math.abs(id as number) <= 2_147_483_647;
 
-type OfferRow = {
+export type OfferRow = {
   id: number; applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string;
   monthlySalary: number; startDate: string; employmentType: EmploymentType; schedule: string; probation: ProbationPeriod;
   reportsTo: string; sentAt: string | null; replyBy: string | null; repliedAt: string | null; status: OfferDisplayStatus;
 };
 
-const SELECT_OFFERS = `
+export const SELECT_OFFERS = `
   SELECT o.id, o.application_id AS "applicationId", a.applicant_name AS "applicantName",
     a.applicant_email AS "applicantEmail", a.job_posting_title AS role, o.branch,
     o.monthly_salary AS "monthlySalary", o.start_date::text AS "startDate",
@@ -101,6 +102,102 @@ const SELECT_OFFERS = `
     CASE WHEN a.stage = 'Withdrawn' THEN 'Withdrawn' ELSE o.status END AS status
   FROM public.hrms_offers o
   JOIN public.hrms_all_applications a ON a.id = o.application_id`;
+
+/** Who a reply is recorded for: Staff, or the Applicant through the Careers endpoint (which also tells Staff). */
+export type ReplyActor = { actorName: string; notifyStaff: boolean };
+
+/**
+ * The one place an Offer reply is written, for Staff and for the Applicant alike: status, Stage (a decline moves the
+ * Application to Rejected), history, the queued email and, when `notifyStaff`, the Staff Notification. One statement or nothing.
+ * The caller has already checked the times; this refuses anything but a Sent Offer.
+ */
+export async function applyReply(db: Database, offer: OfferRow, answer: OfferAnswer, repliedAt: Date, sendAt: Date | null, who: ReplyActor): Promise<void> {
+  if (offer.status !== "Sent") throw new OfferError("conflict");
+  const first = offer.applicantName.trim().split(/\s+/)[0] || offer.applicantName;
+  const notice = { title: `Offer ${answer.toLowerCase()}: ${offer.applicantName}`, body: `${first} ${answer.toLowerCase()} the ${offer.role} offer.` };
+  const email = replyEmail(answer, { applicantName: offer.applicantName, role: offer.role, startDate: offer.startDate });
+  const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
+  const kind = answer === "Accepted" ? "accepted" : "declined";
+  const { rows } = await db.query<{ recorded: boolean }>(`
+    WITH replied AS (
+      UPDATE public.hrms_offers o SET status = $2, replied_at = $3::timestamptz, updated_at = clock_timestamp()
+      FROM public.hrms_all_applications a
+      WHERE o.id = $1 AND o.status = 'Sent' AND a.id = o.application_id AND a.stage = 'Offer'
+      RETURNING o.id, o.application_id
+    ), moved_careers AS (
+      UPDATE public.applications SET status = 'Rejected', updated_at = statement_timestamp()
+      WHERE id = (SELECT application_id FROM replied) AND status = 'Offer' AND $2 = 'Declined'
+      RETURNING id, applicant_id, updated_at
+    ), moved_manual AS (
+      UPDATE public.hrms_manual_applications SET status = 'Rejected', updated_at = statement_timestamp()
+      WHERE id = (SELECT application_id FROM replied) AND status = 'Offer' AND $2 = 'Declined'
+      RETURNING id, NULL::text AS applicant_id, updated_at
+    ), moved AS (
+      SELECT * FROM moved_careers UNION ALL SELECT * FROM moved_manual
+    ), history AS (
+      INSERT INTO public.hrms_application_stage_history (application_id, stage, reached_at)
+      SELECT id, 'Rejected', updated_at FROM moved
+    ), stage_activity AS (
+      INSERT INTO public.hrms_application_activity (application_id, from_stage, to_stage, actor_name, reason, occurred_at)
+      SELECT id, 'Offer', 'Rejected', $4, 'Declined the offer', updated_at FROM moved
+    ), notification AS (
+      INSERT INTO public.hrms_application_notifications (id, payload)
+      SELECT 'application.stage:' || m.id || ':Rejected', jsonb_build_object(
+        'sendingApp', 'hrms', 'targetApp', 'careers', 'userIds', jsonb_build_array(m.applicant_id),
+        'type', 'application.rejected', 'title', 'Application update: Rejected',
+        'body', 'Thank you for your interest. Your Application was not selected.',
+        'idempotencyKey', 'application.stage:' || m.id || ':Rejected')
+      FROM moved m WHERE m.applicant_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = m.applicant_id)
+      ON CONFLICT (id) DO NOTHING
+    ), activity AS (
+      INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail, occurred_at)
+      SELECT id, $5, $4, 'Reply received', $3::timestamptz FROM replied
+      UNION ALL SELECT id, 'email-scheduled', NULL, $6, clock_timestamp() FROM replied
+    ), email AS (
+      INSERT INTO public.hrms_offer_emails (id, offer_id, payload, next_attempt_at)
+      SELECT 'offer.' || $5 || ':' || id, id, $7::jsonb, COALESCE($8::timestamptz, clock_timestamp()) FROM replied
+    ), staff_notice AS (
+      INSERT INTO public.hrms_staff_notifications (id, payload)
+      SELECT 'offer.' || $5 || ':' || id, jsonb_build_object('type', 'offer.' || $5, 'title', $10::text, 'body', $11::text, 'link', '/offers/' || id)
+      FROM replied WHERE $9::boolean
+      ON CONFLICT (id) DO NOTHING
+    )
+    SELECT EXISTS (SELECT 1 FROM replied) AS recorded`,
+  [offer.id, answer, repliedAt.toISOString(), who.actorName, kind, `Email to ${offer.applicantEmail}`, JSON.stringify(payload), sendAt?.toISOString() ?? null,
+  who.notifyStaff, notice.title, notice.body]);
+  if (!rows[0].recorded) throw new OfferError("conflict");
+}
+
+/** The seven Pre-employment Documents with their status, read straight from the database (no Staff check). */
+export async function readChecklist(db: Database, id: number): Promise<OfferChecklist> {
+    if (!validId(id)) throw new OfferError("validation");
+    const { rows } = await db.query<{ applicationId: number; status: OfferStatus; stage: OfferStageName; snapshot: { id: number; name?: string; requiredFor?: string }[] }>(`
+      SELECT o.application_id AS "applicationId", o.status, a.stage,
+        COALESCE((SELECT c.documents_snapshot FROM public.applications c WHERE c.id = o.application_id), '[]'::jsonb) AS snapshot
+      FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id WHERE o.id = $1`, [id]);
+    if (!rows[0]) throw new OfferError("not-found");
+    const { rows: stored } = await db.query<{ type: DocumentType; status: "Requested" | "Submitted"; dueDate: string | null; fileName: string | null }>(`
+      SELECT document_type AS type, status, due_date::text AS "dueDate", file_name AS "fileName"
+      FROM public.hrms_offer_documents WHERE offer_id = $1`, [id]);
+    const { applicationId, status, stage, snapshot } = rows[0];
+    const items = PRE_EMPLOYMENT_DOCUMENTS.map((document): OfferDocument => {
+      const base = { type: document.type, label: document.label, hint: document.hint };
+      const row = stored.find((item) => item.type === document.type);
+      if (row) {
+        return { ...base, status: row.status, dueDate: row.dueDate, source: row.status === "Submitted" ? "upload" : null,
+          file: row.status === "Submitted" ? { name: row.fileName ?? document.label, downloadUrl: null } : null };
+      }
+      const sent = snapshot.find((item) => matchDocumentType(item.requiredFor, item.name) === document.type);
+      if (sent) {
+        return { ...base, status: "Submitted", dueDate: null, source: "application",
+          file: { name: sent.name ?? document.label, downloadUrl: `/api/applications/${applicationId}/documents/${sent.id}` } };
+      }
+      return { ...base, status: "Not requested", dueDate: null, source: null, file: null };
+    });
+    return { items, submitted: items.filter((item) => item.status === "Submitted").length, total: DOCUMENT_COUNT,
+      canRequest: (status === "Sent" || status === "Accepted") && stage !== "Withdrawn" };
+}
 
 /** Server-side boundary. Recheck the Portal on every operation, including repeated reads. */
 export function offersFor(sessionHandle: string | undefined, db: Database = database, staffNames: () => Promise<string[] | null> = listStaffNames) {
@@ -256,52 +353,7 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       if (!offer) throw new OfferError("not-found");
       if (offer.status !== "Sent") throw new OfferError("conflict");
       if (offer.sentAt && repliedAt < new Date(offer.sentAt)) throw new OfferError("validation");
-      const email = replyEmail(reply.answer, { applicantName: offer.applicantName, role: offer.role, startDate: offer.startDate });
-      const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
-      const kind = reply.answer === "Accepted" ? "accepted" : "declined";
-      const { rows } = await db.query<{ recorded: boolean }>(`
-        WITH replied AS (
-          UPDATE public.hrms_offers o SET status = $2, replied_at = $3::timestamptz, updated_at = clock_timestamp()
-          FROM public.hrms_all_applications a
-          WHERE o.id = $1 AND o.status = 'Sent' AND a.id = o.application_id AND a.stage = 'Offer'
-          RETURNING o.id, o.application_id
-        ), moved_careers AS (
-          UPDATE public.applications SET status = 'Rejected', updated_at = statement_timestamp()
-          WHERE id = (SELECT application_id FROM replied) AND status = 'Offer' AND $2 = 'Declined'
-          RETURNING id, applicant_id, updated_at
-        ), moved_manual AS (
-          UPDATE public.hrms_manual_applications SET status = 'Rejected', updated_at = statement_timestamp()
-          WHERE id = (SELECT application_id FROM replied) AND status = 'Offer' AND $2 = 'Declined'
-          RETURNING id, NULL::text AS applicant_id, updated_at
-        ), moved AS (
-          SELECT * FROM moved_careers UNION ALL SELECT * FROM moved_manual
-        ), history AS (
-          INSERT INTO public.hrms_application_stage_history (application_id, stage, reached_at)
-          SELECT id, 'Rejected', updated_at FROM moved
-        ), stage_activity AS (
-          INSERT INTO public.hrms_application_activity (application_id, from_stage, to_stage, actor_name, reason, occurred_at)
-          SELECT id, 'Offer', 'Rejected', $4, 'Declined the offer', updated_at FROM moved
-        ), notification AS (
-          INSERT INTO public.hrms_application_notifications (id, payload)
-          SELECT 'application.stage:' || m.id || ':Rejected', jsonb_build_object(
-            'sendingApp', 'hrms', 'targetApp', 'careers', 'userIds', jsonb_build_array(m.applicant_id),
-            'type', 'application.rejected', 'title', 'Application update: Rejected',
-            'body', 'Thank you for your interest. Your Application was not selected.',
-            'idempotencyKey', 'application.stage:' || m.id || ':Rejected')
-          FROM moved m WHERE m.applicant_id IS NOT NULL
-            AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = m.applicant_id)
-          ON CONFLICT (id) DO NOTHING
-        ), activity AS (
-          INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail, occurred_at)
-          SELECT id, $5, $4, 'Reply received', $3::timestamptz FROM replied
-          UNION ALL SELECT id, 'email-scheduled', NULL, $6, clock_timestamp() FROM replied
-        ), email AS (
-          INSERT INTO public.hrms_offer_emails (id, offer_id, payload, next_attempt_at)
-          SELECT 'offer.' || $5 || ':' || id, id, $7::jsonb, COALESCE($8::timestamptz, clock_timestamp()) FROM replied
-        )
-        SELECT EXISTS (SELECT 1 FROM replied) AS recorded`,
-      [id, reply.answer, repliedAt.toISOString(), staff.name, kind, `Email to ${offer.applicantEmail}`, JSON.stringify(payload), sendAt?.toISOString() ?? null]);
-      if (!rows[0].recorded) throw new OfferError("conflict");
+      await applyReply(db, offer, reply.answer, repliedAt, sendAt, { actorName: staff.name, notifyStaff: false });
     },
     /**
      * The seven Pre-employment Documents with their status. One the Applicant already sent with the Application
@@ -309,32 +361,7 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
      */
     async documents(id: number): Promise<OfferChecklist> {
       await authorise();
-      if (!validId(id)) throw new OfferError("validation");
-      const { rows } = await db.query<{ applicationId: number; status: OfferStatus; stage: OfferStageName; snapshot: { id: number; name?: string; requiredFor?: string }[] }>(`
-        SELECT o.application_id AS "applicationId", o.status, a.stage,
-          COALESCE((SELECT c.documents_snapshot FROM public.applications c WHERE c.id = o.application_id), '[]'::jsonb) AS snapshot
-        FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id WHERE o.id = $1`, [id]);
-      if (!rows[0]) throw new OfferError("not-found");
-      const { rows: stored } = await db.query<{ type: DocumentType; status: "Requested" | "Submitted"; dueDate: string | null; fileName: string | null }>(`
-        SELECT document_type AS type, status, due_date::text AS "dueDate", file_name AS "fileName"
-        FROM public.hrms_offer_documents WHERE offer_id = $1`, [id]);
-      const { applicationId, status, stage, snapshot } = rows[0];
-      const items = PRE_EMPLOYMENT_DOCUMENTS.map((document): OfferDocument => {
-        const base = { type: document.type, label: document.label, hint: document.hint };
-        const row = stored.find((item) => item.type === document.type);
-        if (row) {
-          return { ...base, status: row.status, dueDate: row.dueDate, source: row.status === "Submitted" ? "upload" : null,
-            file: row.status === "Submitted" && row.fileName ? { name: row.fileName, downloadUrl: null } : null };
-        }
-        const sent = snapshot.find((item) => matchDocumentType(item.requiredFor, item.name) === document.type);
-        if (sent) {
-          return { ...base, status: "Submitted", dueDate: null, source: "application",
-            file: { name: sent.name ?? document.label, downloadUrl: `/api/applications/${applicationId}/documents/${sent.id}` } };
-        }
-        return { ...base, status: "Not requested", dueDate: null, source: null, file: null };
-      });
-      return { items, submitted: items.filter((item) => item.status === "Submitted").length, total: DOCUMENT_COUNT,
-        canRequest: (status === "Sent" || status === "Accepted") && stage !== "Withdrawn" };
+      return readChecklist(db, id);
     },
     /**
      * Asks the Applicant for documents: the chosen rows become Requested (a Submitted one is reset), the history records
