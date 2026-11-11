@@ -1135,7 +1135,7 @@ it("reschedules the same Interview under shared validation and overlap rules, le
   await expect(applications.rescheduleInterview(second, before.id, interview)).rejects.toMatchObject({ reason: "not-found" });
   await db.query("UPDATE hrms_application_interviews SET starts_at = '2020-01-01', ends_at = '2020-01-02' WHERE id = $1", [before.id]);
   await applications.recordInterviewResult(first, before.id, { score: 4, result: "Passed" });
-  await expect(applications.rescheduleInterview(first, before.id, interview)).rejects.toMatchObject({ reason: "conflict", detail: "An Interview with a result cannot be rescheduled." });
+  await expect(applications.rescheduleInterview(first, before.id, interview)).rejects.toMatchObject({ reason: "conflict", detail: "Application must be in the Interview Stage." });
 });
 
 it.each(["Rejected", "Withdrawn", "Offer"])("ignores a dropped Interview after %s, but keeps its profile history", async stage => {
