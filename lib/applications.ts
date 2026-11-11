@@ -1,3 +1,5 @@
+import { listModuleStaff } from "./portal/client";
+import { INTERVIEWER_COLOURS, type Interviewer } from "./interviewers";
 import { gatewayDocumentFiles, type DocumentFiles } from "@/lib/document-files";
 import { MANUAL_SOURCES, type ApplicationSource, type ManualSource } from "./application-sources";
 import { database, type Database } from "./database";
@@ -184,6 +186,26 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
   }
 
   return {
+    /** Current eligible Interviewers; unavailable data is never cached or returned as an empty directory. */
+    async interviewers(): Promise<Interviewer[]> {
+      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      if (access.decision !== "allowed") throw new ApplicationError(access.decision);
+      const staff = await listModuleStaff("Recruitment and Hiring");
+      if (!staff) throw new ApplicationError("unavailable");
+      if (staff.length === 0) return [];
+      try {
+        const { rows } = await db.query<{ staff_id: string; colour_index: number }>(
+          "SELECT * FROM public.hrms_assign_interviewer_colours($1::text[])", [staff.map(member => member.id)]);
+        const colours = new Map(rows.map(row => [row.staff_id, INTERVIEWER_COLOURS[row.colour_index]]));
+        return staff.map(member => {
+          const colour = colours.get(member.id);
+          if (!colour) throw new ApplicationError("unavailable");
+          return { ...member, colour };
+        });
+      } catch {
+        throw new ApplicationError("unavailable");
+      }
+    },
     /** Records a walk-in or referral on an Open Job Posting in HRMS' own table; applied date is today. */
     async addApplicant(input: ManualApplicantInput): Promise<number> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
