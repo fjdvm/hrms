@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { BackLink, CardTitle, PAGE, PageHeader } from "@/components/hiring/parts";
 import { OfferReplyBy } from "@/components/hiring/offer-reply-by";
+import { OfferResponse } from "@/components/hiring/offer-response";
 import { OfferError, type OfferDetail } from "@/lib/offers";
 import { trackerSteps } from "@/lib/application-view";
 import { OFFER_ACTIVITY_TITLE, OFFER_BADGE, formatOfferDate, formatPeso, formatShortDate, isOverdue } from "@/lib/offer-view";
@@ -93,7 +94,15 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
         subtitle={subtitle}
         badge={<><Badge variant={OFFER_BADGE[offer.status]}>{offer.status}</Badge>{overdue && <Badge variant="destructive">Overdue</Badge>}</>}
       >
-        {offer.status === "Sent" && <OfferReplyBy mode="extend" offerId={offer.id} applicantName={offer.applicantName} min={now} current={offer.replyBy ?? undefined} />}
+        {offer.status === "Sent" && (
+          <>
+            <OfferReplyBy mode="extend" offerId={offer.id} applicantName={offer.applicantName} min={now} current={offer.replyBy ?? undefined} />
+            <OfferResponse
+              offerId={offer.id} applicantName={offer.applicantName} role={offer.role} salary={formatPeso(offer.monthlySalary)}
+              startShort={formatShortDate(offer.startDate)} startDate={offer.startDate}
+            />
+          </>
+        )}
       </PageHeader>
       <Tracker offer={offer} />
       <div className="flex flex-col gap-[16px] lg:flex-row lg:items-start">
@@ -113,6 +122,7 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
             {offer.replyBy && (
               <div className="flex gap-[16px]">
                 <Field label="Reply by" value={`${formatOfferDate(offer.replyBy)}${overdue ? " · overdue" : ""}`} />
+                {offer.repliedAt && <Field label="Reply received" value={dayTime(offer.repliedAt)} />}
               </div>
             )}
           </dl>

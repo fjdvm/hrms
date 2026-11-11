@@ -258,3 +258,96 @@ it("refuses send, extend and detail without the Module", async () => {
   await expect(offers(other).extendReplyBy(1, "2099-10-29")).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).detail(1)).rejects.toMatchObject({ reason: "denied" });
 });
+
+async function sentOffer(index = 1) {
+  const applicationId = await seed(index);
+  const id = await offers().create(applicationId, terms);
+  await offers().send(id, "2099-10-29");
+  await db.query(`UPDATE hrms_offers SET sent_at = now() - interval '2 days' WHERE id = $1`, [id]);
+  return { id, applicationId };
+}
+const justNow = () => new Date(Date.now() - 1000).toISOString();
+const stageOf = async (applicationId: number) => (await db.query<{ stage: string }>(`SELECT stage FROM hrms_all_applications WHERE id = $1`, [applicationId])).rows[0].stage;
+
+it("records an acceptance with its reply time, leaves the Stage at Offer and queues the confirmation", async () => {
+  const { id, applicationId } = await sentOffer();
+  const repliedAt = new Date(Date.now() - 3600_000).toISOString();
+  await offers().recordReply(id, { answer: "Accepted", repliedAt, sendAt: null });
+  const detail = await offers().detail(id);
+  expect(detail).toMatchObject({ status: "Accepted", stage: "Offer", repliedAt: new Date(repliedAt) });
+  expect(await stageOf(applicationId)).toBe("Offer");
+  expect(detail.activity.map((entry) => entry.kind)).toEqual(expect.arrayContaining(["accepted", "email-scheduled"]));
+  const { rows } = await db.query<{ id: string; payload: { to: string } }>(`SELECT id, payload FROM hrms_offer_emails WHERE id LIKE 'offer.accepted:%'`);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].payload.to).toBe("person1@example.test");
+});
+
+it("records a decline: the Application moves to Rejected with stage history and a thank-you email", async () => {
+  const { id, applicationId } = await sentOffer();
+  await offers().recordReply(id, { answer: "Declined", repliedAt: justNow(), sendAt: null });
+  expect(await stageOf(applicationId)).toBe("Rejected");
+  expect((await offers().detail(id)).status).toBe("Declined");
+  expect((await db.query(`SELECT 1 FROM hrms_application_stage_history WHERE application_id = $1 AND stage = 'Rejected'`, [applicationId])).rows).toHaveLength(1);
+  expect((await db.query(`SELECT 1 FROM hrms_application_activity WHERE application_id = $1 AND to_stage = 'Rejected'`, [applicationId])).rows).toHaveLength(1);
+  expect((await db.query(`SELECT 1 FROM hrms_offer_emails WHERE id = $1`, [`offer.declined:${id}`])).rows).toHaveLength(1);
+});
+
+it("queues the reply email for the chosen time, or for now", async () => {
+  const first = await sentOffer(1);
+  const later = new Date(Date.now() + 3 * 3600_000);
+  await offers().recordReply(first.id, { answer: "Accepted", repliedAt: justNow(), sendAt: later.toISOString() });
+  const second = await sentOffer(2);
+  await offers().recordReply(second.id, { answer: "Accepted", repliedAt: justNow(), sendAt: null });
+  const at = async (id: number) => (await db.query<{ due: boolean; at: string }>(
+    `SELECT next_attempt_at <= clock_timestamp() AS due, next_attempt_at AS at FROM hrms_offer_emails WHERE id = $1`, [`offer.accepted:${id}`])).rows[0];
+  expect((await at(first.id)).due).toBe(false);
+  expect(new Date((await at(first.id)).at).getTime()).toBe(later.getTime());
+  expect((await at(second.id)).due).toBe(true);
+});
+
+it("keeps a reply final: nothing can be recorded twice or changed", async () => {
+  const { id, applicationId } = await sentOffer();
+  await offers().recordReply(id, { answer: "Declined", repliedAt: justNow(), sendAt: null });
+  for (const answer of ["Declined", "Accepted"] as const) {
+    await expect(offers().recordReply(id, { answer, repliedAt: justNow(), sendAt: null })).rejects.toMatchObject({ reason: "conflict" });
+  }
+  await expect(offers().extendReplyBy(id, "2099-12-01")).rejects.toMatchObject({ reason: "conflict" });
+  expect((await offers().detail(id)).status).toBe("Declined");
+  expect(await stageOf(applicationId)).toBe("Rejected");
+  expect((await db.query(`SELECT 1 FROM hrms_offer_emails`)).rows).toHaveLength(2);
+});
+
+it("refuses a reply on a Draft, a missing Offer, a future reply time or a send time in the past", async () => {
+  const draft = await offers().create(await seed(1), terms);
+  await expect(offers().recordReply(draft, { answer: "Accepted", repliedAt: justNow(), sendAt: null })).rejects.toMatchObject({ reason: "conflict" });
+  await expect(offers().recordReply(9999, { answer: "Accepted", repliedAt: justNow(), sendAt: null })).rejects.toMatchObject({ reason: "not-found" });
+  const { id } = await sentOffer(2);
+  const hours = (n: number) => new Date(Date.now() + n * 3600_000).toISOString();
+  for (const bad of [
+    { answer: "Maybe", repliedAt: justNow(), sendAt: null }, { answer: "Accepted", repliedAt: "nope", sendAt: null },
+    { answer: "Accepted", repliedAt: hours(2), sendAt: null }, { answer: "Accepted", repliedAt: hours(-48 * 365), sendAt: null },
+    { answer: "Accepted", repliedAt: justNow(), sendAt: hours(-2) }, { answer: "Accepted", repliedAt: justNow(), sendAt: "nope" },
+  ]) {
+    await expect(offers().recordReply(id, bad as never)).rejects.toMatchObject({ reason: "validation" });
+  }
+  expect((await offers().read(id)).status).toBe("Sent");
+});
+
+it("blocks a reply on a Withdrawn Application's Offer", async () => {
+  const { id } = await sentOffer();
+  await db.query(`UPDATE applications SET status = 'Withdrawn'`);
+  await expect(offers().recordReply(id, { answer: "Accepted", repliedAt: justNow(), sendAt: null })).rejects.toMatchObject({ reason: "conflict" });
+  expect((await db.query(`SELECT 1 FROM hrms_offer_emails WHERE id LIKE 'offer.accepted:%'`)).rows).toHaveLength(0);
+});
+
+it("replies after the reply-by date still count; nothing expires", async () => {
+  const { id } = await sentOffer();
+  await db.query(`UPDATE hrms_offers SET reply_by = '2020-01-01'`);
+  await offers().recordReply(id, { answer: "Accepted", repliedAt: justNow(), sendAt: null });
+  expect((await offers().read(id)).status).toBe("Accepted");
+});
+
+it("refuses to record a reply without the Module", async () => {
+  const other = portal.signIn(staff, ["Attendance"]);
+  await expect(offers(other).recordReply(1, { answer: "Accepted", repliedAt: justNow(), sendAt: null })).rejects.toMatchObject({ reason: "denied" });
+});
