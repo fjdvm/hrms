@@ -3,8 +3,8 @@ import { database, type Database } from "./database";
 /** Durable, bounded delivery; concurrent workers share stable gateway keys. */
 export async function retryApplicationNotifications(db: Database = database): Promise<void> {
   try {
-    const { rows } = await db.query<{ id: string; payload: unknown }>(`
-      SELECT id, payload FROM public.hrms_application_notifications
+    const { rows } = await db.query<{ id: string; payload: unknown; channel: string }>(`
+      SELECT id, payload, channel FROM public.hrms_application_notifications
       WHERE delivered_at IS NULL AND next_attempt_at <= clock_timestamp()
       ORDER BY next_attempt_at, id LIMIT 50`);
     for (const row of rows) {
@@ -12,7 +12,7 @@ export async function retryApplicationNotifications(db: Database = database): Pr
         const url = process.env.API_GATEWAY_URL;
         const key = process.env.API_GATEWAY_KEY;
         if (!url || !key) throw new Error("Gateway configuration missing");
-        const response = await fetch(`${url.replace(/\/$/, "")}/notifications/notifications`, {
+        const response = await fetch(`${url.replace(/\/$/, "")}/notifications/${row.channel === "email" ? "emails/app" : "notifications"}`, {
           method: "POST",
           headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "idempotency-key": row.id },
           body: JSON.stringify(row.payload), cache: "no-store", signal: AbortSignal.timeout(5000),

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { invitePreview, manilaParts } from "./interview-form";
 import { interviewValidation, freeInterviewSlots, type InterviewConflict, type FreeInterviewSlot } from "./interview-booking";
 import { listModuleStaff } from "./portal/client";
 import { INTERVIEWER_COLOURS, type Interviewer } from "./interviewers";
@@ -192,7 +194,16 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     if (!staff) throw new ApplicationError("unavailable");
     const interviewer = staff.find(member => member.id === input.interviewerId);
     if (!interviewer) throw new ApplicationError("validation", "Interviewer must hold Recruitment and Hiring.");
-    const details = { ...input, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString(), interviewerName: interviewer.name,
+    const { rows: applicants } = await db.query<{ applicant_name: string; job_posting_title: string }>(
+      "SELECT applicant_name, job_posting_title FROM public.hrms_all_applications WHERE id = $1", [id]);
+    if (!applicants[0]) throw new ApplicationError("not-found");
+    const start = manilaParts(input.startsAt), end = manilaParts(input.endsAt);
+    const preview = invitePreview({ type: input.type, date: start.date, start: start.time, end: end.time,
+      interviewerId: interviewer.id, meetingLink: input.meetingLink ?? "", province: input.province ?? "",
+      city: input.city ?? "", address: input.address ?? "", mapLink: input.mapLink ?? "" },
+      applicants[0].applicant_name, applicants[0].job_posting_title, interviewer.name);
+    const notification = { eventId: randomUUID(), title: `${interviewId === undefined ? "" : "Updated: "}${preview.subject}`, body: preview.body };
+    const details = { ...input, notification, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString(), interviewerName: interviewer.name,
       meetingLink: input.type === "Online" ? input.meetingLink!.trim() : null,
       province: input.type === "In person" ? input.province : null,
       city: input.type === "In person" ? input.city : null,

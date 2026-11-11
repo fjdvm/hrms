@@ -130,3 +130,106 @@ it("skips HR-added Applicants without a Careers account and rejects stale action
   await retryApplicationNotifications(db);
   expect(gateway).not.toHaveBeenCalled();
 });
+
+const invite = { startsAt: '2099-11-03T09:00:00+08:00', endsAt: '2099-11-03T10:00:00+08:00', type: 'Online' as const, interviewerId: 'bea', interviewerName: 'Forged', meetingLink: 'https://meet.google.com/test' };
+
+it("emails a booked Interview to everyone and also tells Applicants with a Careers account", async () => {
+  const id = await seed(1, 'Interview');
+  await db.exec(`INSERT INTO neon_auth."user" VALUES ('person-1')`);
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  const sends: { url: string; body: Record<string, unknown> }[] = [];
+  const boundary = portalFetch(portal);
+  vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
+  vi.stubEnv('API_GATEWAY_KEY', 'key');
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).startsWith('https://gateway.test')) return boundary(input, init);
+    sends.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+    return new Response(null, { status: 202 });
+  });
+  const applications = applicationsFor(handle, db);
+  await applications.scheduleInterview(id, 'Interview', invite);
+  await retryApplicationNotifications(db);
+  expect(sends).toHaveLength(2);
+  expect(sends.find(s => s.url.endsWith('/emails/app'))?.body).toMatchObject({
+    to: 'person1@example.test', app: 'HRMS', title: 'Your online interview for Cashier',
+    body: 'Hi Applicant, you’re invited to an online interview on Tue 3 Nov at 9:00 AM with Bea Santos. Join here: https://meet.google.com/test',
+    button: { label: 'Join meeting', link: invite.meetingLink },
+  });
+  expect(sends.find(s => s.url.endsWith('/notifications/notifications'))?.body).toMatchObject({
+    sendingApp: 'hrms', targetApp: 'careers', userIds: ['person-1'], type: 'interview.invite',
+  });
+});
+
+it.each(['Walk-in', 'Referral'] as const)('emails a %s without a Careers account, including updated In person invites', async (source) => {
+  await seed(1);
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  const sends: { url: string; key: string | null; body: Record<string, unknown> }[] = [];
+  const boundary = portalFetch(portal);
+  vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
+  vi.stubEnv('API_GATEWAY_KEY', 'key');
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).startsWith('https://gateway.test')) return boundary(input, init);
+    sends.push({ url: String(input), key: new Headers(init?.headers).get('idempotency-key'), body: JSON.parse(String(init?.body)) });
+    return new Response(null, { status: 202 });
+  });
+  const applications = applicationsFor(handle, db);
+  const id = await applications.addApplicant({ fullName: 'Walk In', email: 'walk@example.test', mobile: '09171234567', address: 'Manila', jobPostingId: 'posting-1', expectedSalary: 20000, availableFrom: '2099-11-01', source, ...(source === 'Referral' && { referredBy: 'Ada' }) });
+  await applications.moveStage(id, 'New', 'Screening');
+  await applications.moveStage(id, 'Screening', 'Interview');
+  const place = { ...invite, type: 'In person' as const, province: 'Cebu', city: 'Argao', address: '123 Street' };
+  await applications.scheduleInterview(id, 'Interview', place);
+  await retryApplicationNotifications(db);
+  expect(sends).toHaveLength(1);
+  expect(sends[0]).toMatchObject({ url: 'https://gateway.test/notifications/emails/app', body: {
+    to: 'walk@example.test', title: 'Your interview for Cashier',
+    body: 'Hi Walk, please come to 123 Street, Argao, Cebu on Tue 3 Nov at 9:00 AM for your interview with Bea Santos.',
+  } });
+  expect(sends[0].body).not.toHaveProperty('button');
+  const booked = (await applications.readProfile(id)).interviews[0];
+  await applications.rescheduleInterview(id, booked.id, { ...place, startsAt: '2099-11-03T11:00:00+08:00', endsAt: '2099-11-03T12:00:00+08:00', mapLink: 'https://maps.google.com/test' });
+  await retryApplicationNotifications(db);
+  expect(sends).toHaveLength(2);
+  expect(sends[1].body).toMatchObject({ title: 'Updated: Your interview for Cashier', button: { label: 'View map', link: 'https://maps.google.com/test' } });
+  expect(sends[1].body.body).toContain('11:00 AM');
+  expect(sends[1].key).not.toBe(sends[0].key);
+  expect((await applications.readProfile(id)).interviews).toMatchObject([{ id: booked.id }]);
+});
+
+it('retains a saved Interview when email fails, retries its stable key, and delivers Careers independently', async () => {
+  const id = await seed(1, 'Interview');
+  await db.exec(`INSERT INTO neon_auth."user" VALUES ('person-1')`);
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  const attempts: { url: string; key: string | null; body: string }[] = [];
+  const boundary = portalFetch(portal);
+  let fail = true;
+  vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
+  vi.stubEnv('API_GATEWAY_KEY', 'key');
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).startsWith('https://gateway.test')) return boundary(input, init);
+    attempts.push({ url: String(input), key: new Headers(init?.headers).get('idempotency-key'), body: String(init?.body) });
+    return new Response(null, { status: fail && String(input).endsWith('/emails/app') ? 503 : 202 });
+  });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const applications = applicationsFor(handle, db);
+    await applications.scheduleInterview(id, 'Interview', invite);
+    await retryApplicationNotifications(db);
+    expect((await applications.readProfile(id)).interviews).toHaveLength(1);
+    expect(attempts).toHaveLength(2);
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(2);
+    fail = false;
+    await db.exec("UPDATE hrms_application_notifications SET next_attempt_at = '2000-01-01'");
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(3);
+    expect(attempts[2]).toEqual(attempts.find(a => a.url.endsWith('/emails/app')));
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(3);
+    const booked = (await applications.readProfile(id)).interviews[0];
+    await applications.rescheduleInterview(id, booked.id, { ...invite, startsAt: '2099-11-03T11:00:00+08:00', endsAt: '2099-11-03T12:00:00+08:00' });
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(5);
+    expect(attempts.slice(3).every(a => JSON.parse(a.body).title.startsWith('Updated: '))).toBe(true);
+    expect(new Set(attempts.slice(3).map(a => a.key)).size).toBe(2);
+  } finally { log.mockRestore(); }
+});
