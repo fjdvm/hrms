@@ -264,3 +264,75 @@ it('also tells a manually-added Applicant whose email belongs to a Careers accou
   expect(sends).toHaveLength(4);
   expect(sends.slice(2)).toContainEqual(expect.objectContaining({ userIds: ['person-1'], title: 'Updated: Your online interview for Cashier' }));
 });
+
+it.each(['Passed', 'Not passed'] as const)('queues one fixed %s result email at the chosen time after the Stage moves', async (result) => {
+  const id = await seed(1, 'Interview');
+  const booked = (await db.query<{ id: number }>(`INSERT INTO hrms_application_interviews
+    (application_id, starts_at, ends_at, type, interviewer_name, location)
+    VALUES ($1, '2020-01-01T01:00:00Z', '2020-01-01T02:00:00Z', 'Online', 'Bea', '') RETURNING id`, [id])).rows[0];
+  const sends: { url: string; body: unknown }[] = [];
+  const boundary = portalFetch(portal);
+  vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
+  vi.stubEnv('API_GATEWAY_KEY', 'key');
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).startsWith('https://gateway.test')) return boundary(input, init);
+    sends.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+    return new Response(null, { status: 202 });
+  });
+  const applications = applicationsFor(handle, db);
+  const outcome = { result, score: 4, privateNotes: 'Confidential evaluation', resultEmailAt: '2099-11-05T09:00:00Z' };
+  await applications.recordInterviewResult(id, booked.id, outcome);
+  expect(await applications.readProfile(id)).toMatchObject({ stage: result === 'Passed' ? 'Offer' : 'Rejected', interviews: [{ resultEmailAt: new Date(outcome.resultEmailAt) }] });
+  await retryApplicationNotifications(db);
+  expect(sends).toEqual([{ url: 'https://gateway.test/notifications/emails/app', body: {
+    to: 'person1@example.test', app: 'HRMS', title: 'Your interview result',
+    body: result === 'Passed' ? 'Thank you for attending your interview. You have passed. Our HR team will contact you about the next steps.' : 'Thank you for attending your interview. Unfortunately, you have not passed. Thank you for your interest and time.',
+    sendAt: '2099-11-05T09:00:00+00:00',
+  } }]);
+  await expect(applications.recordInterviewResult(id, booked.id, { ...outcome, resultEmailAt: '2099-11-06T09:00:00Z' })).rejects.toMatchObject({ reason: 'conflict' });
+  await retryApplicationNotifications(db);
+  expect(sends).toHaveLength(1);
+});
+
+it('keeps a walk-in result on failed hand-off, retries the same email, and honours skipping', async () => {
+  await seed(1);
+  const applications = applicationsFor(handle, db);
+  const id = await applications.addApplicant({ fullName: 'Walk In', email: 'walk@example.test', mobile: '09171234567', address: 'Manila', jobPostingId: 'posting-1', expectedSalary: 20000, availableFrom: '2099-11-01', source: 'Walk-in' });
+  await applications.moveStage(id, 'New', 'Screening');
+  await applications.moveStage(id, 'Screening', 'Interview');
+  const skipped = await seed(2, 'Interview');
+  const book = async (applicationId: number) => (await db.query<{ id: number }>(`INSERT INTO hrms_application_interviews
+    (application_id, starts_at, ends_at, type, interviewer_name, location)
+    VALUES ($1, '2020-01-01T01:00:00Z', '2020-01-01T02:00:00Z', 'Online', 'Bea', '') RETURNING id`, [applicationId])).rows[0].id;
+  const interviewId = await book(id);
+  const skippedId = await book(skipped);
+  const attempts: { key: string | null; payload: string }[] = [];
+  const boundary = portalFetch(portal);
+  let fail = true;
+  vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
+  vi.stubEnv('API_GATEWAY_KEY', 'key');
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).startsWith('https://gateway.test')) return boundary(input, init);
+    attempts.push({ key: new Headers(init?.headers).get('idempotency-key'), payload: String(init?.body) });
+    return new Response(null, { status: fail ? 503 : 202 });
+  });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await applications.recordInterviewResult(id, interviewId, { result: 'Passed', score: 5, privateNotes: 'Secret', resultEmailAt: '2020-01-02T09:00:00Z' });
+    await applications.recordInterviewResult(skipped, skippedId, { result: 'Not passed', score: 1 });
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(1);
+    expect(JSON.parse(attempts[0].payload)).toMatchObject({ to: 'walk@example.test', sendAt: '2020-01-02T09:00:00+00:00' });
+    expect(await applications.readProfile(id)).toMatchObject({ stage: 'Offer', interviews: [{ result: 'Passed' }] });
+    expect(await applications.readProfile(skipped)).toMatchObject({ stage: 'Rejected', interviews: [{ resultEmailAt: null }] });
+    await expect(applications.recordInterviewResult(skipped, skippedId, { result: 'Not passed', score: 1, resultEmailAt: '2099-01-01T00:00:00Z' })).rejects.toMatchObject({ reason: 'conflict' });
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(1);
+    fail = false;
+    await db.exec("UPDATE hrms_application_notifications SET next_attempt_at = '2000-01-01'");
+    await retryApplicationNotifications(db);
+    expect(attempts).toEqual([attempts[0], attempts[0]]);
+    await retryApplicationNotifications(db);
+    expect(attempts).toHaveLength(2);
+  } finally { log.mockRestore(); }
+});
