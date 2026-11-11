@@ -7,7 +7,13 @@ export type FreeInterviewSlot = { startsAt: string; endsAt: string };
 export type InterviewConflict = { applicantName: string; startsAt: string; endsAt: string };
 
 export function interviewValidation(input: InterviewInput, now = Date.now()): string | undefined {
-  const timestamp = (value: unknown) => typeof value === "string" && /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
+  const timestamp = (value: unknown) => {
+    if (typeof value !== "string") return false;
+    const parts = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
+    if (!parts || !Number.isFinite(Date.parse(value)) || Number(parts[2]) > 23 || Number(parts[3]) > 59 || Number(parts[4] ?? 0) > 59) return false;
+    const date = new Date(`${parts[1]}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === parts[1];
+  };
   const text = (value: unknown) => typeof value === "string" && value.trim() !== "";
   const link = (value: unknown) => {
     if (!text(value)) return false;

@@ -1036,6 +1036,8 @@ it("enforces Manila weekdays, hours, type-specific locations and Interviewer eli
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
   const cases = [
+    [{ startsAt: "2099-02-30T09:00:00+08:00", endsAt: "2099-02-30T10:00:00+08:00" }, "Provide valid start and end times with a timezone."],
+    [{ endsAt: "2099-11-03T17:00:00.000001+08:00" }, "Provide valid start and end times with a timezone."],
     [{ startsAt: "2099-11-07T09:00:00+08:00", endsAt: "2099-11-07T10:00:00+08:00" }, "Interviews must be Monday to Friday in Manila."],
     [{ startsAt: "2099-11-03T07:59:00+08:00" }, "Start must be at or after 8 AM in Manila."],
     [{ endsAt: "2099-11-03T17:00:01+08:00" }, "End must be no later than 5 PM on the same Manila day."],

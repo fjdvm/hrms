@@ -192,7 +192,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     if (!staff) throw new ApplicationError("unavailable");
     const interviewer = staff.find(member => member.id === input.interviewerId);
     if (!interviewer) throw new ApplicationError("validation", "Interviewer must hold Recruitment and Hiring.");
-    const details = { ...input, interviewerName: interviewer.name,
+    const details = { ...input, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString(), interviewerName: interviewer.name,
       meetingLink: input.type === "Online" ? input.meetingLink!.trim() : null,
       province: input.type === "In person" ? input.province : null,
       city: input.type === "In person" ? input.city : null,

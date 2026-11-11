@@ -49,8 +49,21 @@ it.skipIf(!process.env.TEST_POSTGRES_URL)("prevents two independent Postgres ses
     // commit and then see the booking in a fresh snapshot.
     await first.query("BEGIN");
     await applications[0].scheduleInterview(1, "Interview", input);
+    const secondPid = (await clients[1].query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
     const competing = applications[1].scheduleInterview(2, "Interview", input);
     const assertion = expect(competing).rejects.toMatchObject({ reason: "conflict", conflicts: [{ applicantName: "First Applicant" }] });
+    // Test-only bounded observation: prove actual contention before releasing
+    // the first session. PGlite cannot exercise this independent-session wait.
+    await admin.query(`DO $$
+      DECLARE deadline timestamptz := clock_timestamp() + interval '5 seconds';
+      BEGIN
+        LOOP
+          PERFORM pg_stat_clear_snapshot();
+          EXIT WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ${secondPid} AND wait_event = 'advisory');
+          IF clock_timestamp() > deadline THEN RAISE EXCEPTION 'Competing booking never waited on advisory lock'; END IF;
+          PERFORM pg_sleep(0.01);
+        END LOOP;
+      END $$`);
     await first.query("COMMIT");
     await assertion;
     expect((await applications[0].readProfile(1)).interviews).toHaveLength(1);
