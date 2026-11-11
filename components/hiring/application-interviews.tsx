@@ -2,13 +2,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ApplicationInterview } from "@/lib/applications";
-import { canRecordResult, interviewRow } from "@/lib/application-view";
+import { interviewRow } from "@/lib/application-view";
 import { InterviewResult } from "@/components/hiring/interview-result";
 import { CELL, CardTitle, HEAD } from "@/components/hiring/parts";
 
 /** Every interview booked for the Application, newest first, with its score once HR has recorded a result. */
 export function ApplicationInterviews({ applicationId, applicantName, jobTitle, interviews }: { applicationId: number; applicantName: string; jobTitle: string; interviews: ApplicationInterview[] }) {
-  const now = new Date();
   return (
     <Card className="flex flex-col gap-[10px] rounded-xl px-[20px] py-[18px] shadow-none">
       <CardTitle aside={<span className="text-xs font-medium text-primary">Scorecards are private to HR</span>}>Interviews</CardTitle>
@@ -42,8 +41,8 @@ export function ApplicationInterviews({ applicationId, applicantName, jobTitle, 
                       <Badge variant={row.status === "Completed" ? "success" : "info"}>{row.status}</Badge>
                     </TableCell>
                     <TableCell className={`${CELL} text-right`}>
-                      {canRecordResult(interview, now) && (
-                        <InterviewResult applicationId={applicationId} interviewId={interview.id} subtitle={`${applicantName} · ${jobTitle} · ${row.date}, ${row.type.toLowerCase()} with ${row.interviewer}`} />
+                      {interview.result === null && (
+                        <InterviewResult applicationId={applicationId} interviewId={interview.id} startsAt={interview.startsAt} applicantName={applicantName} subtitle={`${applicantName} · ${jobTitle} · ${row.date}, ${row.type.toLowerCase()} with ${row.interviewer}`} />
                       )}
                     </TableCell>
                   </TableRow>

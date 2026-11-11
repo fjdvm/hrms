@@ -1,27 +1,79 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { recordInterviewResult, type ResultState } from "@/app/(hrms)/applicants/[id]/actions";
 import { SCORE_LABELS } from "@/lib/application-view";
+import { sendTimeOptions } from "@/lib/result-email-times";
 import { OptionGroup } from "./dialog-parts";
 
-/** The Record result button on an interview that has started, and the Interview result dialog it opens. Saving re-renders the profile with the score and status. */
-export function InterviewResult({ applicationId, interviewId, subtitle }: { applicationId: number; interviewId: number; subtitle: string }) {
+type Result = "Passed" | "Not passed";
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** True once `startsAt` has passed. Flips at that moment with a single in-memory timer: no network, no polling. */
+function useStarted(startsAt: Date): boolean {
+  const [started, setStarted] = useState(() => startsAt.getTime() <= Date.now());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const arm = () => {
+      const remaining = startsAt.getTime() - Date.now();
+      if (remaining <= 0) return setStarted(true);
+      timer = setTimeout(arm, Math.min(remaining, MAX_TIMER_MS));
+    };
+    arm();
+    return () => clearTimeout(timer);
+  }, [startsAt]);
+  return started;
+}
+
+/** The Not passed / Passed row buttons of an Interview, and the Interview result dialog they open with that result already chosen. */
+export function InterviewResult({ applicationId, interviewId, startsAt, applicantName, subtitle }: { applicationId: number; interviewId: number; startsAt: Date; applicantName: string; subtitle: string }) {
+  const started = useStarted(startsAt);
   const [open, setOpen] = useState(false);
-  const [result, setResult] = useState<"Passed" | "Not passed">("Passed");
+  const [result, setResult] = useState<Result>("Passed");
+  const choose = (next: Result) => { setResult(next); setOpen(true); };
+  const rowButton = (label: Result, tone: string, icon: React.ReactNode) => {
+    const button = (
+      <Button type="button" variant="outline" size="sm" disabled={!started} onClick={() => choose(label)} className={`h-auto gap-[6px] rounded-lg border-[#e6e1ee] px-[12px] py-[6px] text-[13px] font-medium shadow-none [&_svg]:size-[14px] ${tone}`}>
+        {icon} {label}
+      </Button>
+    );
+    if (started) return button;
+    // A disabled button swallows hover, so the tooltip hangs off a wrapper.
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild><span tabIndex={0}>{button}</span></TooltipTrigger>
+        <TooltipContent>You can record the result once the interview starts.</TooltipContent>
+      </Tooltip>
+    );
+  };
+  const firstName = applicantName.split(" ")[0];
+  return (
+    <TooltipProvider>
+    <div className="flex items-center justify-end gap-sm">
+      {rowButton("Not passed", "text-red-700", <X />)}
+      {rowButton("Passed", "text-[#1e6b3a]", <Check />)}
+      {open && <ResultDialog key={result} {...{ applicationId, interviewId, subtitle, firstName, result, setResult, onClose: () => setOpen(false) }} />}
+    </div>
+    </TooltipProvider>
+  );
+}
+
+function ResultDialog({ applicationId, interviewId, subtitle, firstName, result, setResult, onClose }: { applicationId: number; interviewId: number; subtitle: string; firstName: string; result: Result; setResult: (result: Result) => void; onClose: () => void }) {
+  const [sendEmail, setSendEmail] = useState(true);
+  const [times] = useState(() => sendTimeOptions(new Date()));
   const [state, submit, pending] = useActionState(async (previous: ResultState, data: FormData) => {
     const next = await recordInterviewResult(applicationId, interviewId, previous, data);
-    if (next.recorded) setOpen(false);
+    if (next.recorded) onClose();
     return next;
   }, {} as ResultState);
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="h-auto rounded-lg border-[#e6e1ee] px-[12px] py-[6px] text-[13px] font-medium shadow-none">Record result</Button>
-      </DialogTrigger>
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent
         showClose={false}
         overlayClassName="bg-[rgba(18,13,26,0.45)]"
@@ -43,8 +95,8 @@ export function InterviewResult({ applicationId, interviewId, subtitle }: { appl
                 value={result}
                 onChange={setResult}
                 options={[
-                  { value: "Passed", title: "Passed", description: "Did well in the interview", icon: <Check className="text-[#1e6b3a]" /> },
-                  { value: "Not passed", title: "Not passed", description: "Did not meet the bar", icon: <X className="text-red-700" /> },
+                  { value: "Passed", title: "Passed", description: "Moves to Offers", icon: <Check className="text-[#1e6b3a]" /> },
+                  { value: "Not passed", title: "Not passed", description: "Moves to Rejected", icon: <X className="text-red-700" /> },
                 ]}
               />
             </div>
@@ -56,12 +108,35 @@ export function InterviewResult({ applicationId, interviewId, subtitle }: { appl
                 </select>
                 <ChevronDown aria-hidden className="pointer-events-none absolute right-[12px] size-4 text-zinc-500" />
               </div>
-              <p className="text-xs text-zinc-500">Scores are private to HR and never shown to the Applicant.</p>
             </div>
+            <div className="flex flex-col gap-[6px]">
+              <label htmlFor="interview-notes" className="text-[13px] font-medium text-zinc-800">Interview notes <span className="font-normal text-zinc-500">(private)</span></label>
+              <Textarea id="interview-notes" name="privateNotes" className="h-16 min-h-0 resize-none rounded-lg border-zinc-200 bg-white px-[12px] py-[9px] text-sm leading-5 shadow-none" />
+              <p className="text-xs text-zinc-500">Scores and notes are private to HR and never shown to the Applicant.</p>
+            </div>
+            <div className="flex items-center gap-[12px]">
+              <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                <p id="result-email-title" className="text-sm font-medium text-zinc-900">Email the result to {firstName}</p>
+                <p className="text-xs text-zinc-500">Applicants get a result email whether they pass or not.</p>
+              </div>
+              <Switch aria-labelledby="result-email-title" checked={sendEmail} onCheckedChange={setSendEmail} className="h-5 w-9 data-[state=checked]:bg-[#7c3aed] [&>span]:size-4 [&>span]:data-[state=checked]:translate-x-4" />
+            </div>
+            {sendEmail && (
+              <div className="flex flex-col gap-[6px]">
+                <label htmlFor="result-email-at" className="text-[13px] font-medium text-zinc-800">Send email</label>
+                <div className="relative flex items-center rounded-lg border border-zinc-200 bg-white focus-within:border-[#8b5cf6]">
+                  <select id="result-email-at" name="resultEmailAt" defaultValue={times.find((time) => time.label.startsWith("Tomorrow"))?.value} className="w-full cursor-pointer appearance-none bg-transparent px-[12px] py-[9px] text-sm text-zinc-900 outline-none">
+                    {times.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
+                  </select>
+                  <ChevronDown aria-hidden className="pointer-events-none absolute right-[12px] size-4 text-zinc-500" />
+                </div>
+                <p className="text-xs text-zinc-500">Sent later, not right away. The wording is fixed and it can’t be edited or cancelled.</p>
+              </div>
+            )}
             {state.error && <p role="alert" className="text-xs text-destructive">{state.error}</p>}
           </div>
           <div className="flex items-center gap-sm border-t border-[#ebebeb] bg-zinc-50 px-[24px] py-[14px]">
-            <p className="flex-1 text-xs text-zinc-500">Saved to the Interviews card and the activity timeline.</p>
+            <p className="flex-1 text-xs text-zinc-500">{result === "Passed" ? "The Application moves to Offers." : "The Application moves to Rejected."}</p>
             <DialogClose asChild>
               <Button type="button" variant="outline" className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] text-sm font-medium shadow-none">Cancel</Button>
             </DialogClose>
