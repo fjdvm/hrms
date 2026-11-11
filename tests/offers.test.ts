@@ -258,3 +258,130 @@ it("refuses send, extend and detail without the Module", async () => {
   await expect(offers(other).extendReplyBy(1, "2099-10-29")).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).detail(1)).rejects.toMatchObject({ reason: "denied" });
 });
+
+// ---- Pre-employment documents (#286) ----
+
+const DUE = "2099-10-20";
+async function sentOffer(index = 1) {
+  const id = await offers().create(await seed(index), terms);
+  await offers().send(id, "2099-10-29");
+  return id;
+}
+const request = (id: number, types: string[], extra: Record<string, unknown> = {}) =>
+  offers().requestDocuments(id, { types, dueDate: DUE, ...extra } as never);
+
+it("lists the seven documents, with those the Applicant already sent starting Submitted", async () => {
+  const id = await sentOffer();
+  await db.query(`UPDATE applications SET documents_snapshot = $1::jsonb WHERE applicant_id = 'person-1'`, [JSON.stringify([
+    { id: 11, name: "resume.pdf", requiredFor: "Resume or CV", size: 1, contentType: "application/pdf" },
+    { id: 12, name: "id.png", requiredFor: "Valid government ID", size: 1, contentType: "image/png" },
+    { id: 13, name: "birth.pdf", requiredFor: "Birth certificate", size: 1, contentType: "application/pdf" },
+  ])]);
+  const checklist = await offers().documents(id);
+  expect(checklist.total).toBe(7);
+  expect(checklist.submitted).toBe(2);
+  expect(checklist.items.map((item) => [item.type, item.status])).toEqual([
+    ["resume", "Submitted"], ["valid-id", "Submitted"], ["nbi", "Not requested"], ["health", "Not requested"],
+    ["sss", "Not requested"], ["philhealth", "Not requested"], ["pagibig", "Not requested"],
+  ]);
+  const resume = checklist.items[0];
+  expect(resume).toMatchObject({ source: "application", file: { name: "resume.pdf", downloadUrl: expect.stringMatching(/^\/api\/applications\/\d+\/documents\/11$/) } });
+});
+
+it("allows a request from Sent onward, not on a Draft, a Declined offer or a Withdrawn Application", async () => {
+  const draft = await offers().create(await seed(1), terms);
+  expect((await offers().documents(draft)).canRequest).toBe(false);
+  await expect(request(draft, ["nbi"])).rejects.toMatchObject({ reason: "conflict" });
+
+  const sent = await sentOffer(2);
+  expect((await offers().documents(sent)).canRequest).toBe(true);
+  await request(sent, ["nbi"]);
+  await db.query(`UPDATE hrms_offers SET status = 'Accepted' WHERE id = $1`, [sent]);
+  expect((await offers().documents(sent)).canRequest).toBe(true);
+  await request(sent, ["sss"]);
+
+  const declined = await sentOffer(3);
+  await db.query(`UPDATE hrms_offers SET status = 'Declined' WHERE id = $1`, [declined]);
+  expect((await offers().documents(declined)).canRequest).toBe(false);
+  await expect(request(declined, ["nbi"])).rejects.toMatchObject({ reason: "conflict" });
+
+  const withdrawn = await sentOffer(4);
+  await db.query(`UPDATE applications SET status = 'Withdrawn' WHERE applicant_id = 'person-4'`);
+  expect((await offers().documents(withdrawn)).canRequest).toBe(false);
+  await expect(request(withdrawn, ["nbi"])).rejects.toMatchObject({ reason: "conflict" });
+  expect((await db.query(`SELECT 1 FROM hrms_offer_documents WHERE offer_id = ANY($1)`, [[draft, declined, withdrawn]])).rows).toHaveLength(0);
+});
+
+it("marks the chosen documents Requested and emails the Applicant at once with documents, due date and message", async () => {
+  const id = await sentOffer();
+  await request(id, ["nbi", "health"], { message: "  Please bring the originals too.  " });
+  const checklist = await offers().documents(id);
+  expect(checklist.items.filter((item) => item.status === "Requested").map((item) => [item.type, item.dueDate])).toEqual([["nbi", DUE], ["health", DUE]]);
+  expect(checklist.submitted).toBe(0);
+
+  const { rows } = await db.query<{ id: string; payload: { to: string; app: string; title: string; body: string }; next_attempt_at: Date }>(
+    `SELECT id, payload, next_attempt_at FROM hrms_offer_emails WHERE id LIKE 'offer.docs:%'`);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].payload).toMatchObject({ to: "person1@example.test", app: "careers" });
+  for (const text of ["NBI clearance", "Health certificate", "20 Oct 2099", "Please bring the originals too."]) expect(rows[0].payload.body).toContain(text);
+  expect(rows[0].payload.body).not.toContain("Resume");
+  expect(rows[0].next_attempt_at.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+
+  const activity = (await offers().detail(id)).activity.find((entry) => entry.kind === "documents-requested");
+  expect(activity).toMatchObject({ actorName: "Ada Okafor", detail: "NBI clearance, Health certificate · due 20 Oct 2099" });
+});
+
+it("resets a Submitted document to Requested when it is requested again", async () => {
+  const id = await sentOffer();
+  await db.query(`UPDATE applications SET documents_snapshot = $1::jsonb WHERE applicant_id = 'person-1'`, [JSON.stringify([
+    { id: 11, name: "resume.pdf", requiredFor: "Resume or CV", size: 1, contentType: "application/pdf" },
+  ])]);
+  await db.query(`INSERT INTO hrms_offer_documents (offer_id, document_type, status, file_id, file_name, submitted_at) VALUES ($1, 'nbi', 'Submitted', 'f1', 'nbi.pdf', now())`, [id]);
+  const before = await offers().documents(id);
+  expect(before.items.filter((item) => item.status === "Submitted").map((item) => item.type)).toEqual(["resume", "nbi"]);
+
+  await request(id, ["resume", "nbi"]);
+  const after = await offers().documents(id);
+  expect(after.submitted).toBe(0);
+  expect(after.items.slice(0, 3).map((item) => [item.type, item.status, item.file])).toEqual([["resume", "Requested", null], ["valid-id", "Not requested", null], ["nbi", "Requested", null]]);
+  expect((await db.query(`SELECT submitted_at FROM hrms_offer_documents WHERE document_type = 'nbi'`)).rows[0]).toEqual({ submitted_at: null });
+  expect((await db.query(`SELECT id FROM hrms_offer_emails WHERE id LIKE 'offer.docs:%'`)).rows).toHaveLength(1);
+  await request(id, ["resume"]);
+  expect((await db.query(`SELECT id FROM hrms_offer_emails WHERE id LIKE 'offer.docs:%'`)).rows).toHaveLength(2);
+});
+
+it("rejects an empty, unknown or repeated choice, a bad or past due date and an unknown Offer, and changes nothing", async () => {
+  const id = await sentOffer();
+  for (const bad of [{ types: [] }, { types: ["passport"] }, { types: ["nbi", "nbi"] }, { dueDate: "" }, { dueDate: "2020-01-01" }, { dueDate: "2099-02-30" }, { message: "x".repeat(501) }]) {
+    await expect(offers().requestDocuments(id, { types: ["nbi"], dueDate: DUE, ...bad } as never)).rejects.toMatchObject({ reason: "validation" });
+  }
+  await expect(request(9999, ["nbi"])).rejects.toMatchObject({ reason: "not-found" });
+  expect((await db.query(`SELECT 1 FROM hrms_offer_documents`)).rows).toHaveLength(0);
+  expect((await db.query(`SELECT 1 FROM hrms_offer_emails WHERE id LIKE 'offer.docs:%'`)).rows).toHaveLength(0);
+});
+
+it("keeps an overdue due date visible with no automatic change", async () => {
+  const id = await sentOffer();
+  await request(id, ["nbi"]);
+  await db.query(`UPDATE hrms_offer_documents SET due_date = '2020-01-01'`);
+  const nbi = (await offers().documents(id)).items.find((item) => item.type === "nbi");
+  expect(nbi).toMatchObject({ status: "Requested", dueDate: "2020-01-01" });
+  expect((await offers().detail(id)).status).toBe("Sent");
+});
+
+it("records the documents email in the activity once delivered", async () => {
+  const id = await sentOffer();
+  await request(id, ["nbi"]);
+  vi.stubEnv("API_GATEWAY_URL", "https://gateway.test");
+  vi.stubEnv("API_GATEWAY_KEY", "key");
+  vi.stubGlobal("fetch", async () => new Response("{}", { status: 200 }));
+  await deliverOfferEmails(db);
+  const details = (await db.query<{ detail: string }>(`SELECT detail FROM hrms_offer_activity WHERE kind = 'email-sent' ORDER BY id`)).rows.map((row) => row.detail);
+  expect(details).toEqual(["Offer email sent", "Documents email sent"]);
+});
+
+it("refuses documents and requests without the Module", async () => {
+  const other = portal.signIn(staff, ["Attendance"]);
+  await expect(offers(other).documents(1)).rejects.toMatchObject({ reason: "denied" });
+  await expect(offers(other).requestDocuments(1, { types: ["nbi"], dueDate: DUE })).rejects.toMatchObject({ reason: "denied" });
+});
