@@ -42,3 +42,12 @@ export function readOfferForm(values: Record<(typeof TERM_FIELDS)[number], strin
 }
 
 export { EMPLOYMENT_TYPES, PROBATION_PERIODS };
+
+/** A Sent offer is overdue once its reply-by date has passed. Nothing expires; it is only flagged. */
+export const isOverdue = (status: OfferDisplayStatus, replyBy: string | null, today: string) => status === "Sent" && replyBy !== null && replyBy < today;
+
+/** "reply by 29 Oct" for the page's subtitle. */
+export const formatShortDate = (value: string | Date) => formatOfferDate(value).replace(/ \d{4}$/, "");
+
+const ACTIVITY_TITLE = { sent: "Offer sent", "reply-by-extended": "Reply-by extended", "email-scheduled": "Email scheduled", "email-sent": "Email sent" } as const;
+export const OFFER_ACTIVITY_TITLE = ACTIVITY_TITLE;

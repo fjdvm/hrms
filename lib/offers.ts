@@ -1,6 +1,7 @@
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 import { listStaffNames } from "./portal/client";
+import { isValidDate } from "./offer-terms";
 
 import {
   EMPLOYMENT_TYPES, OFFER_STATUSES, OFFER_TABS, PROBATION_PERIODS, termsProblems,
@@ -37,6 +38,17 @@ export type OfferDraft = OfferTerms & {
   branch: string;
   status: OfferDisplayStatus;
 };
+export type OfferActivityKind = "sent" | "reply-by-extended" | "email-scheduled" | "email-sent";
+export type OfferActivity = { kind: OfferActivityKind; actorName: string | null; detail: string | null; occurredAt: Date };
+export type OfferStageName = "New" | "Screening" | "Interview" | "Offer" | "Hired" | "Rejected" | "Withdrawn";
+/** Everything the Offer page shows. */
+export type OfferDetail = OfferDraft & {
+  sentAt: Date | null;
+  replyBy: string | null;
+  stage: OfferStageName;
+  stageDates: Partial<Record<OfferStageName, Date>>;
+  activity: OfferActivity[];
+};
 export type OfferCandidate = { applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string };
 
 export class OfferError extends Error {
@@ -45,6 +57,7 @@ export class OfferError extends Error {
   }
 }
 
+const manilaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 const validId = (id: unknown) => Number.isInteger(id) && (id as number) > 0 && (id as number) <= 2_147_483_647;
 const validApplicationId = (id: unknown) => Number.isInteger(id) && id !== 0 && Math.abs(id as number) <= 2_147_483_647;
 
@@ -121,6 +134,85 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       const { sentAt, replyBy, ...draft } = rows[0];
       void sentAt; void replyBy;
       return draft;
+    },
+    /** The Offer page: terms, dates, stage dates and history. */
+    async detail(id: number): Promise<OfferDetail> {
+      await authorise();
+      if (!validId(id)) throw new OfferError("validation");
+      const { rows } = await db.query<OfferRow & { stage: OfferStageName; stageDates: Record<string, string>; activity: (Omit<OfferActivity, "occurredAt"> & { occurredAt: string })[] }>(`
+        SELECT x.*, a.stage,
+          jsonb_build_object('New', a.applied_at) || COALESCE((SELECT jsonb_object_agg(h.stage, h.reached_at)
+            FROM public.hrms_application_stage_history h WHERE h.application_id = a.id), '{}'::jsonb) AS "stageDates",
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('kind', e.kind, 'actorName', e.actor_name, 'detail', e.detail, 'occurredAt', e.occurred_at)
+            ORDER BY e.occurred_at DESC, e.id DESC) FROM public.hrms_offer_activity e WHERE e.offer_id = x.id), '[]'::jsonb) AS activity
+        FROM (${SELECT_OFFERS} WHERE o.id = $1) x
+        JOIN public.hrms_all_applications a ON a.id = x."applicationId"`, [id]);
+      if (!rows[0]) throw new OfferError("not-found");
+      const { sentAt, stageDates, activity, ...rest } = rows[0];
+      return {
+        ...rest, sentAt: sentAt ? new Date(sentAt) : null,
+        stageDates: Object.fromEntries(Object.entries(stageDates).map(([stage, date]) => [stage, new Date(date)])),
+        activity: activity.map((entry) => ({ ...entry, occurredAt: new Date(entry.occurredAt) })),
+      };
+    },
+    /**
+     * Sends a Draft: it becomes Sent with a reply-by date, its terms lock, and the Applicant's email
+     * (every term) is queued in the outbox. All of it happens in one statement or none.
+     */
+    async send(id: number, replyBy: string): Promise<void> {
+      const staff = await authorise();
+      if (!validId(id) || !isValidDate(replyBy) || replyBy < manilaToday()) throw new OfferError("validation");
+      const { rows } = await db.query<{ sent: boolean; known: boolean }>(`
+        WITH sent AS (
+          UPDATE public.hrms_offers o SET status = 'Sent', sent_at = clock_timestamp(), reply_by = $2::date, updated_at = clock_timestamp()
+          FROM public.hrms_all_applications a
+          WHERE o.id = $1 AND o.status = 'Draft' AND a.id = o.application_id AND a.stage = 'Offer'
+          RETURNING o.id, o.monthly_salary, o.start_date, o.employment_type, o.schedule, o.probation, o.reports_to, o.branch, o.reply_by,
+            a.applicant_name, a.applicant_email, a.job_posting_title
+        ), activity AS (
+          INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail)
+          SELECT id, 'sent', $3, 'Reply by ' || to_char(reply_by, 'FMDD Mon YYYY') FROM sent
+          UNION ALL SELECT id, 'email-scheduled', NULL, 'Offer email to ' || applicant_email FROM sent
+        ), email AS (
+          INSERT INTO public.hrms_offer_emails (id, offer_id, payload)
+          SELECT 'offer.sent:' || id, id, jsonb_build_object('to', applicant_email, 'app', 'careers',
+            'title', 'Your job offer: ' || job_posting_title,
+            'body', 'Dear ' || applicant_name || E',\n\nWe are pleased to offer you the position of ' || job_posting_title || ' at Bren Raphael''s (' || branch || E').\n\n'
+              || E'Monthly salary: PHP ' || to_char(monthly_salary, 'FM999,999,999') || E'\n'
+              || E'Start date: ' || to_char(start_date, 'FMDD Mon YYYY') || E'\n'
+              || E'Employment type: ' || employment_type || E'\n'
+              || E'Schedule: ' || schedule || E'\n'
+              || E'Probation: ' || probation || E'\n'
+              || E'Reports to: ' || reports_to || E'\n\n'
+              || E'Please reply by ' || to_char(reply_by, 'FMDD Mon YYYY') || '.')
+          FROM sent
+        )
+        SELECT EXISTS (SELECT 1 FROM sent) AS sent, EXISTS (SELECT 1 FROM public.hrms_offers WHERE id = $1) AS known`,
+      [id, replyBy, staff.name]);
+      if (!rows[0].sent) throw new OfferError(rows[0].known ? "conflict" : "not-found");
+    },
+    /** Gives a Sent Offer more time. The new date must be later than the current one; nothing expires either way. */
+    async extendReplyBy(id: number, replyBy: string): Promise<void> {
+      const staff = await authorise();
+      if (!validId(id) || !isValidDate(replyBy) || replyBy < manilaToday()) throw new OfferError("validation");
+      const { rows } = await db.query<{ updated: boolean; status: string | null; stage: string | null }>(`
+        WITH cur AS (
+          SELECT o.id, o.status, o.reply_by, a.stage FROM public.hrms_offers o
+          JOIN public.hrms_all_applications a ON a.id = o.application_id WHERE o.id = $1
+        ), updated AS (
+          UPDATE public.hrms_offers o SET reply_by = $2::date, updated_at = clock_timestamp()
+          FROM cur WHERE o.id = cur.id AND cur.status = 'Sent' AND cur.stage <> 'Withdrawn' AND $2::date > cur.reply_by
+          RETURNING o.id, cur.reply_by AS previous
+        ), activity AS (
+          INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail)
+          SELECT id, 'reply-by-extended', $3, to_char(previous, 'FMDD Mon YYYY') || ' to ' || to_char($2::date, 'FMDD Mon YYYY') FROM updated
+        )
+        SELECT EXISTS (SELECT 1 FROM updated) AS updated, (SELECT status FROM cur) AS status, (SELECT stage FROM cur) AS stage`,
+      [id, replyBy, staff.name]);
+      const row = rows[0];
+      if (row.updated) return;
+      if (row.status === null) throw new OfferError("not-found");
+      throw new OfferError(row.status === "Sent" && row.stage !== "Withdrawn" ? "validation" : "conflict");
     },
     /** Names for the "Reports to" picker. */
     async staff(): Promise<string[]> {

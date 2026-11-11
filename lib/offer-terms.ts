@@ -22,6 +22,10 @@ export type OfferTerms = {
   reportsTo: string;
 };
 
+/** A real calendar date written "YYYY-MM-DD". */
+export const isValidDate = (value: unknown): value is string =>
+  typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
+
 const manilaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
 /** Whether the terms may be saved; the Draft form and the module both use it. */
