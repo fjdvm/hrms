@@ -6,6 +6,7 @@ import { deliverOfferEmails } from "@/lib/offer-emails";
 import { revalidatePath } from "next/cache";
 import { OfferError } from "@/lib/offers";
 import { manilaToInstant } from "@/lib/offer-reply";
+import { requestProblem, type DocumentType } from "@/lib/offer-documents";
 import { TERM_FIELDS, readOfferForm, type OfferFormErrors } from "@/lib/offer-view";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { offersForRequest } from "@/lib/portal/offers";
@@ -98,6 +99,21 @@ export async function extendReplyBy(offerId: number, replyBy: string): Promise<{
     return { error: fail(error) };
   }
   revalidatePath("/offers");
+  revalidatePath(`/offers/${offerId}`);
+  return {};
+}
+
+/** Asks the Applicant for documents. The email goes out at once through the outbox. */
+export async function requestOfferDocuments(offerId: number, types: DocumentType[], dueDate: string, message: string): Promise<{ error?: string }> {
+  const problem = requestProblem({ types, dueDate, message }, new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }));
+  if (problem) return { error: problem };
+  try {
+    await (await offersForRequest()).requestDocuments(offerId, { types, dueDate, message });
+  } catch (error) {
+    if (error instanceof OfferError && error.reason === "conflict") return { error: "Documents can only be requested on a sent or accepted offer whose Application has not withdrawn." };
+    return { error: fail(error) };
+  }
+  after(() => deliverOfferEmails());
   revalidatePath(`/offers/${offerId}`);
   return {};
 }

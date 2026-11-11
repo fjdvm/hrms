@@ -3,6 +3,10 @@ import { accessFor } from "./portal/access";
 import { listStaffNames } from "./portal/client";
 import { isValidDate } from "./offer-terms";
 import { OFFER_ANSWERS, replyEmail, type OfferReply } from "./offer-reply";
+import {
+  DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS, matchDocumentType, requestEmail, requestProblem, requestSummary,
+  type DocumentRequestInput, type DocumentStatus, type DocumentType,
+} from "./offer-documents";
 
 import {
   EMPLOYMENT_TYPES, OFFER_STATUSES, OFFER_TABS, PROBATION_PERIODS, termsProblems,
@@ -39,7 +43,7 @@ export type OfferDraft = OfferTerms & {
   branch: string;
   status: OfferDisplayStatus;
 };
-export type OfferActivityKind = "sent" | "accepted" | "declined" | "reply-by-extended" | "email-scheduled" | "email-sent";
+export type OfferActivityKind = "sent" | "accepted" | "declined" | "reply-by-extended" | "email-scheduled" | "email-sent" | "documents-requested";
 export type OfferActivity = { kind: OfferActivityKind; actorName: string | null; detail: string | null; occurredAt: Date };
 export type OfferStageName = "New" | "Screening" | "Interview" | "Offer" | "Hired" | "Rejected" | "Withdrawn";
 /** Everything the Offer page shows. */
@@ -51,6 +55,24 @@ export type OfferDetail = OfferDraft & {
   stage: OfferStageName;
   stageDates: Partial<Record<OfferStageName, Date>>;
   activity: OfferActivity[];
+};
+export type OfferDocument = {
+  type: DocumentType;
+  label: string;
+  hint: string;
+  status: DocumentStatus;
+  /** Informational: when Staff asked for it to be submitted by. */
+  dueDate: string | null;
+  /** "application" when the Applicant already sent it with the Application, "upload" when they sent it for the Offer. */
+  source: "application" | "upload" | null;
+  file: { name: string; downloadUrl: string | null } | null;
+};
+export type OfferChecklist = {
+  items: OfferDocument[];
+  submitted: number;
+  total: number;
+  /** Documents may be requested from Sent onward, never on a Draft, Declined or Withdrawn Offer. */
+  canRequest: boolean;
 };
 export type OfferCandidate = { applicationId: number; applicantName: string; applicantEmail: string; role: string; branch: string };
 
@@ -280,6 +302,77 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
         SELECT EXISTS (SELECT 1 FROM replied) AS recorded`,
       [id, reply.answer, repliedAt.toISOString(), staff.name, kind, `Email to ${offer.applicantEmail}`, JSON.stringify(payload), sendAt?.toISOString() ?? null]);
       if (!rows[0].recorded) throw new OfferError("conflict");
+    },
+    /**
+     * The seven Pre-employment Documents with their status. One the Applicant already sent with the Application
+     * starts Submitted, unless Staff have since requested it again.
+     */
+    async documents(id: number): Promise<OfferChecklist> {
+      await authorise();
+      if (!validId(id)) throw new OfferError("validation");
+      const { rows } = await db.query<{ applicationId: number; status: OfferStatus; stage: OfferStageName; snapshot: { id: number; name?: string; requiredFor?: string }[] }>(`
+        SELECT o.application_id AS "applicationId", o.status, a.stage,
+          COALESCE((SELECT c.documents_snapshot FROM public.applications c WHERE c.id = o.application_id), '[]'::jsonb) AS snapshot
+        FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id WHERE o.id = $1`, [id]);
+      if (!rows[0]) throw new OfferError("not-found");
+      const { rows: stored } = await db.query<{ type: DocumentType; status: "Requested" | "Submitted"; dueDate: string | null; fileName: string | null }>(`
+        SELECT document_type AS type, status, due_date::text AS "dueDate", file_name AS "fileName"
+        FROM public.hrms_offer_documents WHERE offer_id = $1`, [id]);
+      const { applicationId, status, stage, snapshot } = rows[0];
+      const items = PRE_EMPLOYMENT_DOCUMENTS.map((document): OfferDocument => {
+        const base = { type: document.type, label: document.label, hint: document.hint };
+        const row = stored.find((item) => item.type === document.type);
+        if (row) {
+          return { ...base, status: row.status, dueDate: row.dueDate, source: row.status === "Submitted" ? "upload" : null,
+            file: row.status === "Submitted" && row.fileName ? { name: row.fileName, downloadUrl: null } : null };
+        }
+        const sent = snapshot.find((item) => matchDocumentType(item.requiredFor, item.name) === document.type);
+        if (sent) {
+          return { ...base, status: "Submitted", dueDate: null, source: "application",
+            file: { name: sent.name ?? document.label, downloadUrl: `/api/applications/${applicationId}/documents/${sent.id}` } };
+        }
+        return { ...base, status: "Not requested", dueDate: null, source: null, file: null };
+      });
+      return { items, submitted: items.filter((item) => item.status === "Submitted").length, total: DOCUMENT_COUNT,
+        canRequest: (status === "Sent" || status === "Accepted") && stage !== "Withdrawn" };
+    },
+    /**
+     * Asks the Applicant for documents: the chosen rows become Requested (a Submitted one is reset), the history records
+     * it, and one email with the documents, due date and message is queued to go out at once. All of it or none.
+     */
+    async requestDocuments(id: number, input: DocumentRequestInput): Promise<void> {
+      const staff = await authorise();
+      if (!validId(id) || requestProblem(input, manilaToday())) throw new OfferError("validation");
+      const { rows: found } = await db.query<{ status: OfferStatus; stage: OfferStageName; name: string; email: string; role: string }>(`
+        SELECT o.status, a.stage, a.applicant_name AS name, a.applicant_email AS email, a.job_posting_title AS role
+        FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id WHERE o.id = $1`, [id]);
+      const offer = found[0];
+      if (!offer) throw new OfferError("not-found");
+      if (!(offer.status === "Sent" || offer.status === "Accepted") || offer.stage === "Withdrawn") throw new OfferError("conflict");
+      const message = input.message?.trim() || undefined;
+      const email = requestEmail({ applicantName: offer.name, role: offer.role, types: input.types, dueDate: input.dueDate, message });
+      const { rows } = await db.query<{ requested: boolean }>(`
+        WITH ok AS (
+          SELECT o.id FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id
+          WHERE o.id = $1 AND o.status IN ('Sent', 'Accepted') AND a.stage <> 'Withdrawn'
+        ), upserted AS (
+          INSERT INTO public.hrms_offer_documents (offer_id, document_type, status, due_date, message, requested_at, requested_by_name)
+          SELECT ok.id, type, 'Requested', $3::date, $4, clock_timestamp(), $5 FROM ok, unnest($2::text[]) AS type
+          ON CONFLICT (offer_id, document_type) DO UPDATE SET status = 'Requested', due_date = EXCLUDED.due_date,
+            message = EXCLUDED.message, requested_at = EXCLUDED.requested_at, requested_by_name = EXCLUDED.requested_by_name, submitted_at = NULL
+          RETURNING offer_id
+        ), activity AS (
+          INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail)
+          SELECT ok.id, 'documents-requested', $5, $6 FROM ok WHERE EXISTS (SELECT 1 FROM upserted) RETURNING id, offer_id
+        ), queued AS (
+          INSERT INTO public.hrms_offer_emails (id, offer_id, payload)
+          SELECT 'offer.docs:' || activity.offer_id || ':' || activity.id, activity.offer_id,
+            jsonb_build_object('to', $7::text, 'app', 'careers', 'title', $8::text, 'body', $9::text)
+          FROM activity
+        )
+        SELECT EXISTS (SELECT 1 FROM activity) AS requested`,
+      [id, input.types, input.dueDate, message ?? null, staff.name, requestSummary(input.types, input.dueDate), offer.email, email.title, email.body]);
+      if (!rows[0].requested) throw new OfferError("conflict");
     },
     /** Names for the "Reports to" picker. */
     async staff(): Promise<string[]> {

@@ -5,7 +5,9 @@ import { Card } from "@/components/ui/card";
 import { BackLink, CardTitle, PAGE, PageHeader } from "@/components/hiring/parts";
 import { OfferReplyBy } from "@/components/hiring/offer-reply-by";
 import { OfferResponse } from "@/components/hiring/offer-response";
-import { OfferError, type OfferDetail } from "@/lib/offers";
+import { OfferDocuments } from "@/components/hiring/offer-documents";
+import { RequestDocuments } from "@/components/hiring/request-documents";
+import { OfferError, type OfferChecklist, type OfferDetail } from "@/lib/offers";
 import { trackerSteps } from "@/lib/application-view";
 import { OFFER_ACTIVITY_TITLE, OFFER_BADGE, formatOfferDate, formatPeso, formatShortDate, isOverdue } from "@/lib/offer-view";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
@@ -58,8 +60,10 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
   if (!/^\d+$/.test(id)) notFound();
 
   let offer: OfferDetail;
+  let checklist: OfferChecklist;
   try {
-    offer = await (await offersForRequest()).detail(Number(id));
+    const offers = await offersForRequest();
+    [offer, checklist] = await Promise.all([offers.detail(Number(id)), offers.documents(Number(id))]);
   } catch (error) {
     if (!(error instanceof OfferError)) throw error;
     if (error.reason === "denied") redirect(NO_ACCESS_PATH);
@@ -94,6 +98,10 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
         subtitle={subtitle}
         badge={<><Badge variant={OFFER_BADGE[offer.status]}>{offer.status}</Badge>{overdue && <Badge variant="destructive">Overdue</Badge>}</>}
       >
+        {checklist.canRequest && (
+          <RequestDocuments offerId={offer.id} applicantName={offer.applicantName} role={offer.role} startDate={offer.startDate} today={now}
+            items={checklist.items.map(({ type, label, hint, status }) => ({ type, label, hint, status }))} />
+        )}
         {offer.status === "Sent" && (
           <>
             <OfferReplyBy mode="extend" offerId={offer.id} applicantName={offer.applicantName} min={now} current={offer.replyBy ?? undefined} />
@@ -106,7 +114,8 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
       </PageHeader>
       <Tracker offer={offer} />
       <div className="flex flex-col gap-[16px] lg:flex-row lg:items-start">
-        <Card className="flex min-w-0 flex-1 flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">
+        <div className="flex min-w-0 flex-1 flex-col gap-[16px]">
+        <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">
           <CardTitle>Offer details</CardTitle>
           <dl className="flex flex-col gap-[14px]">
             <div className="flex gap-[16px]">
@@ -127,6 +136,8 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
             )}
           </dl>
         </Card>
+        <OfferDocuments checklist={checklist} today={now} />
+        </div>
         <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none lg:w-[380px] lg:shrink-0">
           <CardTitle>Activity</CardTitle>
           <ol aria-label="Activity" className="flex flex-col gap-[14px]">

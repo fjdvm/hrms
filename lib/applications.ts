@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { invitePreview, manilaParts } from "./interview-form";
 import { interviewValidation, freeInterviewSlots, type InterviewConflict, type FreeInterviewSlot } from "./interview-booking";
 import { listModuleStaff } from "./portal/client";
 import { INTERVIEWER_COLOURS, type Interviewer } from "./interviewers";
@@ -192,7 +194,16 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     if (!staff) throw new ApplicationError("unavailable");
     const interviewer = staff.find(member => member.id === input.interviewerId);
     if (!interviewer) throw new ApplicationError("validation", "Interviewer must hold Recruitment and Hiring.");
-    const details = { ...input, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString(), interviewerName: interviewer.name,
+    const { rows: applicants } = await db.query<{ applicant_name: string; job_posting_title: string }>(
+      "SELECT applicant_name, job_posting_title FROM public.hrms_all_applications WHERE id = $1", [id]);
+    if (!applicants[0]) throw new ApplicationError("not-found");
+    const start = manilaParts(input.startsAt), end = manilaParts(input.endsAt);
+    const preview = invitePreview({ type: input.type, date: start.date, start: start.time, end: end.time,
+      interviewerId: interviewer.id, meetingLink: input.meetingLink ?? "", province: input.province ?? "",
+      city: input.city ?? "", address: input.address ?? "", mapLink: input.mapLink ?? "" },
+      applicants[0].applicant_name, applicants[0].job_posting_title, interviewer.name);
+    const notification = { eventId: randomUUID(), title: `${interviewId === undefined ? "" : "Updated: "}${preview.subject}`, body: preview.body };
+    const details = { ...input, notification, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString(), interviewerName: interviewer.name,
       meetingLink: input.type === "Online" ? input.meetingLink!.trim() : null,
       province: input.type === "In person" ? input.province : null,
       city: input.type === "In person" ? input.city : null,
@@ -308,24 +319,12 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         || (outcome.privateNotes !== undefined && typeof outcome.privateNotes !== "string")
         || (outcome.resultEmailAt !== undefined && (typeof outcome.resultEmailAt !== "string"
           || !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(outcome.resultEmailAt) || !Number.isFinite(Date.parse(outcome.resultEmailAt))))) throw new ApplicationError("validation");
-      // Keep the private result and its Staff activity in the same atomic statement.
-      // The database clock enforces the start-time boundary for every caller.
-      const { rows } = await db.query<{ recorded: boolean; exists: boolean }>(`
-        WITH recorded AS (
-          UPDATE public.hrms_application_interviews SET score = $3, result = $4, private_notes = $7, result_email_at = $8::timestamptz
-          WHERE application_id = $1 AND id = $2 AND starts_at <= statement_timestamp()
-          RETURNING id, application_id
-        ), activity AS (
-          INSERT INTO public.hrms_application_activity
-            (application_id, from_stage, to_stage, actor_name, reason, interview_id, occurred_at)
-          SELECT a.id, a.stage, a.stage, $5, $6, r.id, statement_timestamp()
-          FROM recorded r JOIN public.hrms_all_applications a ON a.id = r.application_id
-        )
-        SELECT EXISTS(SELECT 1 FROM recorded) AS recorded,
-          EXISTS(SELECT 1 FROM public.hrms_application_interviews WHERE application_id = $1 AND id = $2) AS exists`,
-      [id, interviewId, outcome.score, outcome.result, access.staff.name,
-        `Interview result: ${outcome.result} (score: ${outcome.score}/5)`, outcome.privateNotes ?? null, outcome.resultEmailAt ?? null]);
-      if (!rows[0].recorded) throw new ApplicationError(rows[0].exists ? "conflict" : "not-found");
+      // The function locks the Application and Interview, then saves the private
+      // fields, Stage and history together using the database clock.
+      const { rows } = await db.query<{ saved: { error?: ApplicationError["reason"]; detail?: string } }>(
+        "SELECT public.hrms_record_interview_result($1, $2, $3::jsonb, $4) AS saved",
+        [id, interviewId, JSON.stringify(outcome), access.staff.name]);
+      if (rows[0].saved.error) throw new ApplicationError(rows[0].saved.error, rows[0].saved.detail);
     },
     async downloadDocument(id: number, documentId: number): Promise<Response> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
