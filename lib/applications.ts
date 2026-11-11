@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { invitePreview, manilaParts } from "./interview-form";
-import { interviewValidation, freeInterviewSlots, type InterviewConflict, type FreeInterviewSlot } from "./interview-booking";
+import { interviewValidation, freeInterviewSlots, TAKES_PLACE, type InterviewConflict, type FreeInterviewSlot } from "./interview-booking";
 import { listModuleStaff } from "./portal/client";
 import { INTERVIEWER_COLOURS, type Interviewer } from "./interviewers";
 import { gatewayDocumentFiles, type DocumentFiles } from "@/lib/document-files";
@@ -71,6 +71,16 @@ export type InterviewJobTab = "All" | "To schedule" | "Scheduled";
 export type InterviewJobRow = Pick<ApplicationListItem, "id" | "applicantName" | "applicantEmail"> & {
   interview: Pick<ApplicationInterview, "id" | "startsAt" | "endsAt" | "type" | "interviewerName"> | null;
 };
+
+export type CalendarFilters = { from: string; to: string; interviewerId?: string; jobPostingId?: string };
+export type CalendarInterview = {
+  id: number; applicationId: number; applicantName: string; jobPostingId: string; jobPostingTitle: string;
+  interviewerId: string | null; interviewerName: string; colour: string; type: InterviewInput["type"];
+  startsAt: Date; endsAt: Date; meetingLink: string | null; mapLink: string | null; place: string;
+  status: "Scheduled" | "Passed" | "Not passed";
+};
+export type CalendarConflict = { interviewerId: string; interviewerName: string; first: CalendarConflictSide; second: CalendarConflictSide };
+type CalendarConflictSide = { interviewId: number; applicantName: string; startsAt: Date; endsAt: Date };
 
 export class ApplicationError extends Error {
   constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict", public readonly detail?: string, public readonly conflicts?: InterviewConflict[], public readonly freeSlots?: FreeInterviewSlot[]) {
@@ -507,6 +517,49 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       return { job: summary, rows: rows.map(row => ({ ...row, interview: row.interview
         ? { ...row.interview, startsAt: new Date(row.interview.startsAt), endsAt: new Date(row.interview.endsAt) } : null })),
         counts: { All: summary.toSchedule + summary.scheduled, "To schedule": summary.toSchedule, Scheduled: summary.scheduled } };
+    },
+    /** Interviews starting in [from, to) with colours and any double-bookings; dropped Interviews are excluded everywhere. */
+    async calendar({ from, to, interviewerId, jobPostingId }: CalendarFilters): Promise<{ interviews: CalendarInterview[]; conflicts: CalendarConflict[] }> {
+      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      if (access.decision !== "allowed") throw new ApplicationError(access.decision);
+      const instant = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
+      const optional = (value: unknown) => value === undefined || (typeof value === "string" && value.trim() !== "");
+      if (!instant(from) || !instant(to) || Date.parse(from) >= Date.parse(to) || !optional(interviewerId) || !optional(jobPostingId)) throw new ApplicationError("validation");
+      type Row = Omit<CalendarInterview, "startsAt" | "endsAt" | "colour"> & { startsAt: string; endsAt: string };
+      const { rows } = await db.query<Row>(`
+        SELECT i.id::integer AS id, a.id AS "applicationId", a.applicant_name AS "applicantName", a.job_posting_id AS "jobPostingId",
+          a.job_posting_title AS "jobPostingTitle", i.interviewer_id AS "interviewerId", i.interviewer_name AS "interviewerName",
+          i.type, i.starts_at AS "startsAt", i.ends_at AS "endsAt", i.meeting_link AS "meetingLink", i.map_link AS "mapLink",
+          COALESCE(NULLIF(concat_ws(', ', NULLIF(i.address, ''), NULLIF(i.city, ''), NULLIF(i.province, '')), ''), i.location) AS place,
+          CASE WHEN i.result IS NULL THEN 'Scheduled' ELSE i.result END AS status
+        FROM public.hrms_application_interviews i JOIN public.hrms_all_applications a ON a.id = i.application_id
+        WHERE i.starts_at >= $1::timestamptz AND i.starts_at < $2::timestamptz AND ${TAKES_PLACE}
+          AND ($3::text IS NULL OR i.interviewer_id = $3)
+        ORDER BY i.starts_at, i.id`, [from, to, interviewerId ?? null]);
+      const ids = [...new Set(rows.flatMap(row => row.interviewerId ? [row.interviewerId] : []))];
+      const colourOf = new Map<string, string>();
+      if (ids.length > 0) {
+        try {
+          const { rows: assigned } = await db.query<{ staff_id: string; colour_index: number }>(
+            "SELECT * FROM public.hrms_assign_interviewer_colours($1::text[])", [ids]);
+          for (const row of assigned) colourOf.set(row.staff_id, INTERVIEWER_COLOURS[row.colour_index]);
+        } catch { throw new ApplicationError("unavailable"); }
+      }
+      const all = rows.map(({ startsAt, endsAt, ...row }) => ({ ...row, startsAt: new Date(startsAt), endsAt: new Date(endsAt),
+        colour: (row.interviewerId && colourOf.get(row.interviewerId)) || "#6b7280" }));
+      // A conflict is two Interviews of one Interviewer with intersecting ranges; touching ends are allowed.
+      const side = (i: CalendarInterview): CalendarConflictSide => ({ interviewId: i.id, applicantName: i.applicantName, startsAt: i.startsAt, endsAt: i.endsAt });
+      const conflicts: CalendarConflict[] = [];
+      for (const [index, first] of all.entries()) {
+        if (!first.interviewerId) continue;
+        for (const second of all.slice(index + 1)) {
+          if (second.interviewerId === first.interviewerId && first.startsAt < second.endsAt && second.startsAt < first.endsAt
+            && (jobPostingId === undefined || first.jobPostingId === jobPostingId || second.jobPostingId === jobPostingId)) {
+            conflicts.push({ interviewerId: first.interviewerId, interviewerName: first.interviewerName, first: side(first), second: side(second) });
+          }
+        }
+      }
+      return { interviews: all.filter(row => jobPostingId === undefined || row.jobPostingId === jobPostingId), conflicts };
     },
     list: (filters: ApplicationFilters & { page?: number } = {}) => read(filters),
     async exportCsv({ jobPostingId, stage, search }: ApplicationFilters = {}): Promise<string> {

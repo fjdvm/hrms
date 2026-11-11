@@ -1,4 +1,5 @@
 import { database, type Database } from "./database";
+import { TAKES_PLACE } from "./interview-booking";
 import { manilaWeek, type DashboardRange, type DashboardSummary } from "./dashboard";
 
 /** Open Job Postings, read from the shared database: how many, their openings in total and their distinct locations. */
@@ -117,7 +118,8 @@ export async function interviewsSummary(now: Date, db: Database = database): Pro
   const { rows } = await db.query<{ this_week: number; today: number }>(
     `SELECT count(*) FILTER (WHERE starts_at >= $1 AND starts_at < $2)::int AS this_week,
             count(*) FILTER (WHERE starts_at >= $3 AND starts_at < $4)::int AS today
-     FROM public.hrms_application_interviews`,
+     FROM public.hrms_application_interviews i JOIN public.hrms_all_applications a ON a.id = i.application_id
+     WHERE ${TAKES_PLACE}`,
     [week.from.toISOString(), week.to.toISOString(), today.from.toISOString(), today.to.toISOString()],
   );
   return { thisWeek: rows[0].this_week, today: rows[0].today };
@@ -130,7 +132,7 @@ export async function upcomingInterviewsSummary(now: Date, db: Database = databa
     `SELECT i.id::int AS id, a.applicant_name, a.job_posting_title, i.type, i.starts_at
      FROM public.hrms_application_interviews i
      JOIN public.hrms_all_applications a ON a.id = i.application_id
-     WHERE i.starts_at > $1 AND i.starts_at < $2
+     WHERE i.starts_at > $1 AND i.starts_at < $2 AND ${TAKES_PLACE}
      ORDER BY i.starts_at, i.id`,
     [now.toISOString(), week.to.toISOString()],
   );
