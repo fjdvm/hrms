@@ -28,6 +28,14 @@ export function replyEmail(answer: OfferAnswer, facts: ReplyEmailFacts): { title
   };
 }
 
+/** The welcome email sent when Staff mark the Applicant Hired. It differs from the acceptance confirmation. */
+export function hiredEmail(facts: ReplyEmailFacts): { title: string; body: string } {
+  return {
+    title: `Welcome to Bren Raphael's, ${firstName(facts.applicantName)}!`,
+    body: `Dear ${facts.applicantName},\n\nWelcome aboard! We're delighted to have you join us as ${facts.role}. Your first day is ${startLabel(facts.startDate)}, and we'll be in touch with what to expect.\n\nBren Raphael's`,
+  };
+}
+
 /** "2026-11-12T18:00" (Manila wall clock, as a datetime-local input writes it) to an instant. Null when it is not a real time. */
 export function manilaToInstant(local: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local)) return null;
