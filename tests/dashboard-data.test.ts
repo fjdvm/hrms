@@ -280,34 +280,33 @@ it("counts Applications at New to review, with when the oldest was received, wha
   expect((await needsAttentionSummary(NOW, db)).toReview).toEqual({ count: 2, oldestAppliedAt: "2026-08-02T08:00:00.000Z" });
 });
 
-it("counts Applications at Screening with no Interview booked, and names the Job Posting with the most", async () => {
+it("counts Applications at Interview with no Interview booked, and names the Job Posting with the most", async () => {
   await post("a", "open", "Antipolo", 1);
   await post("b", "closed", "Antipolo", 1);
-  await receive("2026-10-01T08:00:00Z", "Screening", "a");
-  await receive("2026-10-02T08:00:00Z", "Screening", "b");
-  await receive("2026-10-03T08:00:00Z", "Screening", "b");
-  const booked = await receive("2026-10-04T08:00:00Z", "Screening", "a");
+  await receive("2026-10-01T08:00:00Z", "Interview", "a");
+  await receive("2026-10-02T08:00:00Z", "Interview", "b");
+  await receive("2026-10-03T08:00:00Z", "Interview", "b");
+  const booked = await receive("2026-10-04T08:00:00Z", "Interview", "a");
   await bookInterview(booked, "2026-11-20T08:00:00Z");
-  await receive("2026-10-05T08:00:00Z", "Interview", "a");
+  await receive("2026-10-05T08:00:00Z", "Screening", "a");
   expect((await needsAttentionSummary(NOW, db)).toSchedule).toEqual({ count: 3, topJob: { title: "b", count: 2 } });
 });
 
 it("breaks a tie for the most waiting by Job Posting title", async () => {
   await post("a", "open", "Antipolo", 1);
   await post("b", "open", "Antipolo", 1);
-  await receive("2026-10-01T08:00:00Z", "Screening", "b");
-  await receive("2026-10-02T08:00:00Z", "Screening", "a");
+  await receive("2026-10-01T08:00:00Z", "Interview", "b");
+  await receive("2026-10-02T08:00:00Z", "Interview", "a");
   expect((await needsAttentionSummary(NOW, db)).toSchedule.topJob).toEqual({ title: "a", count: 1 });
 });
 
 it("counts Interviews that ended with no result, not the ones still to come or already decided", async () => {
   await post("a", "open", "Antipolo", 1);
-  const id = await receive("2026-10-01T08:00:00Z", "Interview");
-  await bookInterview(id, "2026-10-20T08:00:00Z"); // ended, no result
-  await bookInterview(id, "2026-10-21T08:00:00Z", "Passed"); // decided
-  await bookInterview(id, "2026-10-28T11:05:00Z"); // ends 12:05 = NOW: ended
-  await bookInterview(id, "2026-10-28T11:06:00Z"); // ends after NOW
-  await bookInterview(id, "2026-11-02T08:00:00Z"); // still to come
+  await bookInterview(await receive("2026-10-01T08:00:00Z", "Interview"), "2026-10-20T08:00:00Z"); // ended, no result
+  await bookInterview(await receive("2026-10-01T08:00:00Z", "Interview"), "2026-10-21T08:00:00Z", "Passed"); // decided
+  await bookInterview(await receive("2026-10-01T08:00:00Z", "Interview"), "2026-10-28T11:05:00Z"); // ends 12:05 = NOW: ended
+  await bookInterview(await receive("2026-10-01T08:00:00Z", "Interview"), "2026-10-28T11:06:00Z"); // ends after NOW
+  await bookInterview(await receive("2026-10-01T08:00:00Z", "Interview"), "2026-11-02T08:00:00Z"); // still to come
   expect((await needsAttentionSummary(NOW, db)).resultsToRecord).toBe(2);
 });
 

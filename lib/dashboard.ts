@@ -17,7 +17,7 @@ export interface DashboardSummary {
   applicantsByJob?: { total: number; jobs: { id: string; title: string; count: number }[] };
   /** Applications received in the Dashboard Range, and how many of them have ever reached each later Stage (from stage history, so a later Rejected still counts). */
   hiringPipeline?: HiringPipelineCounts;
-  /** What Staff should act on now (not range-based): Applications at New, at Screening with no Interview booked, and Interviews that ended with no result. */
+  /** What Staff should act on now (not range-based): Applications at New, at Interview with no Interview booked, and Interviews that ended with no result. */
   needsAttention?: NeedsAttentionCounts;
   /** Applications received in the Dashboard Range per Source, with how many of them have ever reached Hired. Only Sources that have Applications need appear. */
   applicantSources?: { source: ApplicationSource; count: number; hired: number }[];
@@ -498,7 +498,7 @@ export interface HiringPipelineCounts {
 export interface NeedsAttentionCounts {
   /** Applications at New, and when the oldest of them was received (null with none). */
   toReview: { count: number; oldestAppliedAt: string | null };
-  /** Applications at Screening with no Interview booked, and the Job Posting with the most of them (ties by title; null with none). */
+  /** Applications at Interview with no Interview booked, and the Job Posting with the most of them (ties by title; null with none). */
   toSchedule: { count: number; topJob: { title: string; count: number } | null };
   /** Interviews that ended with no result recorded. */
   resultsToRecord: number;
@@ -761,7 +761,7 @@ function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionDat
       title: "Interviews to schedule",
       detail: toSchedule.topJob ? `Most waiting: ${toSchedule.topJob.title}` : null,
       count: toSchedule.count,
-      href: applicantsHref({ stage: "Screening" }),
+      href: applicantsHref({ stage: "Interview" }),
       muted: toSchedule.count === 0,
     },
     {

@@ -1,4 +1,4 @@
-import { EMPLOYMENT_TYPES, OFFER_TABS, PROBATION_PERIODS, termsProblems, type OfferDisplayStatus, type OfferTab, type OfferTerms } from "./offers";
+import { EMPLOYMENT_TYPES, OFFER_TABS, PROBATION_PERIODS, termsProblems, type OfferDisplayStatus, type OfferTab, type OfferTerms } from "./offer-terms";
 
 export const OFFER_BADGE = {
   Draft: "secondary",

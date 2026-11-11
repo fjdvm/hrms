@@ -31,6 +31,7 @@ async function postJson(path: string, body: unknown): Promise<Response | null> {
       },
       body: JSON.stringify(body),
       cache: "no-store",
+      signal: AbortSignal.timeout(5000),
     });
   } catch {
     return null;
@@ -149,4 +150,22 @@ export async function listStaffNames(): Promise<string[] | null> {
   });
 
   return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
+/** Named directory for Interviewer selection. Missing names are a contract failure, never usernames. */
+export async function listModuleStaff(module: string): Promise<{ id: string; name: string }[] | null> {
+  const response = await postJson("/api/integrations/recipients", {});
+  if (!response?.ok) return null;
+  const body: unknown = await response.json().catch(() => null);
+  if (!body || typeof body !== "object" || !("staff" in body) || !Array.isArray(body.staff)) return null;
+  const staff: { id: string; name: string }[] = [];
+  for (const member of body.staff) {
+    if (!member || typeof member !== "object" || !Array.isArray(member.modules)
+      || !member.modules.every((value: unknown) => typeof value === "string")) return null;
+    if (!member.modules.includes(module)) continue;
+    if (typeof member.id !== "string" || !member.id.trim() || typeof member.name !== "string" || !member.name.trim()) return null;
+    if (staff.some(existing => existing.id === member.id)) return null;
+    staff.push({ id: member.id, name: member.name.trim() });
+  }
+  return staff.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }

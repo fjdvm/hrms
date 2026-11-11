@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { deleteOffer, saveOffer, type SaveOfferState } from "@/app/(hrms)/offers/actions";
 import { EMPLOYMENT_TYPES, PROBATION_PERIODS } from "@/lib/offer-view";
-import type { OfferTerms } from "@/lib/offers";
+import type { OfferTerms } from "@/lib/offer-terms";
 import { cn } from "@/lib/utils";
 
 const BOX = "flex items-center gap-sm rounded-lg border bg-white px-[12px] py-[9px] text-sm text-zinc-900 focus-within:border-[#8b5cf6]";
