@@ -20,7 +20,13 @@ type SubmittedDocument = { id: number; name: string; size: number; contentType: 
 export type ApplicationDocument = (SubmittedDocument & { status: "Submitted"; downloadUrl: string })
   | { requiredFor: string; status: "Requested" };
 export type InterviewInput = { startsAt: string; endsAt: string; type: "Online" | "In person"; interviewerName: string; location?: string; interviewerId?: string; meetingLink?: string; mapLink?: string; province?: string; city?: string; address?: string };
-export type ApplicationInterview = Omit<InterviewInput, "startsAt" | "endsAt" | "location"> & { location: string } & { id: number; startsAt: Date; endsAt: Date; score: number | null; result: "Passed" | "Not passed" | null; privateNotes: string | null; resultEmailAt: Date | null };
+export type ApplicationInterview = {
+  id: number; startsAt: Date; endsAt: Date; type: InterviewInput["type"];
+  interviewerName: string; location: string; interviewerId: string | null;
+  meetingLink: string | null; mapLink: string | null; province: string | null;
+  city: string | null; address: string | null; privateNotes: string | null;
+  score: number | null; result: "Passed" | "Not passed" | null; resultEmailAt: Date | null;
+};
 export type ApplicationNote = { id: number; text: string; authorName: string; createdAt: Date };
 export type ApplicationActivity = {
   interviewId?: number;
@@ -321,13 +327,32 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         throw new ApplicationError("not-found");
       }
     },
+    /** Earlier rounds retained by migration; separate from the one current booking. */
+    async readLegacyInterviews(id: number): Promise<ApplicationInterview[]> {
+      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      if (access.decision !== "allowed") throw new ApplicationError(access.decision);
+      if (!validId(id)) throw new ApplicationError("validation");
+      const { rows } = await db.query<{ interviews: (Omit<ApplicationInterview, "startsAt" | "endsAt"> & { startsAt: string; endsAt: string })[] }>(`
+        SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'id', i.id, 'startsAt', i.starts_at, 'endsAt', i.ends_at, 'type', i.type,
+          'interviewerName', i.interviewer_name, 'location', i.location, 'score', i.score, 'result', i.result,
+          'interviewerId', NULL, 'meetingLink', CASE WHEN i.type = 'Online' THEN i.location END,
+          'mapLink', NULL, 'province', NULL, 'city', NULL,
+          'address', CASE WHEN i.type = 'In person' THEN i.location END,
+          'privateNotes', NULL, 'resultEmailAt', NULL
+        ) ORDER BY i.starts_at DESC, i.id DESC) FROM public.hrms_legacy_application_interviews i
+          WHERE i.application_id = a.id), '[]'::jsonb) AS interviews
+        FROM public.hrms_all_applications a WHERE a.id = $1`, [id]);
+      if (!rows[0]) throw new ApplicationError("not-found");
+      return rows[0].interviews.map(item => ({ ...item, startsAt: new Date(item.startsAt), endsAt: new Date(item.endsAt) }));
+    },
     async readProfile(id: number): Promise<ApplicationProfile> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (!validId(id)) throw new ApplicationError("validation");
       // Careers snapshots use phone/location. Older snapshots omit email and the
       // optional salary/availability fields; only email has a legacy identity fallback.
-      const { rows } = await db.query<Omit<ApplicationProfile, "documents" | "notes" | "stageDates" | "activity" | "interviews"> & { interviews: (Omit<ApplicationInterview, "startsAt" | "endsAt"> & { startsAt: string; endsAt: string })[]; stage_dates: Partial<Record<ApplicationStage, string>>; activity: (Omit<ApplicationActivity, "occurredAt"> & { occurredAt: string })[]; documents_snapshot: SubmittedDocument[]; required_documents: string[] }>(`
+      const { rows } = await db.query<Omit<ApplicationProfile, "documents" | "notes" | "stageDates" | "activity" | "interviews"> & { interviews: (Omit<ApplicationInterview, "startsAt" | "endsAt" | "resultEmailAt"> & { startsAt: string; endsAt: string; resultEmailAt: string | null })[]; stage_dates: Partial<Record<ApplicationStage, string>>; activity: (Omit<ApplicationActivity, "occurredAt"> & { occurredAt: string })[]; documents_snapshot: SubmittedDocument[]; required_documents: string[] }>(`
         SELECT a.documents_snapshot, j.required_documents, a.id,
           COALESCE((SELECT jsonb_agg(jsonb_build_object(
             'id', i.id, 'startsAt', i.starts_at, 'endsAt', i.ends_at, 'type', i.type,
@@ -340,17 +365,11 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           jsonb_build_object('New', a.created_at) || COALESCE((
             SELECT jsonb_object_agg(h.stage, h.reached_at)
             FROM public.hrms_application_stage_history h WHERE h.application_id = a.id
-          ), '{}'::jsonb) || COALESCE((
-            SELECT jsonb_build_object('Interview', COALESCE(
-              min(i.starts_at) FILTER (WHERE i.starts_at >= CURRENT_TIMESTAMP AND i.result IS NULL),
-              max(i.starts_at)))
-            FROM public.hrms_application_interviews i WHERE i.application_id = a.id
-            HAVING count(*) > 0
           ), '{}'::jsonb) AS stage_dates,
           COALESCE((SELECT jsonb_agg(jsonb_build_object(
             'id', e.id, 'fromStage', e.from_stage, 'toStage', e.to_stage,
             'actorName', e.actor_name, 'reason', e.reason, 'occurredAt', e.occurred_at
-          ) || CASE WHEN e.interview_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('interviewId', e.interview_id) END ORDER BY e.occurred_at DESC, e.id DESC)
+          ) || CASE WHEN COALESCE(e.interview_id, e.legacy_interview_id) IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('interviewId', COALESCE(e.interview_id, e.legacy_interview_id)) END ORDER BY e.occurred_at DESC, e.id DESC)
             FROM public.hrms_application_activity e WHERE e.application_id = a.id), '[]'::jsonb) AS activity, a.full_name AS "applicantName",
           a.email AS "applicantEmail", a.mobile, a.address,
           a.expected_salary AS "expectedSalary", a.available_from AS "availableFrom",

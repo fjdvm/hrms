@@ -116,7 +116,7 @@ describe("application profile view", () => {
 
   describe("activity timeline", () => {
     const base = { jobPostingTitle: "Branch Cashier", appliedAt: dates.New };
-    const interview = { id: 7, startsAt: dates.Interview, endsAt: new Date("2026-10-30T02:45:00Z"), type: "In person" as const, interviewerName: "Paolo Garcia", location: "Cainta branch", privateNotes: null, resultEmailAt: null, score: 4, result: "Passed" as const };
+    const interview = { id: 7, startsAt: dates.Interview, endsAt: new Date("2026-10-30T02:45:00Z"), type: "In person" as const, interviewerName: "Paolo Garcia", location: "Cainta branch", interviewerId: null, meetingLink: null, mapLink: null, province: null, city: null, address: null, privateNotes: null, resultEmailAt: null, score: 4, result: "Passed" as const };
     const event = (over: object) => ({ id: 1, fromStage: "New", toStage: "Screening", actorName: "Liza Bautista", reason: null, occurredAt: dates.Screening, ...over }) as never;
 
     it("holds only the application entry when nothing has happened", () => {
@@ -204,21 +204,21 @@ describe("schedule interview form", () => {
 });
 
 describe("interview rows", () => {
-  const base = { id: 1, startsAt: new Date("2026-10-30T02:00:00Z"), endsAt: new Date("2026-10-30T02:45:00Z"), type: "In person" as const, interviewerName: "Paolo Garcia", location: "Cainta branch · https://maps.example/x", privateNotes: null, resultEmailAt: null, score: null, result: null };
+  const base = { id: 1, startsAt: new Date("2026-10-30T02:00:00Z"), endsAt: new Date("2026-10-30T02:45:00Z"), type: "In person" as const, interviewerName: "Paolo Garcia", location: "Cainta branch · https://maps.example/x", interviewerId: null, meetingLink: null, mapLink: null, province: null, city: null, address: null, privateNotes: null, resultEmailAt: null, score: null, result: null };
 
   it("reads a booked interview as Scheduled with no score", () => {
     expect(interviewRow(base)).toEqual({ date: "30 Oct 2026", time: "10:00 – 10:45 AM", type: "In person · Cainta branch", interviewer: "Paolo Garcia", score: "—", status: "Scheduled" });
   });
 
   it("reads a recorded result as Completed with its score", () => {
-    expect(interviewRow({ ...base, privateNotes: null, resultEmailAt: null, score: 4, result: "Passed" })).toMatchObject({ score: "4 / 5", status: "Completed" });
+    expect(interviewRow({ ...base, score: 4, result: "Passed" })).toMatchObject({ score: "4 / 5", status: "Completed" });
   });
 
   it("offers a result only once the interview has started and has none", () => {
     const at = new Date("2026-10-30T02:00:00Z");
     expect(canRecordResult(base, new Date(at.getTime() - 1))).toBe(false);
     expect(canRecordResult(base, at)).toBe(true);
-    expect(canRecordResult({ ...base, privateNotes: null, resultEmailAt: null, score: 4, result: "Passed" }, at)).toBe(false);
+    expect(canRecordResult({ ...base, score: 4, result: "Passed" }, at)).toBe(false);
   });
 
   it("labels each score from 1 to 5", () => {

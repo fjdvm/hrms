@@ -97,12 +97,12 @@ Application has extra legacy rounds, its highest-id Interview is kept as the
 current booking. The other rows remain intact in
 `hrms_legacy_application_interviews`; their activity links move to
 `legacy_interview_id`. No legacy data is discarded. These archival rounds are
-excluded from the current Interview interface and Dashboard.
+excluded from the current booking and Dashboard, and remain readable through the
+authorised `readLegacyInterviews(id)` interface. Profile activity keeps their original
+Interview ids so callers can resolve them against that history.
 
-The profile tracker's `stageDates.Interview` uses the next upcoming interview
-without a result, falling back to the latest interview date/time. When no
-interviews exist, the recorded Stage date remains the fallback.
-Run migration `0013-application-interviews.sql` before using this boundary.
+The profile tracker's `stageDates.Interview` comes only from recorded Stage history;
+booking never supplies or overrides the date the Application reached that Stage.
 
 ## Private Application notes
 

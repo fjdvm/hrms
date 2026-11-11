@@ -631,10 +631,10 @@ it("uses the next upcoming interview for Next step, CSV and the tracker, then aw
   await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2099-11-03T09:00:00+08:00", endsAt: "2099-11-03T10:00:00+08:00" });
   expect((await applications.list()).rows[0].nextStep).toBe("Interview · Nov 3, 2099, 9:00 AM");
   expect(await applications.exportCsv()).toContain('"Interview · Nov 3, 2099, 9:00 AM"');
-  expect((await applications.readProfile(id)).stageDates.Interview).toEqual(new Date("2099-11-03T01:00:00Z"));
+  expect((await applications.readProfile(id)).stageDates.Interview).toBeUndefined();
   await db.query("UPDATE hrms_application_interviews SET starts_at = starts_at - interval '100 years', ends_at = ends_at - interval '100 years' WHERE starts_at > CURRENT_TIMESTAMP");
   expect((await applications.list()).rows[0].nextStep).toBe("Awaiting result");
-  expect((await applications.readProfile(id)).stageDates.Interview).toEqual(new Date("1999-11-03T01:00:00Z"));
+  expect((await applications.readProfile(id)).stageDates.Interview).toBeUndefined();
   await applications.moveStage(id, "Interview", "Offer");
   expect((await applications.list()).rows[0].nextStep).toBe("Awaiting offer decision");
 });
@@ -894,7 +894,7 @@ it("the profile carries the Source: Careers page, a Referral with its referrer, 
   expect(await applications.readProfile(old)).toMatchObject({ source: "Unspecified", referredBy: null });
 });
 
-it("migrates existing Interview data in place without inventing a Staff identity", async () => {
+it("preserves legacy rounds and their activity while migrating the current Interview in place", async () => {
   await db.close();
   db = new PGlite();
   await db.exec(await readFile(new URL("./fixtures/careers-job-postings.sql", import.meta.url), "utf8"));
@@ -907,9 +907,32 @@ it("migrates existing Interview data in place without inventing a Staff identity
   const id = await seed(1, "Interview");
   await db.query(`INSERT INTO hrms_application_interviews (application_id, starts_at, ends_at, type, interviewer_name, location, score, result)
     VALUES ($1, '2020-01-01T01:00:00Z', '2020-01-01T02:00:00Z', 'In person', 'Legacy Staff', 'Original office address', 4, 'Passed')`, [id]);
+  await db.query(`INSERT INTO hrms_application_interviews (application_id, starts_at, ends_at, type, interviewer_name, location)
+    VALUES ($1, '2020-01-02T01:00:00Z', '2020-01-02T02:00:00Z', 'Online', 'Other Staff', 'Original meeting link')`, [id]);
+  await db.query(`INSERT INTO hrms_application_activity (application_id, from_stage, to_stage, actor_name, interview_id)
+    VALUES ($1, 'Interview', 'Interview', 'HR Staff', 1), ($1, 'Interview', 'Interview', 'HR Staff', 2)`, [id]);
   await db.exec(await readFile(new URL("0021-interview-model.sql", directory), "utf8"));
   const profile = await applicationsFor(handle, db).readProfile(id);
-  expect(profile.interviews).toMatchObject([{ id: 1, type: "In person", interviewerName: "Legacy Staff", interviewerId: null,
+  expect(profile.interviews).toMatchObject([{ id: 2, type: "Online", interviewerName: "Other Staff", interviewerId: null,
+    meetingLink: "Original meeting link", location: "Original meeting link", score: null, result: null }]);
+  expect(profile.interviews).toHaveLength(1);
+  expect(profile.activity.map(event => event.interviewId).sort()).toEqual([1, 2]);
+  const history = await applicationsFor(handle, db).readLegacyInterviews(id);
+  expect(history).toHaveLength(1);
+  expect(history).toMatchObject([{ id: 1, type: "In person", interviewerName: "Legacy Staff", interviewerId: null,
     location: "Original office address", address: "Original office address", score: 4, result: "Passed",
     startsAt: new Date("2020-01-01T01:00:00Z"), endsAt: new Date("2020-01-01T02:00:00Z") }]);
+});
+
+it("keeps the Interview Stage date tied to a move rather than a booking", async () => {
+  const id = await seed(1, "Screening");
+  const applications = applicationsFor(handle, db);
+  await applications.scheduleInterview(id, "Screening", interview);
+  expect((await applications.readProfile(id)).stageDates.Interview).toBeUndefined();
+  await applications.moveStage(id, "Screening", "Interview");
+  const reachedAt = (await applications.readProfile(id)).stageDates.Interview;
+  expect(reachedAt).toBeInstanceOf(Date);
+  expect(reachedAt).not.toEqual(new Date(interview.startsAt));
+  await applications.moveStage(id, "Interview", "Rejected");
+  expect((await applications.readProfile(id)).stageDates.Interview).toEqual(reachedAt);
 });
