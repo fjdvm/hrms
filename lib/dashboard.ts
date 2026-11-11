@@ -915,7 +915,7 @@ export interface DashboardLayout {
   hiringCards: KeySummaryCard[];
   /** The People block: `left` and `trend` side by side (2 and 3 of five columns) from `xl`; whichever is alone takes the full width. Null when both are absent. */
   people: { left: PeopleLeft | null; trend: DetailWidget | null } | null;
-  /** Rows of hiring Detail Widgets under the hiring cards; none when the Staff member lacks Recruitment and Hiring. */
+  /** Rows of hiring Detail Widgets under the People block; none when the Staff member lacks Recruitment and Hiring. */
   hiringRows: DetailWidget[][];
   /** Rows of Detail Widgets below: Department Distribution | Upcoming Events, half and half, a lone one full width. */
   rows: DetailWidget[][];

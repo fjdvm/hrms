@@ -25,15 +25,6 @@ export function DashboardGrid({
       {hiringCards.length > 0 && (
         <div className="grid gap-md sm:grid-cols-2 xl:grid-cols-5">{hiringCards.map(card)}</div>
       )}
-      {hiringRows.map((row) => (
-        <div key={row[0].id} className={row[0].id === "hiring-pipeline" && row.length > 1 ? "grid gap-md xl:grid-cols-3" : detailWidgetRowClass(row.length)}>
-          {row.map((w) => (
-            <div key={w.id} className={w.id === "hiring-pipeline" && row.length > 1 ? "xl:col-span-2" : undefined}>
-              {widget(w, false)}
-            </div>
-          ))}
-        </div>
-      ))}
       {people && (
         <div className="grid gap-md xl:grid-cols-5">
           {left && (
@@ -49,6 +40,15 @@ export function DashboardGrid({
           )}
         </div>
       )}
+      {hiringRows.map((row) => (
+        <div key={row[0].id} className={row[0].id === "hiring-pipeline" && row.length > 1 ? "grid gap-md xl:grid-cols-3" : detailWidgetRowClass(row.length)}>
+          {row.map((w) => (
+            <div key={w.id} className={w.id === "hiring-pipeline" && row.length > 1 ? "xl:col-span-2" : undefined}>
+              {widget(w, false)}
+            </div>
+          ))}
+        </div>
+      ))}
       {rows.map((row) => (
         <div key={row[0].id} className={detailWidgetRowClass(row.length)}>
           {row.map((w) => widget(w, false))}
