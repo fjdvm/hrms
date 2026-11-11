@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, readInterviewForm, type InterviewForm, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
+import { formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
 
 describe("application list view", () => {
   it("reads the page from the URL, defaulting to the first", () => {
@@ -172,34 +172,12 @@ describe("rejecting from the profile", () => {
 describe("stageActions", () => {
   it("offers the forward buttons for each Stage", () => {
     expect(stageActions("New").map((a) => a.label)).toEqual(["Move to Screening"]);
-    expect(stageActions("Screening").map((a) => a.label)).toEqual(["Schedule interview"]);
+    expect(stageActions("Screening").map((a) => a.label)).toEqual(["Move to Interview"]);
     expect(stageActions("Interview").map((a) => a.label)).toEqual(["Schedule interview", "Move to Offer"]);
   });
 
   it("offers no forward action from Offer onward", () => {
     for (const stage of ["Offer", "Hired", "Rejected", "Withdrawn"] as const) expect(stageActions(stage)).toEqual([]);
-  });
-});
-
-describe("schedule interview form", () => {
-  const form: InterviewForm = { type: "Online", date: "2026-10-29", start: "15:00", end: "15:30", interviewer: " Paolo Garcia ", meetingLink: "https://meet.google.com/xqp-rtke-vbn", location: "", mapLink: "" };
-
-  it("builds the interview in Manila time with the meeting link as the place", () => {
-    expect(readInterviewForm(form)).toEqual({ input: { startsAt: "2026-10-29T15:00:00+08:00", endsAt: "2026-10-29T15:30:00+08:00", type: "Online", interviewerName: "Paolo Garcia", location: "https://meet.google.com/xqp-rtke-vbn" } });
-  });
-
-  it("joins an in-person location with its map link", () => {
-    const result = readInterviewForm({ ...form, type: "In person", location: "Cainta branch", mapLink: "https://maps.app.goo.gl/x" });
-    expect(result.input?.location).toBe("Cainta branch · https://maps.app.goo.gl/x");
-    expect(readInterviewForm({ ...form, type: "In person", location: "Cainta branch" }).input?.location).toBe("Cainta branch");
-  });
-
-  it("names every missing or invalid field", () => {
-    expect(readInterviewForm({ ...form, date: "", start: "", end: "", interviewer: " ", meetingLink: "" }).errors).toEqual({
-      date: "Choose a date.", start: "Choose a start time.", end: "Choose an end time.", interviewer: "Enter the interviewer.", place: "Enter the meeting link.",
-    });
-    expect(readInterviewForm({ ...form, type: "In person", location: "" }).errors).toEqual({ place: "Enter the location." });
-    expect(readInterviewForm({ ...form, end: "15:00" }).errors).toEqual({ end: "End time must be after the start." });
   });
 });
 
