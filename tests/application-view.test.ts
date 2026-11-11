@@ -192,6 +192,12 @@ describe("interview rows", () => {
     expect(interviewRow({ ...base, score: 4, result: "Passed" })).toMatchObject({ score: "4 / 5", status: "Completed" });
   });
 
+  it("keeps an interview dropped from the Calendar as a Dropped record", () => {
+    for (const stage of ["Rejected", "Withdrawn", "Offer"] as const) expect(interviewRow(base, stage).status).toBe("Dropped");
+    expect(interviewRow(base, "Interview").status).toBe("Scheduled");
+    expect(interviewRow({ ...base, score: 4, result: "Passed" }, "Rejected").status).toBe("Completed");
+  });
+
   it("offers a result only once the interview has started and has none", () => {
     const at = new Date("2026-10-30T02:00:00Z");
     expect(canRecordResult(base, new Date(at.getTime() - 1))).toBe(false);
