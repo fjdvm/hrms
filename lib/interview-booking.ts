@@ -54,3 +54,7 @@ export function freeInterviewSlots(input: InterviewInput, busy: InterviewConflic
   }
   return slots;
 }
+
+/** SQL rule (aliases `a` = application, `i` = interview) shared by the Calendar, the Dashboard and conflicts:
+ * an Interview whose Application left the Interview Stage without a result is treated as not taking place. */
+export const TAKES_PLACE = "(a.stage = 'Interview' OR i.result IS NOT NULL)";

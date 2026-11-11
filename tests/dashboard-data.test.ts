@@ -125,7 +125,7 @@ async function moved(appliedAt: string, history: [stage: string, at: string][], 
 }
 
 async function interview(startsAt: string) {
-  const id = await receive("2026-10-01T00:00:00Z");
+  const id = await receive("2026-10-01T00:00:00Z", "Interview");
   await db.query(
     `INSERT INTO hrms_application_interviews (application_id, starts_at, ends_at, type, interviewer_name, location)
      VALUES ($1, $2, ($2::timestamptz + interval '1 hour'), 'Online', 'Ada', 'Zoom')`,
