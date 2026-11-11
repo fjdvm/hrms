@@ -115,7 +115,6 @@ export async function applyReply(db: Database, offer: OfferRow, answer: OfferAns
   if (offer.status !== "Sent") throw new OfferError("conflict");
   const first = offer.applicantName.trim().split(/\s+/)[0] || offer.applicantName;
   const notice = { title: `Offer ${answer.toLowerCase()}: ${offer.applicantName}`, body: `${first} ${answer.toLowerCase()} the ${offer.role} offer.` };
-  const ready = answer === "Accepted" && who.notifyStaff && (await readChecklist(db, offer.id)).submitted === DOCUMENT_COUNT;
   const email = replyEmail(answer, { applicantName: offer.applicantName, role: offer.role, startDate: offer.startDate });
   const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
   const kind = answer === "Accepted" ? "accepted" : "declined";
@@ -163,16 +162,10 @@ export async function applyReply(db: Database, offer: OfferRow, answer: OfferAns
       SELECT 'offer.' || $5 || ':' || id, jsonb_build_object('type', 'offer.' || $5, 'title', $10::text, 'body', $11::text, 'link', '/offers/' || id)
       FROM replied WHERE $9::boolean
       ON CONFLICT (id) DO NOTHING
-    ), ready_notice AS (
-      INSERT INTO public.hrms_staff_notifications (id, payload)
-      SELECT 'offer.ready:' || id, jsonb_build_object('type', 'offer.ready', 'title', 'Ready to hire: ' || $13::text,
-        'body', $13::text || ' accepted the offer and all documents are submitted.', 'link', '/offers/' || id)
-      FROM replied WHERE $9::boolean AND $12::boolean AND $2 = 'Accepted'
-      ON CONFLICT (id) DO NOTHING
     )
     SELECT EXISTS (SELECT 1 FROM replied) AS recorded`,
   [offer.id, answer, repliedAt.toISOString(), who.actorName, kind, `Email to ${offer.applicantEmail}`, JSON.stringify(payload), sendAt?.toISOString() ?? null,
-  who.notifyStaff, notice.title, notice.body, ready, offer.applicantName]);
+  who.notifyStaff, notice.title, notice.body]);
   if (!rows[0].recorded) throw new OfferError("conflict");
 }
 
@@ -193,7 +186,7 @@ export async function readChecklist(db: Database, id: number): Promise<OfferChec
       const row = stored.find((item) => item.type === document.type);
       if (row) {
         return { ...base, status: row.status, dueDate: row.dueDate, source: row.status === "Submitted" ? "upload" : null,
-          file: row.status === "Submitted" && row.fileName ? { name: row.fileName, downloadUrl: null } : null };
+          file: row.status === "Submitted" ? { name: row.fileName ?? document.label, downloadUrl: null } : null };
       }
       const sent = snapshot.find((item) => matchDocumentType(item.requiredFor, item.name) === document.type);
       if (sent) {

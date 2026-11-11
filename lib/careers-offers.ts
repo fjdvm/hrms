@@ -1,9 +1,10 @@
 import { database, type Database } from "./database";
-import { DOCUMENT_COUNT, DOCUMENT_TYPES, documentLabel, type DocumentType } from "./offer-documents";
+import { DOCUMENT_TYPES, documentLabel, type DocumentType } from "./offer-documents";
 import { OFFER_ANSWERS, type OfferAnswer } from "./offer-reply";
 import { OfferError, SELECT_OFFERS, applyReply, readChecklist, type OfferRow } from "./offers";
 
-export type DocumentUpload = { type: DocumentType; fileId: string; fileName: string };
+/** The document type and the file id; the name is only for showing the file. */
+export type DocumentUpload = { type: DocumentType; fileId: string; fileName?: string };
 
 const validId = (id: unknown) => Number.isInteger(id) && (id as number) > 0 && (id as number) <= 2_147_483_647;
 const text = (value: unknown, max: number) => typeof value === "string" && value.trim().length > 0 && value.trim().length <= max;
@@ -43,12 +44,19 @@ export function careersOffersFor(db: Database = database) {
      * Staff are told; when this is the last of the seven on an Accepted Offer, they are told it is ready to hire.
      */
     async uploadDocument(id: number, applicantId: string, upload: DocumentUpload): Promise<{ submitted: number; total: number }> {
-      if (!DOCUMENT_TYPES.includes(upload?.type) || !text(upload.fileId, 200) || !text(upload.fileName, 255)) throw new OfferError("validation");
+      if (!DOCUMENT_TYPES.includes(upload?.type) || !text(upload.fileId, 200) || (upload.fileName !== undefined && !text(upload.fileName, 255))) throw new OfferError("validation");
       const offer = await ownOffer(id, applicantId);
       if (offer.status === "Withdrawn") throw new OfferError("conflict", "withdrawn");
       if (offer.status === "Draft") throw new OfferError("conflict", "draft");
       if (offer.status === "Declined") throw new OfferError("conflict", "declined");
       const first = offer.applicantName.trim().split(/\s+/)[0] || offer.applicantName;
+      // The 7th document on an Accepted Offer is the one that says "Ready to hire"; replacing a file does not.
+      const before = await readChecklist(db, id);
+      const ready = offer.status === "Accepted"
+        && before.items.every((item) => item.type === upload.type ? item.status !== "Submitted" : item.status === "Submitted");
+      const notice = ready
+        ? { type: "offer.ready", title: `Ready to hire: ${offer.applicantName}`, body: `${offer.applicantName} accepted the offer and all documents are submitted.` }
+        : { type: "offer.document", title: `Document submitted: ${offer.applicantName}`, body: `${first} submitted ${documentLabel(upload.type)} for the ${offer.role} offer.` };
       const { rows } = await db.query<{ saved: boolean }>(`
         WITH ok AS (
           SELECT o.id FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id
@@ -61,22 +69,14 @@ export function careersOffersFor(db: Database = database) {
           RETURNING offer_id
         ), notice AS (
           INSERT INTO public.hrms_staff_notifications (id, payload)
-          SELECT 'offer.document:' || offer_id || ':' || $2 || ':' || $3, jsonb_build_object('type', 'offer.document',
-            'title', 'Document submitted: ' || $5::text, 'body', $6::text, 'link', '/offers/' || offer_id)
+          SELECT 'offer.document:' || offer_id || ':' || $2 || ':' || $3, jsonb_build_object('type', $5::text,
+            'title', $6::text, 'body', $7::text, 'link', '/offers/' || offer_id)
           FROM saved ON CONFLICT (id) DO NOTHING
         )
         SELECT EXISTS (SELECT 1 FROM saved) AS saved`,
-      [id, upload.type, upload.fileId.trim(), upload.fileName.trim(), offer.applicantName,
-        `${first} submitted ${documentLabel(upload.type)} for the ${offer.role} offer.`]);
+      [id, upload.type, upload.fileId.trim(), upload.fileName?.trim() ?? null, notice.type, notice.title, notice.body]);
       if (!rows[0].saved) throw new OfferError("conflict", "already-answered");
       const checklist = await readChecklist(db, id);
-      if (offer.status === "Accepted" && checklist.submitted === DOCUMENT_COUNT) {
-        await db.query(`
-          INSERT INTO public.hrms_staff_notifications (id, payload)
-          VALUES ('offer.ready:' || $1::text, jsonb_build_object('type', 'offer.ready', 'title', 'Ready to hire: ' || $2::text,
-            'body', $2::text || ' accepted the offer and all documents are submitted.', 'link', '/offers/' || $1::text))
-          ON CONFLICT (id) DO NOTHING`, [id, offer.applicantName]);
-      }
       return { submitted: checklist.submitted, total: checklist.total };
     },
   };

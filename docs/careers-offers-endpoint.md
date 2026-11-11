@@ -10,7 +10,7 @@ The routes bypass the Staff sign-in redirect in `proxy.ts` for this reason.
 | Route | Body | Result |
 |---|---|---|
 | `POST /api/careers/offers/{id}/reply` | `{ applicantId, answer: "Accepted" \| "Declined" }` | `200 { ok: true }` |
-| `POST /api/careers/offers/{id}/documents` | `{ applicantId, type, fileId, fileName }` | `200 { ok: true, submitted, total }` |
+| `POST /api/careers/offers/{id}/documents` | `{ applicantId, type, fileId, fileName? }` | `200 { ok: true, submitted, total }` |
 
 `type` is one of `resume`, `valid-id`, `nbi`, `health`, `sss`, `philhealth`, `pagibig`.
 
@@ -19,6 +19,6 @@ Errors are `{ error, message }`: `400` invalid body, `401` bad key, `404` no suc
 
 - A reply follows the same rules as Staff recording one (one shared function), with the email queued to go out at once.
 - An upload marks the row Submitted and replaces any earlier file. It is allowed while the Offer is Sent or Accepted.
-- Staff holding Recruitment and Hiring are notified of each reply and upload, linking to `/offers/{id}`. "Ready to hire" is sent once,
-  when an Accepted Offer has all seven documents Submitted (whichever of the 7th upload or the acceptance comes last).
+- Staff holding Recruitment and Hiring are notified of each reply and upload, linking to `/offers/{id}`. The notification for the 7th
+  document on an Accepted Offer says "Ready to hire" instead of the usual one; replacing a file never does.
 - No migration: the notifications reuse `hrms_staff_notifications`, and uploads write no Offer activity row.

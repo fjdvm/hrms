@@ -108,7 +108,7 @@ it("never lets one Applicant answer or upload for another's Offer, and rejects b
   await expect(careers().reply(id, "person-1", "Maybe")).rejects.toMatchObject({ reason: "validation" });
   await expect(careers().reply(id, "", "Accepted")).rejects.toMatchObject({ reason: "validation" });
   await expect(careers().reply(9999, "person-1", "Accepted")).rejects.toMatchObject({ reason: "not-found" });
-  for (const bad of [upload("passport"), { ...upload(), fileId: "" }, { ...upload(), fileName: " " }]) {
+  for (const bad of [upload("passport"), { ...upload(), fileId: "" }, { ...upload(), fileName: " " }, { ...upload(), fileId: "x".repeat(201) }]) {
     await expect(careers().uploadDocument(id, "person-1", bad)).rejects.toMatchObject({ reason: "validation" });
   }
   expect((await db.query(`SELECT 1 FROM hrms_offers WHERE status <> 'Sent'`)).rows).toHaveLength(0);
@@ -127,23 +127,30 @@ it("records an upload as Submitted, replaces the earlier file and tells Staff", 
   expect((await notices()).filter((notice) => notice.payload.type === "offer.document")).toHaveLength(2);
 });
 
-it("says Ready to hire once the 7th document lands on an Accepted Offer, and only once", async () => {
+it("makes the notification for the 7th document on an Accepted Offer say Ready to hire, once", async () => {
   const { id, applicantId } = await sentOffer();
   await careers().reply(id, applicantId, "Accepted");
   for (const type of DOCUMENT_TYPES.slice(0, 6)) await careers().uploadDocument(id, applicantId, upload(type, `file-${type}`));
   expect((await notices()).some((notice) => notice.payload.type === "offer.ready")).toBe(false);
   await careers().uploadDocument(id, applicantId, upload(DOCUMENT_TYPES[6], "file-last"));
-  await careers().uploadDocument(id, applicantId, upload(DOCUMENT_TYPES[6], "file-last-2"));
   const ready = (await notices()).filter((notice) => notice.payload.type === "offer.ready");
-  expect(ready).toEqual([expect.objectContaining({ id: `offer.ready:${id}`, payload: expect.objectContaining({ title: "Ready to hire: Applicant 1", link: `/offers/${id}` }) })]);
+  expect(ready).toEqual([expect.objectContaining({ payload: expect.objectContaining({ title: "Ready to hire: Applicant 1", link: `/offers/${id}` }) })]);
+  expect((await notices()).filter((notice) => notice.payload.type === "offer.document")).toHaveLength(6);
+  await careers().uploadDocument(id, applicantId, upload(DOCUMENT_TYPES[6], "file-replacement"));
+  expect((await notices()).filter((notice) => notice.payload.type === "offer.ready")).toHaveLength(1);
 });
 
-it("says Ready to hire when the Applicant accepts after all seven were already submitted", async () => {
+it("does not say Ready to hire for the 7th document while the Offer is only Sent", async () => {
   const { id, applicantId } = await sentOffer();
   for (const type of DOCUMENT_TYPES) await careers().uploadDocument(id, applicantId, upload(type, `file-${type}`));
   expect((await notices()).some((notice) => notice.payload.type === "offer.ready")).toBe(false);
-  await careers().reply(id, applicantId, "Accepted");
-  expect((await notices()).filter((notice) => notice.payload.type === "offer.ready")).toHaveLength(1);
+  expect((await notices()).filter((notice) => notice.payload.type === "offer.document")).toHaveLength(7);
+});
+
+it("needs only the document type and file id", async () => {
+  const { id, applicantId } = await sentOffer();
+  expect(await careers().uploadDocument(id, applicantId, { type: "nbi", fileId: "file-1" })).toEqual({ submitted: 1, total: 7 });
+  await expect(careers().uploadDocument(id, applicantId, { type: "sss", fileId: "file-2", fileName: " " })).rejects.toMatchObject({ reason: "validation" });
 });
 
 it("refuses uploads on a Declined, Withdrawn or Draft Offer", async () => {
@@ -187,7 +194,7 @@ it("maps outcomes to clear errors", async () => {
   const again = await call(reply, id, { applicantId, answer: "Declined" });
   expect(again.status).toBe(409);
   expect(await again.json()).toEqual({ error: "already-answered", message: "This offer has already been answered. A reply is final." });
-  const saved = await call(documents, id, { applicantId, type: "nbi", fileId: "file-1", fileName: "nbi.pdf" });
+  const saved = await call(documents, id, { applicantId, type: "nbi", fileId: "file-1" });
   expect(saved.status).toBe(200);
   expect(await saved.json()).toEqual({ ok: true, submitted: 1, total: 7 });
   expect((await call(documents, id, { applicantId, type: "nope", fileId: "f", fileName: "n" })).status).toBe(400);
