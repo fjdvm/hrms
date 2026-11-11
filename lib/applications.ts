@@ -60,6 +60,17 @@ export type ApplicationFilters = { jobPostingId?: string; stage?: ApplicationTab
 export type ApplicationJobPostingOption = { id: string; title: string; applicationCount: number };
 export type ApplicationPage = { jobPostingOptions: ApplicationJobPostingOption[]; newThisWeek: number; stageCounts: Record<ApplicationTab, number>; rows: ApplicationListItem[]; total: number; page: number; pageSize: 25 };
 
+export type InterviewJobLabel = "Closed" | "Filled" | null;
+export type InterviewJobSummary = {
+  jobPostingId: string; title: string; location: string; employmentType: string; label: InterviewJobLabel;
+  toSchedule: number; scheduled: number;
+  nextInterview: { applicantName: string; startsAt: Date; interviewerName: string } | null;
+};
+export type InterviewJobTab = "All" | "To schedule" | "Scheduled";
+export type InterviewJobRow = Pick<ApplicationListItem, "id" | "applicantName" | "applicantEmail"> & {
+  interview: Pick<ApplicationInterview, "id" | "startsAt" | "endsAt" | "type" | "interviewerName"> | null;
+};
+
 export class ApplicationError extends Error {
   constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict", public readonly detail?: string, public readonly conflicts?: InterviewConflict[], public readonly freeSlots?: FreeInterviewSlot[]) {
     super(`Application: ${reason}`);
@@ -449,6 +460,60 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         ...required_documents.filter((required) => !documents_snapshot.some((document) => document.requiredFor === required))
           .map((requiredFor): ApplicationDocument => ({ requiredFor, status: "Requested" })),
       ] };
+    },
+    /** One card per Job Posting with an Application in the Interview Stage, whatever the posting's status. */
+    async interviewJobs(): Promise<{ jobs: InterviewJobSummary[]; totals: { jobs: number; interviewsThisWeek: number; interviewsToday: number } }> {
+      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      if (access.decision !== "allowed") throw new ApplicationError(access.decision);
+      const { rows } = await db.query<{ jobs: (Omit<InterviewJobSummary, "nextInterview"> & { next: { applicantName: string; startsAt: string; interviewerName: string } | null })[]; this_week: number; today: number }>(`
+        WITH live AS (
+          SELECT a.id, a.applicant_name, a.job_posting_id, i.starts_at, i.interviewer_name
+          FROM public.hrms_all_applications a
+          LEFT JOIN public.hrms_application_interviews i ON i.application_id = a.id AND i.result IS NULL
+          WHERE a.stage = 'Interview'
+        ), bounds AS (
+          SELECT date_trunc('day', $1::timestamptz AT TIME ZONE 'Asia/Manila') AS today,
+            date_trunc('week', $1::timestamptz AT TIME ZONE 'Asia/Manila') AS week
+        )
+        SELECT COALESCE((SELECT jsonb_agg(to_jsonb(card) ORDER BY card.title, card."jobPostingId") FROM (
+          SELECT j.id AS "jobPostingId", j.title, j.location, j.employment_type AS "employmentType",
+            CASE j.status WHEN 'closed' THEN 'Closed' WHEN 'filled' THEN 'Filled' END AS label,
+            count(*) FILTER (WHERE l.starts_at IS NULL)::integer AS "toSchedule",
+            count(*) FILTER (WHERE l.starts_at IS NOT NULL)::integer AS scheduled,
+            (SELECT jsonb_build_object('applicantName', n.applicant_name, 'startsAt', n.starts_at, 'interviewerName', n.interviewer_name)
+              FROM live n WHERE n.job_posting_id = j.id AND n.starts_at >= $1::timestamptz
+              ORDER BY n.starts_at, n.id LIMIT 1) AS next
+          FROM live l JOIN public.job_postings j ON j.id = l.job_posting_id
+          GROUP BY j.id, j.title, j.location, j.employment_type, j.status
+        ) card), '[]'::jsonb) AS jobs,
+          (SELECT count(*)::integer FROM live, bounds WHERE starts_at IS NOT NULL
+            AND starts_at AT TIME ZONE 'Asia/Manila' >= bounds.week
+            AND starts_at AT TIME ZONE 'Asia/Manila' < bounds.week + INTERVAL '7 days') AS this_week,
+          (SELECT count(*)::integer FROM live, bounds WHERE starts_at IS NOT NULL
+            AND starts_at AT TIME ZONE 'Asia/Manila' >= bounds.today
+            AND starts_at AT TIME ZONE 'Asia/Manila' < bounds.today + INTERVAL '1 day') AS today`, [new Date().toISOString()]);
+      const jobs = rows[0].jobs.map(({ next, ...job }) => ({ ...job, nextInterview: next ? { ...next, startsAt: new Date(next.startsAt) } : null }));
+      return { jobs, totals: { jobs: jobs.length, interviewsThisWeek: rows[0].this_week, interviewsToday: rows[0].today } };
+    },
+    /** A job's Interview Stage Applications; an Application leaves once its result is recorded or it leaves the Stage. */
+    async interviewJob(jobPostingId: string, tab: InterviewJobTab = "All"): Promise<{ job: InterviewJobSummary; counts: Record<InterviewJobTab, number>; rows: InterviewJobRow[] }> {
+      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      if (access.decision !== "allowed") throw new ApplicationError(access.decision);
+      if (typeof jobPostingId !== "string" || jobPostingId.trim() === "" || !["All", "To schedule", "Scheduled"].includes(tab)) throw new ApplicationError("validation");
+      const summary = (await this.interviewJobs()).jobs.find(job => job.jobPostingId === jobPostingId);
+      if (!summary) throw new ApplicationError("not-found");
+      const { rows } = await db.query<Omit<InterviewJobRow, "interview"> & { interview: (Omit<NonNullable<InterviewJobRow["interview"]>, "startsAt" | "endsAt"> & { startsAt: string; endsAt: string }) | null }>(`
+        SELECT a.id, a.applicant_name AS "applicantName", a.applicant_email AS "applicantEmail",
+          CASE WHEN i.id IS NULL THEN NULL ELSE jsonb_build_object('id', i.id, 'startsAt', i.starts_at, 'endsAt', i.ends_at,
+            'type', i.type, 'interviewerName', i.interviewer_name) END AS interview
+        FROM public.hrms_all_applications a
+        LEFT JOIN public.hrms_application_interviews i ON i.application_id = a.id AND i.result IS NULL
+        WHERE a.stage = 'Interview' AND a.job_posting_id = $1
+          AND ($2 = 'All' OR ($2 = 'To schedule' AND i.id IS NULL) OR ($2 = 'Scheduled' AND i.id IS NOT NULL))
+        ORDER BY i.starts_at NULLS FIRST, a.applied_at, a.id`, [jobPostingId, tab]);
+      return { job: summary, rows: rows.map(row => ({ ...row, interview: row.interview
+        ? { ...row.interview, startsAt: new Date(row.interview.startsAt), endsAt: new Date(row.interview.endsAt) } : null })),
+        counts: { All: summary.toSchedule + summary.scheduled, "To schedule": summary.toSchedule, Scheduled: summary.scheduled } };
     },
     list: (filters: ApplicationFilters & { page?: number } = {}) => read(filters),
     async exportCsv({ jobPostingId, stage, search }: ApplicationFilters = {}): Promise<string> {
