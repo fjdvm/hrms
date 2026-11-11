@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { deliverOfferEmails } from "@/lib/offer-emails";
 import { OfferError, offersFor, type OfferTerms } from "@/lib/offers";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
@@ -164,4 +165,96 @@ it("blocks editing and deleting a Draft whose Application withdrew", async () =>
   await db.query(`UPDATE applications SET status = 'Withdrawn'`);
   await expect(offers().update(id, terms)).rejects.toMatchObject({ reason: "conflict" });
   await expect(offers().delete(id)).rejects.toMatchObject({ reason: "conflict" });
+});
+
+it("sends a Draft with a reply-by date: Sent, sent date recorded, terms locked", async () => {
+  const id = await offers().create(await seed(1), terms);
+  await offers().send(id, "2099-10-29");
+  const [row] = (await offers().list("Sent")).rows;
+  expect(row).toMatchObject({ id, status: "Sent", replyBy: "2099-10-29", sentAt: expect.any(Date) });
+  expect((await offers().list()).waiting).toBe(1);
+  await expect(offers().update(id, terms)).rejects.toMatchObject({ reason: "conflict" });
+  await expect(offers().delete(id)).rejects.toMatchObject({ reason: "conflict" });
+  await expect(offers().send(id, "2099-10-30")).rejects.toMatchObject({ reason: "conflict" });
+});
+
+it("requires a real reply-by date that is not in the past to send", async () => {
+  const id = await offers().create(await seed(1), terms);
+  for (const bad of ["", "2020-01-01", "2099-02-30", "soon"]) {
+    await expect(offers().send(id, bad)).rejects.toMatchObject({ reason: "validation" });
+  }
+  await expect(offers().send(9999, "2099-10-29")).rejects.toMatchObject({ reason: "not-found" });
+  expect((await offers().read(id)).status).toBe("Draft");
+});
+
+it("queues one offer email to the Applicant carrying every term", async () => {
+  const id = await offers().create(await seed(1), terms);
+  await offers().send(id, "2099-10-29");
+  const { rows } = await db.query<{ payload: { to: string; body: string } }>(`SELECT payload FROM hrms_offer_emails WHERE offer_id = $1`, [id]);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].payload.to).toBe("person1@example.test");
+  for (const text of ["19,000", "3 Nov 2099", "Full-time", "Mon-Sat, 6 AM-2 PM", "6 months", "Paolo Garcia", "29 Oct 2099", "Cainta branch"]) {
+    expect(rows[0].payload.body).toContain(text);
+  }
+});
+
+it("sends the queued email through the gateway with retries, and records it in the activity", async () => {
+  const id = await offers().create(await seed(1), terms);
+  await offers().send(id, "2099-10-29");
+  vi.stubEnv("API_GATEWAY_URL", "https://gateway.test");
+  vi.stubEnv("API_GATEWAY_KEY", "key");
+  const calls: { url: string; key: string | null }[] = [];
+  let fail = true;
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    calls.push({ url, key: new Headers(init.headers).get("idempotency-key") });
+    return new Response("{}", { status: fail ? 503 : 200 });
+  });
+  await deliverOfferEmails(db);
+  const sentLogged = async () => (await db.query(`SELECT 1 FROM hrms_offer_activity WHERE kind = 'email-sent'`)).rows.length;
+  expect(await sentLogged()).toBe(0);
+  await db.query(`UPDATE hrms_offer_emails SET next_attempt_at = now()`);
+  fail = false;
+  await deliverOfferEmails(db);
+  await deliverOfferEmails(db);
+  expect(calls.map((call) => call.url)).toEqual(Array(2).fill("https://gateway.test/notifications/emails/app"));
+  expect(calls[0].key).toBe(`offer.sent:${id}`);
+  expect(await sentLogged()).toBe(1);
+});
+
+it("extends the reply-by date only forward, only for a Sent offer", async () => {
+  const id = await offers().create(await seed(1), terms);
+  await expect(offers().extendReplyBy(id, "2099-11-05")).rejects.toMatchObject({ reason: "conflict" });
+  await offers().send(id, "2099-10-29");
+  await expect(offers().extendReplyBy(id, "2099-10-29")).rejects.toMatchObject({ reason: "validation" });
+  await expect(offers().extendReplyBy(id, "2099-10-20")).rejects.toMatchObject({ reason: "validation" });
+  await offers().extendReplyBy(id, "2099-11-05");
+  expect((await offers().detail(id)).replyBy).toBe("2099-11-05");
+  expect((await offers().detail(id)).activity.map((entry) => entry.kind)).toContain("reply-by-extended");
+  await db.query(`UPDATE applications SET status = 'Withdrawn'`);
+  await expect(offers().extendReplyBy(id, "2099-12-01")).rejects.toMatchObject({ reason: "conflict" });
+  await expect(offers().send(id, "2099-12-01")).rejects.toMatchObject({ reason: "conflict" });
+});
+
+it("does not send when the Application withdrew or left Offer", async () => {
+  const id = await offers().create(await seed(1), terms);
+  await db.query(`UPDATE applications SET status = 'Withdrawn'`);
+  await expect(offers().send(id, "2099-10-29")).rejects.toMatchObject({ reason: "conflict" });
+  expect((await db.query(`SELECT 1 FROM hrms_offer_emails`)).rows).toHaveLength(0);
+});
+
+it("shows the stage tracker dates and activity on the offer page data", async () => {
+  const id = await offers().create(await seed(1), terms);
+  await offers().send(id, "2099-10-29");
+  const detail = await offers().detail(id);
+  expect(detail).toMatchObject({ status: "Sent", stage: "Offer", replyBy: "2099-10-29", sentAt: expect.any(Date), reportsTo: "Paolo Garcia" });
+  expect(detail.stageDates.New).toBeInstanceOf(Date);
+  expect(detail.activity.map((entry) => entry.kind)).toContain("sent");
+  expect(detail.activity.find((entry) => entry.kind === "sent")?.actorName).toBe("Ada Okafor");
+});
+
+it("refuses send, extend and detail without the Module", async () => {
+  const other = portal.signIn(staff, ["Attendance"]);
+  await expect(offers(other).send(1, "2099-10-29")).rejects.toMatchObject({ reason: "denied" });
+  await expect(offers(other).extendReplyBy(1, "2099-10-29")).rejects.toMatchObject({ reason: "denied" });
+  await expect(offers(other).detail(1)).rejects.toMatchObject({ reason: "denied" });
 });

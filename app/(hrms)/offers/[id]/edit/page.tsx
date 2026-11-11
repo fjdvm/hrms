@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { BackLink, PAGE, PageHeader } from "@/components/hiring/parts";
+import { OfferReplyBy } from "@/components/hiring/offer-reply-by";
 import { OfferForm } from "@/components/hiring/offer-form";
 import { OfferError, type OfferDraft } from "@/lib/offers";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
@@ -34,12 +35,14 @@ export default async function Page({ params }: PageProps<"/offers/[id]/edit">) {
     );
   }
   // Only a Draft can be edited; anything else has no form.
-  if (offer.status !== "Draft") redirect("/offers");
+  if (offer.status !== "Draft") redirect(`/offers/${offer.id}`);
 
   return (
     <div className={PAGE}>
       <BackLink href="/offers">Offers</BackLink>
-      <PageHeader title="Edit draft offer" subtitle="Saved as a Draft. Nothing is sent to the applicant yet." />
+      <PageHeader title="Edit draft offer" subtitle="Saved as a Draft. Nothing is sent to the applicant yet.">
+        <OfferReplyBy mode="send" offerId={offer.id} applicantName={offer.applicantName} min={today()} />
+      </PageHeader>
       <OfferForm
         target={{ offerId: offer.id }}
         applicant={{ name: offer.applicantName, email: offer.applicantEmail, role: offer.role, branch: offer.branch }}

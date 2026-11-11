@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CELL, HEAD, InfoNote, PAGE, PageHeader, PersonCell } from "@/components/hiring/parts";
 import { OFFER_TABS, OfferError, type OfferPage } from "@/lib/offers";
-import { OFFER_BADGE, formatOfferDate, formatPeso, formatWaiting, offerTabFromParam, offersHref } from "@/lib/offer-view";
+import { OFFER_BADGE, formatOfferDate, formatPeso, formatWaiting, isOverdue, offerTabFromParam, offersHref } from "@/lib/offer-view";
 import { offersForRequest } from "@/lib/portal/offers";
 import { requireModule } from "@/lib/portal/staff";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ export default async function Page({ searchParams }: PageProps<"/offers">) {
     );
   }
   const { rows, counts, waiting } = result;
+  const now = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
   return (
     <div className={PAGE}>
@@ -75,8 +76,7 @@ export default async function Page({ searchParams }: PageProps<"/offers">) {
               {rows.map((offer) => (
                 <TableRow key={offer.id} className="relative border-border-subtle">
                   <TableCell className={CELL}>
-                    {/* Only Drafts have a page so far: the form. Sent Offers get theirs in a later ticket. */}
-                    <PersonCell name={offer.applicantName} subtitle={offer.applicantEmail} href={offer.status === "Draft" ? `/offers/${offer.id}/edit` : undefined} />
+                                    <PersonCell name={offer.applicantName} subtitle={offer.applicantEmail} href={offer.status === "Draft" ? `/offers/${offer.id}/edit` : `/offers/${offer.id}`} />
                   </TableCell>
                   <TableCell className={CELL}>{offer.role}</TableCell>
                   <TableCell className={CELL}>{formatPeso(offer.monthlySalary)}</TableCell>
@@ -88,7 +88,10 @@ export default async function Page({ searchParams }: PageProps<"/offers">) {
                     {dash(offer.replyBy ? formatOfferDate(offer.replyBy) : null)}
                   </TableCell>
                   <TableCell className={CELL}>
-                    <Badge variant={OFFER_BADGE[offer.status]}>{offer.status}</Badge>
+                    <span className="flex items-center gap-xs">
+                      <Badge variant={OFFER_BADGE[offer.status]}>{offer.status}</Badge>
+                      {isOverdue(offer.status, offer.replyBy, now) && <Badge variant="destructive">Overdue</Badge>}
+                    </span>
                   </TableCell>
                 </TableRow>
               ))}

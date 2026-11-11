@@ -1,6 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
+import { deliverOfferEmails } from "@/lib/offer-emails";
 import { revalidatePath } from "next/cache";
 import { OfferError } from "@/lib/offers";
 import { TERM_FIELDS, readOfferForm, type OfferFormErrors } from "@/lib/offer-view";
@@ -53,4 +55,30 @@ export async function deleteOffer(offerId: number): Promise<{ error?: string }> 
   }
   revalidatePath("/offers");
   redirect("/offers");
+}
+
+/** Sends a Draft with a reply-by date. The Applicant's email goes out through the outbox straight away. */
+export async function sendOffer(offerId: number, replyBy: string): Promise<{ error?: string }> {
+  try {
+    await (await offersForRequest()).send(offerId, replyBy);
+  } catch (error) {
+    if (error instanceof OfferError && error.reason === "validation") return { error: "Choose a reply-by date that is today or later." };
+    return { error: fail(error) };
+  }
+  after(() => deliverOfferEmails());
+  revalidatePath("/offers");
+  redirect(`/offers/${offerId}`);
+}
+
+/** Gives a Sent offer more time to reply. */
+export async function extendReplyBy(offerId: number, replyBy: string): Promise<{ error?: string }> {
+  try {
+    await (await offersForRequest()).extendReplyBy(offerId, replyBy);
+  } catch (error) {
+    if (error instanceof OfferError && error.reason === "validation") return { error: "Choose a date later than the current reply-by date." };
+    return { error: fail(error) };
+  }
+  revalidatePath("/offers");
+  revalidatePath(`/offers/${offerId}`);
+  return {};
 }
