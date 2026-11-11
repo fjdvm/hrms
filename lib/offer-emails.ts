@@ -25,7 +25,7 @@ export async function deliverOfferEmails(db: Database = database): Promise<void>
         await db.query(`
           WITH done AS (
             UPDATE public.hrms_offer_emails SET delivered_at = clock_timestamp() WHERE id = $1 AND delivered_at IS NULL RETURNING offer_id
-          ) INSERT INTO public.hrms_offer_activity (offer_id, kind, detail) SELECT offer_id, 'email-sent', CASE WHEN $1 LIKE 'offer.docs:%' THEN 'Documents email sent' ELSE 'Offer email sent' END FROM done`, [row.id]);
+          ) INSERT INTO public.hrms_offer_activity (offer_id, kind, detail) SELECT offer_id, 'email-sent', CASE WHEN $1 LIKE 'offer.docs:%' THEN 'Documents email sent' WHEN $1 LIKE 'offer.hired:%' THEN 'Welcome email sent' ELSE 'Offer email sent' END FROM done`, [row.id]);
       } catch {
         console.error("Offer email failed; retained for retry", { deliveryId: row.id });
         await db.query(`UPDATE public.hrms_offer_emails SET attempts = attempts + 1,

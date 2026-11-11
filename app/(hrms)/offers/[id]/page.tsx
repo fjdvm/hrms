@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { BackLink, CardTitle, PAGE, PageHeader } from "@/components/hiring/parts";
 import { OfferReplyBy } from "@/components/hiring/offer-reply-by";
 import { OfferResponse } from "@/components/hiring/offer-response";
+import { HireCard } from "@/components/hiring/hire-card";
 import { OfferDocuments } from "@/components/hiring/offer-documents";
 import { RequestDocuments } from "@/components/hiring/request-documents";
 import { OfferError, type OfferChecklist, type OfferDetail } from "@/lib/offers";
@@ -138,7 +139,13 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
         </Card>
         <OfferDocuments checklist={checklist} today={now} />
         </div>
-        <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none lg:w-[380px] lg:shrink-0">
+        <div className="flex flex-col gap-[16px] lg:w-[380px] lg:shrink-0">
+        {offer.status !== "Declined" && (
+          <HireCard offerId={offer.id} firstName={offer.applicantName.trim().split(/\s+/)[0] || offer.applicantName}
+            accepted={offer.status === "Accepted"} submitted={checklist.submitted} total={checklist.total}
+            withdrawn={offer.status === "Withdrawn"} hired={offer.stage === "Hired"} />
+        )}
+        <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">
           <CardTitle>Activity</CardTitle>
           <ol aria-label="Activity" className="flex flex-col gap-[14px]">
             {activity.map((entry, index) => (
@@ -152,6 +159,7 @@ export default async function Page({ params }: PageProps<"/offers/[id]">) {
             ))}
           </ol>
         </Card>
+        </div>
       </div>
     </div>
   );
