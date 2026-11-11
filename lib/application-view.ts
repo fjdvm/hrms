@@ -22,7 +22,7 @@ export type StageAction = { kind: "move"; label: string; to: ApplicationStage } 
 export function stageActions(stage: ApplicationStage): StageAction[] {
   switch (stage) {
     case "New": return [{ kind: "move", label: "Move to Screening", to: "Screening" }];
-    case "Screening": return [{ kind: "schedule", label: "Schedule interview" }];
+    case "Screening": return [{ kind: "move", label: "Move to Interview", to: "Interview" }];
     case "Interview": return [{ kind: "schedule", label: "Schedule interview" }, { kind: "move", label: "Move to Offer", to: "Offer" }];
     default: return [];
   }
@@ -207,25 +207,6 @@ export const SCORE_LABELS = ["Poor", "Fair", "Good", "Strong", "Outstanding"];
 
 /** A result can be recorded once the interview has started, and only once. */
 export const canRecordResult = (interview: ApplicationInterview, now: Date) => interview.result === null && interview.startsAt <= now;
-
-export type InterviewForm = { type: InterviewInput["type"]; date: string; start: string; end: string; interviewer: string; meetingLink: string; location: string; mapLink: string };
-export type InterviewFormErrors = Partial<Record<"date" | "start" | "end" | "interviewer" | "place", string>>;
-
-/** Reads the Schedule interview form: times are Manila wall-clock; an Online interview's place is its meeting link, an in-person one's is the location plus an optional map link. */
-export function readInterviewForm(form: InterviewForm): { input?: InterviewInput; errors?: InterviewFormErrors } {
-  const errors: InterviewFormErrors = {};
-  const interviewerName = form.interviewer.trim();
-  const online = form.type === "Online";
-  const place = online ? form.meetingLink.trim() : [form.location.trim(), form.mapLink.trim()].filter(Boolean).join(" · ");
-  if (!form.date) errors.date = "Choose a date.";
-  if (!form.start) errors.start = "Choose a start time.";
-  if (!form.end) errors.end = "Choose an end time.";
-  else if (form.start && form.end <= form.start) errors.end = "End time must be after the start.";
-  if (!interviewerName) errors.interviewer = "Enter the interviewer.";
-  if (online ? !place : !form.location.trim()) errors.place = online ? "Enter the meeting link." : "Enter the location.";
-  if (Object.keys(errors).length > 0) return { errors };
-  return { input: { startsAt: `${form.date}T${form.start}:00+08:00`, endsAt: `${form.date}T${form.end}:00+08:00`, type: form.type, interviewerName, location: place } };
-}
 
 export type ApplicantForm = Record<"fullName" | "email" | "mobile" | "address" | "jobPostingId" | "expectedSalary" | "availableFrom" | "source" | "referredBy", string>;
 export type ApplicantFormErrors = Partial<Record<keyof ApplicantForm, string>>;

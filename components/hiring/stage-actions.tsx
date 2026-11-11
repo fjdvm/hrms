@@ -4,11 +4,13 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import type { ApplicationStage } from "@/lib/applications";
 import { stageActions } from "@/lib/application-view";
+import type { ApplicationInterview } from "@/lib/applications";
+import type { Interviewer } from "@/lib/interviewers";
 import { ScheduleInterview } from "./schedule-interview";
 import { moveApplication } from "@/app/(hrms)/applicants/[id]/actions";
 
 /** The forward buttons for the current Stage. */
-export function StageActions({ applicationId, stage, applicantName, jobTitle, location }: { applicationId: number; stage: ApplicationStage; applicantName: string; jobTitle: string; location: string }) {
+export function StageActions({ applicationId, stage, applicantName, applicantEmail, jobTitle, location, interviewers, booked }: { applicationId: number; stage: ApplicationStage; applicantName: string; applicantEmail: string; jobTitle: string; location: string; interviewers: Interviewer[]; booked?: ApplicationInterview }) {
   const [error, setError] = useState<string>();
   const [pending, start] = useTransition();
   const actions = stageActions(stage);
@@ -27,7 +29,7 @@ export function StageActions({ applicationId, stage, applicantName, jobTitle, lo
             {action.label}
           </Button>
         ) : (
-          <ScheduleInterview key={action.label} applicationId={applicationId} stage={stage} applicantName={applicantName} jobTitle={jobTitle} location={location} label={action.label} />
+          <ScheduleInterview key={action.label} applicationId={applicationId} stage={stage} applicantName={applicantName} applicantEmail={applicantEmail} jobTitle={jobTitle} location={location} interviewers={interviewers} interview={booked} label={booked ? "Reschedule interview" : action.label} />
         ),
       )}
     </>

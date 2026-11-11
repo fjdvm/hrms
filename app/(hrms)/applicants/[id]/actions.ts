@@ -2,10 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { ApplicationError, type ApplicationStage } from "@/lib/applications";
+import { ApplicationError, type ApplicationStage, type InterviewInput } from "@/lib/applications";
+import type { FreeInterviewSlot, InterviewConflict } from "@/lib/interview-booking";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { applicationsForRequest } from "@/lib/portal/applications";
-import { readInterviewForm, type InterviewFormErrors } from "@/lib/application-view";
 
 export type NoteFormState = { error?: string; saved?: number };
 
@@ -85,39 +85,32 @@ export async function moveApplication(applicationId: number, fromStage: Applicat
   return {};
 }
 
-export type ScheduleState = { error?: string; fieldErrors?: InterviewFormErrors; scheduled?: number; values?: Record<string, string> };
+export type SaveInterviewState = { saved: true } | { saved?: false; error: string; conflicts?: InterviewConflict[]; freeSlots?: FreeInterviewSlot[] };
 
 const SCHEDULE_MESSAGES: Record<ApplicationError["reason"], string> = {
   validation: "Check the interview details and try again.",
-  "not-found": "This Application no longer exists.",
-  conflict: "This Application moved on since you opened it. Refresh to see its current Stage.",
+  "not-found": "This Application or Interview no longer exists.",
+  conflict: "This Application changed since you opened it. Refresh and try again.",
   unavailable: "HRMS could not reach the Portal or database. Please try again in a moment.",
   invalid: "",
   denied: "",
 };
 
-/** Schedules an interview from the Stage the reviewer saw, moving the Application to Interview. */
-export async function scheduleInterview(applicationId: number, fromStage: ApplicationStage, previous: ScheduleState, data: FormData): Promise<ScheduleState> {
-  const field = (name: string) => (data.get(name) as string | null) ?? "";
-  // Sent back so the form keeps what was typed when React resets it after the action.
-  const values = Object.fromEntries(["date", "start", "end", "interviewer", "meetingLink", "location", "mapLink"].map((name) => [name, field(name)]));
-  const { input, errors } = readInterviewForm({
-    type: field("type") === "In person" ? "In person" : "Online",
-    date: field("date"), start: field("start"), end: field("end"), interviewer: field("interviewer"),
-    meetingLink: field("meetingLink"), location: field("location"), mapLink: field("mapLink"),
-  });
-  if (!input) return { fieldErrors: errors, values };
+/** Books an Interview, or moves the existing one when `interviewId` is given. The server rechecks every rule. */
+export async function saveInterview(applicationId: number, stage: ApplicationStage, interviewId: number | undefined, input: InterviewInput): Promise<SaveInterviewState> {
   try {
-    await (await applicationsForRequest()).scheduleInterview(applicationId, fromStage, input);
+    const applications = await applicationsForRequest();
+    if (interviewId === undefined) await applications.scheduleInterview(applicationId, stage, input);
+    else await applications.rescheduleInterview(applicationId, interviewId, input);
   } catch (error) {
     if (!(error instanceof ApplicationError)) throw error;
     if (error.reason === "denied") redirect(NO_ACCESS_PATH);
     if (error.reason === "invalid") redirect(LOGIN_PATH);
-    return { error: SCHEDULE_MESSAGES[error.reason], values };
+    return { error: error.detail ?? SCHEDULE_MESSAGES[error.reason], conflicts: error.conflicts, freeSlots: error.freeSlots };
   }
   revalidatePath(`/applicants/${applicationId}`);
   revalidatePath("/applicants");
-  return { scheduled: (previous.scheduled ?? 0) + 1 };
+  return { saved: true };
 }
 
 export type ResultState = { error?: string; recorded?: number };
