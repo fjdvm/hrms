@@ -49,5 +49,5 @@ export const isOverdue = (status: OfferDisplayStatus, replyBy: string | null, to
 /** "reply by 29 Oct" for the page's subtitle. */
 export const formatShortDate = (value: string | Date) => formatOfferDate(value).replace(/ \d{4}$/, "");
 
-const ACTIVITY_TITLE = { sent: "Offer sent", "reply-by-extended": "Reply-by extended", "email-scheduled": "Email scheduled", "email-sent": "Email sent" } as const;
+const ACTIVITY_TITLE = { sent: "Offer sent", "reply-by-extended": "Reply-by extended", "email-scheduled": "Email scheduled", "email-sent": "Email sent", "documents-requested": "Documents requested" } as const;
 export const OFFER_ACTIVITY_TITLE = ACTIVITY_TITLE;
