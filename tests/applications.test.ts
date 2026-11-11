@@ -961,6 +961,8 @@ it("repeats the fixed palette for a large directory and keeps colours across rea
   const applications = applicationsFor(handle, db);
   const first = await applications.interviewers();
   expect(first).toHaveLength(30);
+  expect(new Set(first.slice(0, 6).map(member => member.colour)).size).toBe(6);
+  expect(first[6].colour).toEqual(first[0].colour);
   expect(first.every(member => INTERVIEWER_COLOURS.includes(member.colour as typeof INTERVIEWER_COLOURS[number]))).toBe(true);
   expect(new Set(first.map(member => member.colour)).size).toBeLessThan(first.length);
   portal.directory.reverse();
@@ -997,4 +999,15 @@ it("requires Recruitment and Hiring before reading the Interviewer directory", a
   const denied = portal.signIn(staff, ["Dashboard"]);
   await expect(applicationsFor(denied, db).interviewers()).rejects.toMatchObject({ reason: "denied" });
   await expect(applicationsFor(undefined, db).interviewers()).rejects.toMatchObject({ reason: "invalid" });
+});
+
+it("keeps persisted colours when Staff leave or change display names", async () => {
+  portal.directory = Array.from({ length: 6 }, (_, index) => ({ id: `staff-${index}`, username: `staff${index}`, name: `Staff ${index}`, modules: ["Recruitment and Hiring"] }));
+  const first = await applicationsFor(handle, db).interviewers();
+  expect(new Set(first.map(member => member.colour)).size).toBe(6);
+  portal.directory = portal.directory.slice(1).map(member => ({ ...member, name: `Renamed ${member.name}` }));
+  const next = await applicationsFor(handle, db).interviewers();
+  expect(next).toHaveLength(5);
+  expect(next.find(member => member.id === "staff-0")).toBeUndefined();
+  expect(next.map(member => member.colour)).toEqual(first.slice(1).map(member => member.colour));
 });
