@@ -22,6 +22,7 @@ beforeEach(async () => {
   }
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY);`);
   portal = new FakePortal();
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
   handle = portal.signIn(staff, ["Recruitment and Hiring"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
@@ -478,18 +479,25 @@ it("validates Stage write inputs and reports missing Applications", async () => 
   await expect(applications.moveStage(1, "New", "Screening", "reason")).rejects.toMatchObject({ reason: "validation" });
 });
 
-const interview = { startsAt: '2026-11-03T09:00:00+08:00', endsAt: '2026-11-03T10:00:00+08:00', type: 'Online' as const, interviewerName: 'Bea Santos', location: 'Meeting link' };
+const interview = { startsAt: '2099-11-03T09:00:00+08:00', endsAt: '2099-11-03T10:00:00+08:00', type: 'Online' as const, interviewerId: 'bea', interviewerName: 'Bea Santos', location: 'https://meet.google.com/test', meetingLink: 'https://meet.google.com/test' };
 
-it('books without moving Stage, then permits moving to Interview without another booking', async () => {
+// Historical result scenarios use an already-held Interview fixture.
+async function heldInterview(applications: ReturnType<typeof applicationsFor>, id: number, details: typeof interview) {
+  await applications.scheduleInterview(id, 'Interview', { ...details, startsAt: interview.startsAt, endsAt: interview.endsAt });
+  await db.query('UPDATE hrms_application_interviews SET starts_at = $2, ends_at = $3 WHERE application_id = $1', [id, details.startsAt, details.endsAt]);
+}
+
+it('books in Interview without moving Stage and requires moving there before booking', async () => {
   const id = await seed(1, 'Screening');
   const applications = applicationsFor(handle, db);
   expect((await needsAttentionSummary(new Date(), db)).toSchedule.count).toBe(0);
-  await applications.scheduleInterview(id, 'Screening', interview);
-  const profile = await applications.readProfile(id);
-  expect(profile.stage).toBe('Screening');
-  expect(profile.activity).toMatchObject([{ fromStage: 'Screening', toStage: 'Screening', actorName: staff.name }]);
-  expect(profile.interviews).toMatchObject([{ ...interview, startsAt: new Date(interview.startsAt), endsAt: new Date(interview.endsAt), score: null, result: null }]);
+  await expect(applications.scheduleInterview(id, 'Screening', interview)).rejects.toMatchObject({ reason: 'validation' });
   await applications.moveStage(id, 'Screening', 'Interview');
+  await applications.scheduleInterview(id, 'Interview', interview);
+  const profile = await applications.readProfile(id);
+  expect(profile.stage).toBe('Interview');
+  expect(profile.activity).toMatchObject([{ fromStage: 'Interview', toStage: 'Interview', actorName: staff.name }, { fromStage: 'Screening', toStage: 'Interview' }]);
+  expect(profile.interviews).toMatchObject([{ ...interview, startsAt: new Date(interview.startsAt), endsAt: new Date(interview.endsAt), score: null, result: null }]);
   await expect(applications.scheduleInterview(id, 'Interview', interview)).rejects.toMatchObject({ reason: 'conflict' });
   expect((await applications.readProfile(id)).interviews).toHaveLength(1);
   const unbooked = await seed(2, 'Screening');
@@ -507,39 +515,39 @@ it('settles concurrent bookings with one Interview and one activity', async () =
   expect(await applications.readProfile(id)).toMatchObject({ interviews: [{}], activity: [{}] });
 });
 
-it('refuses scheduling outside Screening or Interview and rejects stale writes', async () => {
+it('refuses scheduling outside Interview and rejects stale writes', async () => {
   const applications = applicationsFor(handle, db);
-  for (const [index, stage] of ['New', 'Offer', 'Hired', 'Rejected', 'Withdrawn'].entries()) {
+  for (const [index, stage] of ['New', 'Screening', 'Offer', 'Hired', 'Rejected', 'Withdrawn'].entries()) {
     const id = await seed(index, stage === 'New' ? 'Received' : stage);
     // @ts-expect-error exercise runtime Stage validation
     await expect(applications.scheduleInterview(id, stage, interview)).rejects.toMatchObject({ reason: 'validation' });
-    await expect(applications.scheduleInterview(id, 'Screening', interview)).rejects.toMatchObject({ reason: 'conflict' });
+    await expect(applications.scheduleInterview(id, 'Interview', interview)).rejects.toMatchObject({ reason: 'conflict' });
     expect((await applications.readProfile(id)).interviews).toEqual([]);
   }
-  await expect(applications.scheduleInterview(999, 'Screening', interview)).rejects.toMatchObject({ reason: 'not-found' });
+  await expect(applications.scheduleInterview(999, 'Interview', interview)).rejects.toMatchObject({ reason: 'not-found' });
 });
 
 it('serializes booking with a concurrent Stage move and rolls back failed activity', async () => {
-  const id = await seed(1, 'Screening');
+  const id = await seed(1, 'Interview');
   const applications = applicationsFor(handle, db);
   const results = await Promise.allSettled([
-    applications.scheduleInterview(id, 'Screening', interview),
-    applications.moveStage(id, 'Screening', 'Rejected'),
+    applications.scheduleInterview(id, 'Interview', interview),
+    applications.moveStage(id, 'Interview', 'Rejected'),
   ]);
   expect(results.some(({ status }) => status === 'fulfilled')).toBe(true);
   expect((await applications.readProfile(id)).stage).toBe('Rejected');
-  const other = await seed(2, 'Screening');
+  const other = await seed(2, 'Interview');
   await db.exec('ALTER TABLE hrms_application_activity ADD CONSTRAINT fail_interview CHECK (interview_id IS NULL) NOT VALID');
-  await expect(applications.scheduleInterview(other, 'Screening', interview)).rejects.toThrow();
-  expect(await applications.readProfile(other)).toMatchObject({ stage: 'Screening', interviews: [], activity: [] });
+  await expect(applications.scheduleInterview(other, 'Interview', interview)).rejects.toThrow();
+  expect(await applications.readProfile(other)).toMatchObject({ stage: 'Interview', interviews: [], activity: [] });
 });
 
 it('validates interview details without writing', async () => {
-  const id = await seed(1, 'Screening');
+  const id = await seed(1, 'Interview');
   const applications = applicationsFor(handle, db);
-  for (const invalid of [{ type: 'Phone' }, { startsAt: 'bad' }, { endsAt: interview.startsAt }, { interviewerName: ' ' }, { location: '' }, { startsAt: '2026-11-03T09:00:00' }]) {
+  for (const invalid of [{ type: 'Phone' }, { startsAt: 'bad' }, { endsAt: interview.startsAt }, { interviewerId: ' ' }, { meetingLink: '' }, { startsAt: '2026-11-03T09:00:00' }]) {
     // @ts-expect-error exercise runtime input validation
-    await expect(applications.scheduleInterview(id, 'Screening', { ...interview, ...invalid })).rejects.toMatchObject({ reason: 'validation' });
+    await expect(applications.scheduleInterview(id, 'Interview', { ...interview, ...invalid })).rejects.toMatchObject({ reason: 'validation' });
   }
   expect((await applications.readProfile(id)).interviews).toEqual([]);
 });
@@ -621,8 +629,8 @@ it("rechecks Module access for every note write and profile read", async () => {
 it("stores the Interview's Staff identity, links, place and private result fields", async () => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
-  const details = { ...interview, interviewerId: "staff-123", meetingLink: "https://meet.google.com/abc", mapLink: "https://maps.example.test", province: "Cebu", city: "Cebu City", address: "123 Main Street" };
-  await applications.scheduleInterview(id, "Interview", details);
+  const details = { ...interview, startsAt: "2020-01-06T09:00:00+08:00", endsAt: "2020-01-06T10:00:00+08:00", meetingLink: "https://meet.google.com/abc", location: "https://meet.google.com/abc" };
+  await heldInterview(applications, id, details);
   const [booked] = (await applications.readProfile(id)).interviews;
   await applications.recordInterviewResult(id, booked.id, { score: 4, result: "Passed", privateNotes: "Private evaluation", resultEmailAt: "2099-11-05T09:00:00Z" });
   expect((await applications.readProfile(id)).interviews).toMatchObject([{ ...details, startsAt: new Date(details.startsAt), endsAt: new Date(details.endsAt), score: 4, result: "Passed", privateNotes: "Private evaluation", resultEmailAt: new Date("2099-11-05T09:00:00Z") }]);
@@ -646,7 +654,7 @@ it("uses the next upcoming interview for Next step, CSV and the tracker, then aw
 it("records an interview score and result with the acting Staff in activity", async () => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
+  await heldInterview(applications, id, { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
   const interviewId = (await applications.readProfile(id)).interviews[0].id;
   await applications.recordInterviewResult(id, interviewId, { score: 4, result: "Passed" });
   const profile = await applications.readProfile(id);
@@ -659,7 +667,7 @@ it("refuses a result before the interview starts and for an interview outside th
   const id = await seed(1, "Interview");
   const other = await seed(2, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2099-01-01T09:00:00Z", endsAt: "2099-01-01T10:00:00Z" });
+  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: interview.startsAt, endsAt: interview.endsAt });
   const before = await applications.readProfile(id);
   const interviewId = before.interviews[0].id;
   await expect(applications.recordInterviewResult(id, interviewId, { score: 3, result: "Not passed" })).rejects.toMatchObject({ reason: "conflict" });
@@ -671,7 +679,7 @@ it("refuses a result before the interview starts and for an interview outside th
 it("validates whole scores from 1 to 5 and the two interview results without writing", async () => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
+  await heldInterview(applications, id, { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
   const before = await applications.readProfile(id);
   const interviewId = before.interviews[0].id;
   for (const outcome of [null, {}, { score: 0, result: "Passed" }, { score: 6, result: "Passed" }, { score: 2.5, result: "Passed" }, { score: NaN, result: "Passed" }, { score: "4", result: "Passed" }, { score: 3, result: "Waiting" }]) {
@@ -692,7 +700,7 @@ it("validates whole scores from 1 to 5 and the two interview results without wri
 it("rolls back an interview result if its activity cannot be recorded", async () => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
+  await heldInterview(applications, id, { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
   const before = await applications.readProfile(id);
   await db.exec("ALTER TABLE hrms_application_activity ADD CONSTRAINT fail_result CHECK (reason IS NULL) NOT VALID");
   await expect(applications.recordInterviewResult(id, before.interviews[0].id, { score: 4, result: "Passed" })).rejects.toThrow();
@@ -709,7 +717,7 @@ it.each(["denied", "invalid", "unavailable"] as const)("interview results fail c
 it("keeps results behind Staff access and rechecks access after recording", async () => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
+  await heldInterview(applications, id, { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
   const interviewId = (await applications.readProfile(id)).interviews[0].id;
   await applications.recordInterviewResult(id, interviewId, { score: 4, result: "Passed" });
   expect((await applications.list()).rows[0]).not.toHaveProperty("score");
@@ -723,7 +731,7 @@ it("keeps results behind Staff access and rechecks access after recording", asyn
 it.each(["Hired", "Rejected", "Withdrawn"])("records a past interview result after the Application becomes %s", async (stage) => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
+  await heldInterview(applications, id, { ...interview, startsAt: "2020-01-01T09:00:00Z", endsAt: "2020-01-01T10:00:00Z" });
   const interviewId = (await applications.readProfile(id)).interviews[0].id;
   if (stage === "Hired") {
     await applications.moveStage(id, "Interview", "Offer");
@@ -858,13 +866,14 @@ it("adds notes, schedules an interview and records its result for an HR-added ap
   const id = await applications.addApplicant(manual);
   await applications.addNote(id, " Referred by Ben ");
   await applications.moveStage(id, "New", "Screening");
-  await applications.scheduleInterview(id, "Screening", { startsAt: "2026-01-05T01:00:00Z", endsAt: "2026-01-05T02:00:00Z", type: "Online", interviewerName: "Ben", location: "Zoom" });
+  await applications.moveStage(id, "Screening", "Interview");
+  await heldInterview(applications, id, { ...interview, startsAt: "2026-01-05T01:00:00Z", endsAt: "2026-01-05T02:00:00Z" });
   const [{ id: interviewId }] = (await applications.readProfile(id)).interviews;
   await applications.recordInterviewResult(id, interviewId, { score: 4, result: "Passed" });
-  expect(await applications.readProfile(id)).toMatchObject({ stage: "Screening",
+  expect(await applications.readProfile(id)).toMatchObject({ stage: "Interview",
     notes: [{ text: "Referred by Ben", authorName: "Ada Okafor" }],
-    interviews: [{ interviewerName: "Ben", score: 4, result: "Passed" }],
-    activity: [{ reason: "Interview result: Passed (score: 4/5)" }, { toStage: "Screening" }, { toStage: "Screening" }] });
+    interviews: [{ interviewerName: "Bea Santos", score: 4, result: "Passed" }],
+    activity: [{ reason: "Interview result: Passed (score: 4/5)" }, { toStage: "Interview" }, { toStage: "Interview" }, { toStage: "Screening" }] });
   expect((await db.query("SELECT * FROM hrms_application_notifications")).rows).toHaveLength(0);
 });
 
@@ -931,9 +940,9 @@ it("preserves legacy rounds and their activity while migrating the current Inter
 it("keeps the Interview Stage date tied to a move rather than a booking", async () => {
   const id = await seed(1, "Screening");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Screening", interview);
   expect((await applications.readProfile(id)).stageDates.Interview).toBeUndefined();
   await applications.moveStage(id, "Screening", "Interview");
+  await applications.scheduleInterview(id, "Interview", interview);
   const reachedAt = (await applications.readProfile(id)).stageDates.Interview;
   expect(reachedAt).toBeInstanceOf(Date);
   expect(reachedAt).not.toEqual(new Date(interview.startsAt));
@@ -976,6 +985,7 @@ it("reports a directory outage and recovers on the next read without caching it"
     String(input).endsWith("/recipients") ? Promise.resolve(Response.json({}, { status: 503 })) : boundary(input, init));
   await expect(applications.interviewers()).rejects.toMatchObject({ reason: "unavailable" });
   vi.stubGlobal("fetch", boundary);
+  portal.directory = [];
   expect(await applications.interviewers()).toEqual([]);
   portal.directory = [{ id: "ada", username: "ada", name: "Ada Okafor", modules: ["Recruitment and Hiring"] }];
   expect(await applications.interviewers()).toMatchObject([{ id: "ada", name: "Ada Okafor" }]);
@@ -1010,4 +1020,103 @@ it("keeps persisted colours when Staff leave or change display names", async () 
   expect(next).toHaveLength(5);
   expect(next.find(member => member.id === "staff-0")).toBeUndefined();
   expect(next.map(member => member.colour)).toEqual(first.slice(1).map(member => member.colour));
+});
+
+
+it("books only in Interview Stage and rejects a past start with a specific reason", async () => {
+  const id = await seed(1, "Interview");
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
+  await expect(applicationsFor(handle, db).scheduleInterview(id, "Interview", {
+    ...interview, interviewerId: "bea", meetingLink: "https://meet.google.com/test",
+    startsAt: "2020-01-06T09:00:00+08:00", endsAt: "2020-01-06T10:00:00+08:00",
+  })).rejects.toMatchObject({ reason: "validation", detail: "Start must be in the future." });
+});
+
+it("enforces Manila weekdays, hours, type-specific locations and Interviewer eligibility for direct callers", async () => {
+  const id = await seed(1, "Interview");
+  const applications = applicationsFor(handle, db);
+  const cases = [
+    [{ startsAt: "2099-11-07T09:00:00+08:00", endsAt: "2099-11-07T10:00:00+08:00" }, "Interviews must be Monday to Friday in Manila."],
+    [{ startsAt: "2099-11-03T07:59:00+08:00" }, "Start must be at or after 8 AM in Manila."],
+    [{ endsAt: "2099-11-03T17:00:01+08:00" }, "End must be no later than 5 PM on the same Manila day."],
+    [{ endsAt: "2099-11-04T08:00:00+08:00" }, "End must be no later than 5 PM on the same Manila day."],
+    [{ endsAt: interview.startsAt }, "End must be after start."],
+    [{ meetingLink: "" }, "Online Interviews need a valid meeting link."],
+    [{ meetingLink: "javascript:alert(1)" }, "Online Interviews need a valid meeting link."],
+    [{ type: "In person", province: "Cebu", city: "Baguio", address: "Street" }, "In person Interviews need a listed Philippine province and city or municipality, and an address."],
+    [{ type: "In person", province: "Cebu", city: "Argao", address: " " }, "In person Interviews need a listed Philippine province and city or municipality, and an address."],
+    [{ interviewerId: "payroll" }, "Interviewer must hold Recruitment and Hiring."],
+  ] as const;
+  portal.directory.push({ id: "payroll", username: "pay", name: "Payroll Staff", modules: ["Payroll & ESS"] });
+  for (const [change, detail] of cases) {
+    await expect(applications.scheduleInterview(id, "Interview", { ...interview, ...change })).rejects.toMatchObject({ reason: "validation", detail });
+  }
+  expect((await applications.readProfile(id)).interviews).toEqual([]);
+  await applications.scheduleInterview(id, "Interview", { ...interview, type: "In person", province: "Cebu", city: "Argao", address: "123 Street", startsAt: "2099-11-03T08:00:00+08:00", endsAt: "2099-11-03T17:00:00+08:00", interviewerName: "Forged name" });
+  expect((await applications.readProfile(id)).interviews).toMatchObject([{ interviewerId: "bea", interviewerName: "Bea Santos", meetingLink: null, province: "Cebu", city: "Argao", address: "123 Street", mapLink: null }]);
+});
+
+it("blocks overlapping Applications atomically, names the Applicant and suggests four free slots, allowing touching ends", async () => {
+  const first = await seed(1, "Interview"), second = await seed(2, "Interview");
+  const applications = applicationsFor(handle, db);
+  const results = await Promise.allSettled([applications.scheduleInterview(first, "Interview", interview), applications.scheduleInterview(second, "Interview", interview)]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  const winner = results[0].status === "fulfilled" ? first : second;
+  const loser = winner === first ? second : first;
+  expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: {
+    reason: "conflict", detail: `Bea Santos is already meeting Applicant ${winner === first ? 1 : 2}.`,
+    conflicts: [{ applicantName: `Applicant ${winner === first ? 1 : 2}` }],
+    freeSlots: [
+      { startsAt: "2099-11-03T00:00:00.000Z", endsAt: "2099-11-03T01:00:00.000Z" },
+      { startsAt: "2099-11-03T02:00:00.000Z", endsAt: "2099-11-03T03:00:00.000Z" },
+      { startsAt: "2099-11-03T02:30:00.000Z", endsAt: "2099-11-03T03:30:00.000Z" },
+      { startsAt: "2099-11-03T03:00:00.000Z", endsAt: "2099-11-03T04:00:00.000Z" },
+    ],
+  } });
+  await applications.scheduleInterview(loser, "Interview", { ...interview, startsAt: interview.endsAt, endsAt: "2099-11-03T11:00:00+08:00" });
+  expect((await applications.readProfile(loser)).interviews).toHaveLength(1);
+});
+
+it("reschedules the same Interview under shared validation and overlap rules, leaving a failed edit intact", async () => {
+  const first = await seed(1, "Interview"), second = await seed(2, "Interview");
+  const applications = applicationsFor(handle, db);
+  await applications.scheduleInterview(first, "Interview", interview);
+  await applications.scheduleInterview(second, "Interview", { ...interview, startsAt: interview.endsAt, endsAt: "2099-11-03T11:00:00+08:00" });
+  const before = (await applications.readProfile(first)).interviews[0];
+  await expect(applications.rescheduleInterview(first, before.id, { ...interview, startsAt: interview.endsAt, endsAt: "2099-11-03T11:00:00+08:00" })).rejects.toMatchObject({ reason: "conflict", conflicts: [{ applicantName: "Applicant 2" }] });
+  await expect(applications.rescheduleInterview(first, before.id, { ...interview, meetingLink: "" })).rejects.toMatchObject({ reason: "validation" });
+  expect((await applications.readProfile(first)).interviews[0]).toEqual(before);
+  await applications.rescheduleInterview(first, before.id, interview); // self never conflicts
+  await applications.rescheduleInterview(first, before.id, { ...interview, startsAt: "2099-11-03T11:00:00+08:00", endsAt: "2099-11-03T12:00:00+08:00" });
+  expect((await applications.readProfile(first)).interviews).toMatchObject([{ id: before.id, startsAt: new Date("2099-11-03T11:00:00+08:00") }]);
+  await expect(applications.rescheduleInterview(second, before.id, interview)).rejects.toMatchObject({ reason: "not-found" });
+  await db.query("UPDATE hrms_application_interviews SET starts_at = '2020-01-01', ends_at = '2020-01-02' WHERE id = $1", [before.id]);
+  await applications.recordInterviewResult(first, before.id, { score: 4, result: "Passed" });
+  await expect(applications.rescheduleInterview(first, before.id, interview)).rejects.toMatchObject({ reason: "conflict", detail: "An Interview with a result cannot be rescheduled." });
+});
+
+it.each(["Rejected", "Withdrawn", "Offer"])("ignores a dropped Interview after %s, but keeps its profile history", async stage => {
+  const first = await seed(1, "Interview"), second = await seed(2, "Interview");
+  const applications = applicationsFor(handle, db);
+  await applications.scheduleInterview(first, "Interview", interview);
+  if (stage === "Withdrawn") await db.query("UPDATE applications SET status = 'Withdrawn' WHERE id = $1", [first]);
+  else await applications.moveStage(first, "Interview", stage as "Rejected" | "Offer");
+  await applications.scheduleInterview(second, "Interview", interview);
+  expect((await applications.readProfile(first)).interviews).toHaveLength(1);
+  const booked = (await applications.readProfile(first)).interviews[0];
+  await expect(applications.rescheduleInterview(first, booked.id, interview)).rejects.toMatchObject({ reason: "conflict" });
+});
+
+it("allows simultaneous times for different Interviewers and fails closed when the Portal directory is unavailable", async () => {
+  const first = await seed(1, "Interview"), second = await seed(2, "Interview");
+  portal.directory.push({ id: "ben", username: "ben", name: "Ben Santos", modules: ["Recruitment and Hiring"] });
+  const applications = applicationsFor(handle, db);
+  await applications.scheduleInterview(first, "Interview", interview);
+  await applications.scheduleInterview(second, "Interview", { ...interview, interviewerId: "ben" });
+  const booked = (await applications.readProfile(first)).interviews[0];
+  const boundary = portalFetch(portal);
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith("/recipients") ? Promise.resolve(Response.json({}, { status: 503 })) : boundary(input, init));
+  await expect(applications.rescheduleInterview(first, booked.id, interview)).rejects.toMatchObject({ reason: "unavailable" });
+  expect((await applications.readProfile(first)).interviews[0]).toEqual(booked);
 });
