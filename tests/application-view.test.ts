@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
+import { interviewsSubtitle, nextInterviewLabel, interviewJobRow, interviewTabFromParam, formatSource, readApplicantForm, canRecordResult, SCORE_LABELS, canReject, interviewRow, stageActions, applicantsHref, exportFileName, exportHref, detailOrDash, formatAppliedFor, formatAvailableFrom, formatFileSize, formatSalary, trackerSteps, formatApplied, formatRange, formatShowing, activityEntries, dayTime, formatSubtitle, jobFromParam, pageCount, pageFromParam, searchFromParam, stageFromParam } from "@/lib/application-view";
 
 describe("application list view", () => {
   it("reads the page from the URL, defaulting to the first", () => {
@@ -247,5 +247,33 @@ describe("formatSource", () => {
     expect(formatSource("Referral", null)).toBe("Referral");
     expect(formatSource("Careers page", null)).toBe("Careers page");
     expect(formatSource("Unspecified", null)).toBe("Unspecified");
+  });
+});
+
+describe("Interviews By job view", () => {
+  const now = new Date("2026-10-30T01:00:00Z"); // 30 Oct 9:00 AM Manila
+
+  it("words the page subtitle", () => {
+    expect(interviewsSubtitle({ jobs: 5, interviewsThisWeek: 6, interviewsToday: 2 })).toBe("5 posted jobs · 6 interviews this week · 2 today");
+    expect(interviewsSubtitle({ jobs: 1, interviewsThisWeek: 1, interviewsToday: 0 })).toBe("1 posted job · 1 interview this week · 0 today");
+  });
+
+  it("words the next Interview, naming today", () => {
+    expect(nextInterviewLabel({ interviewerName: "Jomar Villanueva", startsAt: new Date("2026-10-30T06:00:00Z") }, now)).toBe("Today, 2:00 PM · Jomar Villanueva");
+    expect(nextInterviewLabel({ interviewerName: "Patricia Lim", startsAt: new Date("2026-10-31T06:00:00Z") }, now)).toBe("31 Oct, 2:00 PM · Patricia Lim");
+    expect(nextInterviewLabel(null, now)).toBe("No upcoming interviews");
+  });
+
+  it("reads a list row's date, time and type", () => {
+    const interview = { id: 1, startsAt: new Date("2026-10-28T08:00:00Z"), endsAt: new Date("2026-10-28T08:30:00Z"), type: "Online" as const, interviewerName: "Paolo Garcia" };
+    expect(interviewJobRow(interview)).toEqual({ date: "28 Oct 2026", time: "4:00 – 4:30 PM", type: "Online", interviewer: "Paolo Garcia", status: "Scheduled" });
+    expect(interviewJobRow({ ...interview, type: "In person" }).type).toBe("In person");
+    expect(interviewJobRow(null)).toEqual({ date: null, time: null, type: null, interviewer: null, status: "Waiting" });
+  });
+
+  it("reads the tab from the URL, defaulting to All", () => {
+    expect(interviewTabFromParam("Scheduled")).toBe("Scheduled");
+    expect(interviewTabFromParam("To schedule")).toBe("To schedule");
+    for (const bad of [undefined, "", "Passed", "nope"]) expect(interviewTabFromParam(bad)).toBe("All");
   });
 });

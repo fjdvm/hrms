@@ -1,5 +1,5 @@
 import { MANUAL_SOURCES } from "./application-sources";
-import type { ApplicationInterview, ApplicationProfile, ApplicationStage, ApplicationTab, InterviewInput, ManualApplicantInput } from "./applications";
+import type { ApplicationInterview, ApplicationProfile, ApplicationStage, ApplicationTab, InterviewInput, InterviewJobTab, ManualApplicantInput } from "./applications";
 
 export const STAGE_BADGE = {
   New: "info",
@@ -201,6 +201,37 @@ export function interviewRow(interview: ApplicationInterview): InterviewRow {
     status: interview.result === null ? "Scheduled" : "Completed",
   };
 }
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** "5 posted jobs · 6 interviews this week · 2 today". */
+export const interviewsSubtitle = ({ jobs, interviewsThisWeek, interviewsToday }: { jobs: number; interviewsThisWeek: number; interviewsToday: number }) =>
+  `${plural(jobs, "posted job")} · ${plural(interviewsThisWeek, "interview")} this week · ${interviewsToday} today`;
+
+/** "Today, 2:00 PM · Jomar Villanueva", "31 Oct, 2:00 PM · Patricia Lim", or "No upcoming interviews". */
+export function nextInterviewLabel(next: { startsAt: Date; interviewerName: string } | null, now: Date) {
+  if (!next) return "No upcoming interviews";
+  const day = (date: Date) => manila(date, { day: "numeric", month: "short" });
+  const when = day(next.startsAt) === day(now) ? `Today, ${dayTime(next.startsAt).split(", ")[1]}` : dayTime(next.startsAt);
+  return `${when} · ${next.interviewerName}`;
+}
+
+export type InterviewJobRowView = { date: string | null; time: string | null; type: string | null; interviewer: string | null; status: "Waiting" | "Scheduled" };
+
+/** One line of a job's Interview list; a row with no Interview reads Waiting with blanks. */
+export function interviewJobRow(interview: { startsAt: Date; endsAt: Date; type: "Online" | "In person"; interviewerName: string } | null): InterviewJobRowView {
+  if (!interview) return { date: null, time: null, type: null, interviewer: null, status: "Waiting" };
+  const clock = (date: Date) => manila(date, { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
+  const [start, end] = [clock(interview.startsAt), clock(interview.endsAt)];
+  return {
+    date: formatApplied(interview.startsAt),
+    time: `${start.slice(-2) === end.slice(-2) ? start.slice(0, -3) : start} – ${end}`,
+    type: interview.type, interviewer: interview.interviewerName, status: "Scheduled",
+  };
+}
+
+/** The job list tab from the URL; anything unknown is All. */
+export const interviewTabFromParam = (value: string | undefined): InterviewJobTab => value === "To schedule" || value === "Scheduled" ? value : "All";
 
 /** Labels for scores 1 to 5, in order, as the Interview result dialog words them: "4 / 5 · Strong". */
 export const SCORE_LABELS = ["Poor", "Fair", "Good", "Strong", "Outstanding"];

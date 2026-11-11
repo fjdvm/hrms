@@ -1,75 +1,7 @@
 /**
- * Static sample data for the Interviews, Offers and Hired screens.
+ * Static sample data for the Offers and Hired screens.
  * These screens are UI only for now; nothing here is read from or written to the database.
  */
-
-export type InterviewJob = {
-  slug: string;
-  title: string;
-  meta: string;
-  counts: { toSchedule: number; scheduled: number; passed: number; notPassed: number };
-  next: string | null;
-};
-
-export const INTERVIEW_JOBS: InterviewJob[] = [
-  {
-    slug: "production-staff",
-    title: "Production Staff",
-    meta: "Main kitchen, Antipolo · Full-time",
-    counts: { toSchedule: 3, scheduled: 2, passed: 1, notPassed: 0 },
-    next: "Today, 2:00 PM · Jomar Villanueva",
-  },
-  {
-    slug: "delivery-coordinator",
-    title: "Delivery Coordinator",
-    meta: "Main kitchen, Antipolo · Full-time",
-    counts: { toSchedule: 0, scheduled: 0, passed: 1, notPassed: 1 },
-    next: null,
-  },
-  {
-    slug: "branch-cashier",
-    title: "Branch Cashier",
-    meta: "Cainta branch · Full-time",
-    counts: { toSchedule: 2, scheduled: 2, passed: 1, notPassed: 1 },
-    next: "Today, 4:00 PM · Carla Mendoza",
-  },
-  {
-    slug: "quality-control-inspector",
-    title: "Quality Control Inspector",
-    meta: "Main kitchen, Antipolo · Full-time",
-    counts: { toSchedule: 1, scheduled: 0, passed: 1, notPassed: 0 },
-    next: null,
-  },
-  {
-    slug: "social-media-associate",
-    title: "Social Media Associate",
-    meta: "Hybrid · Antipolo · Part-time",
-    counts: { toSchedule: 1, scheduled: 1, passed: 0, notPassed: 0 },
-    next: "31 Oct, 2:00 PM · Patricia Lim",
-  },
-];
-
-export type InterviewResult = "Waiting" | "Scheduled" | "Passed" | "Not passed";
-
-export type InterviewRow = {
-  name: string;
-  email: string;
-  date: string | null;
-  time: string | null;
-  type: "online" | "in-person" | null;
-  interviewer: string | null;
-  result: InterviewResult;
-  note: string | null;
-};
-
-export const BRANCH_CASHIER_INTERVIEWS: InterviewRow[] = [
-  { name: "Mylene Santos", email: "mylene.santos@gmail.com", date: null, time: null, type: null, interviewer: null, result: "Waiting", note: null },
-  { name: "Grace Villar", email: "grace.villar@gmail.com", date: null, time: null, type: null, interviewer: null, result: "Waiting", note: null },
-  { name: "Carla Mendoza", email: "carla.mendoza@gmail.com", date: "28 Oct 2026", time: "Today, 4:00 – 4:30 PM", type: "online", interviewer: "Paolo Garcia", result: "Scheduled", note: null },
-  { name: "Kristine Aquino", email: "kristine.aquino@yahoo.com", date: "30 Oct 2026", time: "10:00 – 10:45 AM", type: "in-person", interviewer: "Paolo Garcia", result: "Scheduled", note: null },
-  { name: "Ellaine Torres", email: "ellaine.torres@gmail.com", date: "21 Oct 2026", time: "9:00 – 9:45 AM", type: "in-person", interviewer: "Paolo Garcia", result: "Passed", note: "Moved to Offers · email sent 22 Oct" },
-  { name: "Joel Ramirez", email: "joel.ramirez@gmail.com", date: "21 Oct 2026", time: "1:00 – 1:30 PM", type: "online", interviewer: "Paolo Garcia", result: "Not passed", note: "Result email sent 22 Oct" },
-];
 
 export type OfferStatus = "Draft" | "Sent" | "Accepted" | "Declined";
 
