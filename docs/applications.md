@@ -75,20 +75,30 @@ its route. Deployment operators must verify both settings in HRMS's environment.
 
 `applicationsFor(sessionHandle, db).scheduleInterview(id, fromStage, input)`
 accepts the Stage Staff reviewed and `{ startsAt, endsAt, type, interviewerName,
-location }`. Timestamps must include a timezone, end after start, and type must
-be `Online` or `In person`. Interviewer name and location are required typed text.
-Only Screening and Interview accept scheduling. A stale Stage returns `conflict`;
-a missing Application returns `not-found`. Every call rechecks Module access.
+interviewerId, meetingLink, mapLink, province, city, address }`. The legacy profile
+caller may still supply `location`. Timestamps must include a timezone, end after
+start, and type must be `Online` or `In person`. Only Screening and Interview
+accept scheduling. A stale Stage or a second booking returns `conflict`; a missing
+Application returns `not-found`. Every call rechecks Module access.
 
-Scheduling from Screening uses the same guarded status write as `moveStage` to
-reach Interview. Scheduling from Interview adds another interview without changing
-the recorded Stage history. The interview, optional Stage history, and activity with the
-acting Staff name commit atomically. `readProfile` returns `interviews` ordered by
-start time descending then id descending, and scheduling activity includes `interviewId`.
-Each interview includes its date/time, end time, type, interviewer, location,
-nullable `score` (1–5), and nullable `result` (`Passed` or `Not passed`). These
-fields are private to authorised Staff. Migration `0015-application-interview-results.sql`
-adds the score and result columns.
+Booking never changes the Stage or emits a Stage notification. Staff move an
+Application to Interview separately; that Stage can have no Interview. The
+booking and its Staff activity commit atomically. The database enforces one
+Interview per Application, including concurrent calls. Rescheduling is separate
+future work. `readProfile` returns the Interview with nullable score, result,
+private notes and result-email time. `recordInterviewResult` accepts optional
+`privateNotes` and `resultEmailAt`; this ticket stores those fields only, without
+sending or scheduling email.
+
+Migration `0021-interview-model.sql` preserves existing ids, times, scores, results,
+name snapshots and location text, copying Online locations to meeting links and
+In person locations to addresses. Unknown legacy Staff ids remain null. If an
+Application has extra legacy rounds, its highest-id Interview is kept as the
+current booking. The other rows remain intact in
+`hrms_legacy_application_interviews`; their activity links move to
+`legacy_interview_id`. No legacy data is discarded. These archival rounds are
+excluded from the current Interview interface and Dashboard.
+
 The profile tracker's `stageDates.Interview` uses the next upcoming interview
 without a result, falling back to the latest interview date/time. When no
 interviews exist, the recorded Stage date remains the fallback.

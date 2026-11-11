@@ -478,20 +478,29 @@ it("validates Stage write inputs and reports missing Applications", async () => 
 
 const interview = { startsAt: '2026-11-03T09:00:00+08:00', endsAt: '2026-11-03T10:00:00+08:00', type: 'Online' as const, interviewerName: 'Bea Santos', location: 'Meeting link' };
 
-it('schedules from Screening atomically and records the interview and acting Staff', async () => {
+it('books without moving Stage, then permits moving to Interview without another booking', async () => {
   const id = await seed(1, 'Screening');
   const applications = applicationsFor(handle, db);
   await applications.scheduleInterview(id, 'Screening', interview);
   const profile = await applications.readProfile(id);
-  expect(profile.stage).toBe('Interview');
-  expect(profile.stageDates.Interview).toBeInstanceOf(Date);
-  expect(profile.interviews).toEqual([{ ...interview, id: expect.any(Number), startsAt: new Date(interview.startsAt), endsAt: new Date(interview.endsAt), score: null, result: null }]);
-  expect(profile.activity).toMatchObject([{ actorName: staff.name, interviewId: profile.interviews[0].id, fromStage: 'Screening', toStage: 'Interview' }]);
-  await applications.scheduleInterview(id, 'Interview', { ...interview, type: 'In person', location: 'Office' });
-  const again = await applications.readProfile(id);
-  expect(again.interviews).toHaveLength(2);
-  expect(again.activity).toHaveLength(2);
-  expect(again.stageDates.Interview).toEqual(profile.stageDates.Interview);
+  expect(profile.stage).toBe('Screening');
+  expect(profile.activity).toMatchObject([{ fromStage: 'Screening', toStage: 'Screening', actorName: staff.name }]);
+  expect(profile.interviews).toMatchObject([{ ...interview, startsAt: new Date(interview.startsAt), endsAt: new Date(interview.endsAt), score: null, result: null }]);
+  await applications.moveStage(id, 'Screening', 'Interview');
+  await expect(applications.scheduleInterview(id, 'Interview', interview)).rejects.toMatchObject({ reason: 'conflict' });
+  expect((await applications.readProfile(id)).interviews).toHaveLength(1);
+  const unbooked = await seed(2, 'Screening');
+  await applications.moveStage(unbooked, 'Screening', 'Interview');
+  expect(await applications.readProfile(unbooked)).toMatchObject({ stage: 'Interview', interviews: [] });
+});
+
+it('settles concurrent bookings with one Interview and one activity', async () => {
+  const id = await seed(1, 'Interview');
+  const applications = applicationsFor(handle, db);
+  const results = await Promise.allSettled([applications.scheduleInterview(id, 'Interview', interview), applications.scheduleInterview(id, 'Interview', interview)]);
+  expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+  expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: { reason: 'conflict' } });
+  expect(await applications.readProfile(id)).toMatchObject({ interviews: [{}], activity: [{}] });
 });
 
 it('refuses scheduling outside Screening or Interview and rejects stale writes', async () => {
@@ -506,15 +515,15 @@ it('refuses scheduling outside Screening or Interview and rejects stale writes',
   await expect(applications.scheduleInterview(999, 'Screening', interview)).rejects.toMatchObject({ reason: 'not-found' });
 });
 
-it('allows only one concurrent action from Screening and rolls back failed activity', async () => {
+it('serializes booking with a concurrent Stage move and rolls back failed activity', async () => {
   const id = await seed(1, 'Screening');
   const applications = applicationsFor(handle, db);
   const results = await Promise.allSettled([
     applications.scheduleInterview(id, 'Screening', interview),
     applications.moveStage(id, 'Screening', 'Rejected'),
   ]);
-  expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
-  expect((await applications.readProfile(id)).activity).toHaveLength(1);
+  expect(results.some(({ status }) => status === 'fulfilled')).toBe(true);
+  expect((await applications.readProfile(id)).stage).toBe('Rejected');
   const other = await seed(2, 'Screening');
   await db.exec('ALTER TABLE hrms_application_activity ADD CONSTRAINT fail_interview CHECK (interview_id IS NULL) NOT VALID');
   await expect(applications.scheduleInterview(other, 'Screening', interview)).rejects.toThrow();
@@ -605,35 +614,27 @@ it("rechecks Module access for every note write and profile read", async () => {
 });
 
 
-it("returns interview history newest first with private scores and results", async () => {
+it("stores the Interview's Staff identity, links, place and private result fields", async () => {
   const id = await seed(1, "Interview");
-  const other = await seed(2, "Interview");
   const applications = applicationsFor(handle, db);
-  await applications.scheduleInterview(id, "Interview", interview);
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2026-11-05T09:00:00+08:00", endsAt: "2026-11-05T10:00:00+08:00" });
-  await applications.scheduleInterview(id, "Interview", interview);
-  await db.query("UPDATE hrms_application_interviews SET score = 4, result = 'Passed' WHERE application_id = $1 AND starts_at = $2", [id, interview.startsAt]);
-  const profile = await applications.readProfile(id);
-  expect(profile.interviews.map(({ startsAt, score, result }) => [startsAt.toISOString(), score, result])).toEqual([
-    ["2026-11-05T01:00:00.000Z", null, null], ["2026-11-03T01:00:00.000Z", 4, "Passed"], ["2026-11-03T01:00:00.000Z", 4, "Passed"],
-  ]);
-  expect(profile.interviews[1].id).toBeGreaterThan(profile.interviews[2].id);
-  expect((await applications.readProfile(other)).interviews).toEqual([]);
+  const details = { ...interview, interviewerId: "staff-123", meetingLink: "https://meet.google.com/abc", mapLink: "https://maps.example.test", province: "Cebu", city: "Cebu City", address: "123 Main Street" };
+  await applications.scheduleInterview(id, "Interview", details);
+  const [booked] = (await applications.readProfile(id)).interviews;
+  await applications.recordInterviewResult(id, booked.id, { score: 4, result: "Passed", privateNotes: "Private evaluation", resultEmailAt: "2099-11-05T09:00:00Z" });
+  expect((await applications.readProfile(id)).interviews).toMatchObject([{ ...details, startsAt: new Date(details.startsAt), endsAt: new Date(details.endsAt), score: 4, result: "Passed", privateNotes: "Private evaluation", resultEmailAt: new Date("2099-11-05T09:00:00Z") }]);
 });
 
 it("uses the next upcoming interview for Next step, CSV and the tracker, then awaits its result", async () => {
   const id = await seed(1, "Interview");
   const applications = applicationsFor(handle, db);
   // Far-future dates keep the real database clock in use without mocking internals.
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2099-11-05T09:00:00+08:00", endsAt: "2099-11-05T10:00:00+08:00" });
   await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2099-11-03T09:00:00+08:00", endsAt: "2099-11-03T10:00:00+08:00" });
-  await applications.scheduleInterview(id, "Interview", { ...interview, startsAt: "2020-11-03T09:00:00+08:00", endsAt: "2020-11-03T10:00:00+08:00" });
   expect((await applications.list()).rows[0].nextStep).toBe("Interview · Nov 3, 2099, 9:00 AM");
   expect(await applications.exportCsv()).toContain('"Interview · Nov 3, 2099, 9:00 AM"');
   expect((await applications.readProfile(id)).stageDates.Interview).toEqual(new Date("2099-11-03T01:00:00Z"));
   await db.query("UPDATE hrms_application_interviews SET starts_at = starts_at - interval '100 years', ends_at = ends_at - interval '100 years' WHERE starts_at > CURRENT_TIMESTAMP");
   expect((await applications.list()).rows[0].nextStep).toBe("Awaiting result");
-  expect((await applications.readProfile(id)).stageDates.Interview).toEqual(new Date("2020-11-03T01:00:00Z"));
+  expect((await applications.readProfile(id)).stageDates.Interview).toEqual(new Date("1999-11-03T01:00:00Z"));
   await applications.moveStage(id, "Interview", "Offer");
   expect((await applications.list()).rows[0].nextStep).toBe("Awaiting offer decision");
 });
@@ -856,10 +857,10 @@ it("adds notes, schedules an interview and records its result for an HR-added ap
   await applications.scheduleInterview(id, "Screening", { startsAt: "2026-01-05T01:00:00Z", endsAt: "2026-01-05T02:00:00Z", type: "Online", interviewerName: "Ben", location: "Zoom" });
   const [{ id: interviewId }] = (await applications.readProfile(id)).interviews;
   await applications.recordInterviewResult(id, interviewId, { score: 4, result: "Passed" });
-  expect(await applications.readProfile(id)).toMatchObject({ stage: "Interview",
+  expect(await applications.readProfile(id)).toMatchObject({ stage: "Screening",
     notes: [{ text: "Referred by Ben", authorName: "Ada Okafor" }],
     interviews: [{ interviewerName: "Ben", score: 4, result: "Passed" }],
-    activity: [{ reason: "Interview result: Passed (score: 4/5)" }, { toStage: "Interview" }, { toStage: "Screening" }] });
+    activity: [{ reason: "Interview result: Passed (score: 4/5)" }, { toStage: "Screening" }, { toStage: "Screening" }] });
   expect((await db.query("SELECT * FROM hrms_application_notifications")).rows).toHaveLength(0);
 });
 
@@ -891,4 +892,24 @@ it("the profile carries the Source: Careers page, a Referral with its referrer, 
   expect(await applications.readProfile(careers)).toMatchObject({ source: "Careers page", referredBy: null });
   expect(await applications.readProfile(referral)).toMatchObject({ source: "Referral", referredBy: "Ana Cruz" });
   expect(await applications.readProfile(old)).toMatchObject({ source: "Unspecified", referredBy: null });
+});
+
+it("migrates existing Interview data in place without inventing a Staff identity", async () => {
+  await db.close();
+  db = new PGlite();
+  await db.exec(await readFile(new URL("./fixtures/careers-job-postings.sql", import.meta.url), "utf8"));
+  await db.exec(await readFile(new URL("./fixtures/careers-applications.sql", import.meta.url), "utf8"));
+  await db.exec(`CREATE TABLE applicant_profiles (applicant_id text PRIMARY KEY, full_name text NOT NULL, email text NOT NULL UNIQUE)`);
+  const directory = new URL("../migrations/", import.meta.url);
+  for (const name of (await readdir(directory)).filter(name => name.endsWith('.sql') && name < '0021').sort()) {
+    await db.exec(await readFile(new URL(name, directory), "utf8"));
+  }
+  const id = await seed(1, "Interview");
+  await db.query(`INSERT INTO hrms_application_interviews (application_id, starts_at, ends_at, type, interviewer_name, location, score, result)
+    VALUES ($1, '2020-01-01T01:00:00Z', '2020-01-01T02:00:00Z', 'In person', 'Legacy Staff', 'Original office address', 4, 'Passed')`, [id]);
+  await db.exec(await readFile(new URL("0021-interview-model.sql", directory), "utf8"));
+  const profile = await applicationsFor(handle, db).readProfile(id);
+  expect(profile.interviews).toMatchObject([{ id: 1, type: "In person", interviewerName: "Legacy Staff", interviewerId: null,
+    location: "Original office address", address: "Original office address", score: 4, result: "Passed",
+    startsAt: new Date("2020-01-01T01:00:00Z"), endsAt: new Date("2020-01-01T02:00:00Z") }]);
 });

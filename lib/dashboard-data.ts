@@ -74,7 +74,7 @@ export async function applicantSourcesSummary(range: DashboardRange, db: Databas
 }
 
 /**
- * What Staff should act on now: Applications at New (with the oldest one's date), Applications at Screening with no
+ * What Staff should act on now: Applications at New (with the oldest one's date), Applications at Interview with no
  * Interview booked (with the Job Posting holding the most), and Interviews that ended with no result recorded.
  */
 export async function needsAttentionSummary(now: Date, db: Database = database): Promise<NonNullable<DashboardSummary["needsAttention"]>> {
@@ -85,7 +85,7 @@ export async function needsAttentionSummary(now: Date, db: Database = database):
     db.query<{ title: string; count: number }>(
       `SELECT min(job_posting_title) AS title, count(*)::int AS count
        FROM public.hrms_all_applications a
-       WHERE a.stage = 'Screening'
+       WHERE a.stage = 'Interview'
          AND NOT EXISTS (SELECT 1 FROM public.hrms_application_interviews i WHERE i.application_id = a.id)
        GROUP BY job_posting_id
        ORDER BY count DESC, min(job_posting_title), job_posting_id`,

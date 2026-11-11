@@ -19,8 +19,8 @@ export type ApplicationListItem = {
 type SubmittedDocument = { id: number; name: string; size: number; contentType: string; uploadedAt: Date | null; requiredFor: string };
 export type ApplicationDocument = (SubmittedDocument & { status: "Submitted"; downloadUrl: string })
   | { requiredFor: string; status: "Requested" };
-export type InterviewInput = { startsAt: string; endsAt: string; type: "Online" | "In person"; interviewerName: string; location: string };
-export type ApplicationInterview = Omit<InterviewInput, "startsAt" | "endsAt"> & { id: number; startsAt: Date; endsAt: Date; score: number | null; result: "Passed" | "Not passed" | null };
+export type InterviewInput = { startsAt: string; endsAt: string; type: "Online" | "In person"; interviewerName: string; location?: string; interviewerId?: string; meetingLink?: string; mapLink?: string; province?: string; city?: string; address?: string };
+export type ApplicationInterview = Omit<InterviewInput, "startsAt" | "endsAt" | "location"> & { location: string } & { id: number; startsAt: Date; endsAt: Date; score: number | null; result: "Passed" | "Not passed" | null; privateNotes: string | null; resultEmailAt: Date | null };
 export type ApplicationNote = { id: number; text: string; authorName: string; createdAt: Date };
 export type ApplicationActivity = {
   interviewId?: number;
@@ -147,8 +147,8 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           SELECT * FROM moved_careers UNION ALL SELECT * FROM moved_manual
         ), interview AS (
           INSERT INTO public.hrms_application_interviews
-            (application_id, starts_at, ends_at, type, interviewer_name, location)
-          SELECT id, $7::timestamptz, $8::timestamptz, $9, $10, $11 FROM moved WHERE $7::timestamptz IS NOT NULL
+            (application_id, starts_at, ends_at, type, interviewer_name, location, interviewer_id, meeting_link, map_link, province, city, address)
+          SELECT id, $7::timestamptz, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15, $16, $17 FROM moved WHERE $7::timestamptz IS NOT NULL
           RETURNING id
         ), history AS (
           INSERT INTO public.hrms_application_stage_history (application_id, stage, reached_at)
@@ -173,7 +173,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         )
         SELECT EXISTS(SELECT 1 FROM moved) AS moved,
           EXISTS(SELECT 1 FROM public.hrms_all_applications WHERE id = $1) AS exists`,
-      [id, fromStage === "New" ? "Received" : fromStage, toStage, fromStage, actorName, reason ?? null, interview?.startsAt ?? null, interview?.endsAt ?? null, interview?.type ?? null, interview?.interviewerName.trim() ?? null, interview?.location.trim() ?? null]);
+      [id, fromStage === "New" ? "Received" : fromStage, toStage, fromStage, actorName, reason ?? null, interview?.startsAt ?? null, interview?.endsAt ?? null, interview?.type ?? null, interview?.interviewerName.trim() ?? null, interview ? interview.location?.trim() ?? "" : null, interview?.interviewerId ?? null, interview?.meetingLink ?? null, interview?.mapLink ?? null, interview?.province ?? null, interview?.city ?? null, interview?.address ?? null]);
       if (!rows[0].moved) throw new ApplicationError(rows[0].exists ? "conflict" : "not-found");
   }
 
@@ -253,20 +253,30 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         || Date.parse(interview.endsAt) <= Date.parse(interview.startsAt)
         || !["Online", "In person"].includes(interview.type)
         || typeof interview.interviewerName !== "string" || !interview.interviewerName.trim()
-        || typeof interview.location !== "string" || !interview.location.trim()) throw new ApplicationError("validation");
-      await recordChange(id, fromStage, "Interview", access.staff.name, undefined, interview);
+        || ![interview.location, interview.meetingLink, interview.address].some(value => typeof value === "string" && value.trim())
+        || [interview.interviewerId, interview.meetingLink, interview.mapLink, interview.province, interview.city, interview.address, interview.location]
+          .some(value => value !== undefined && (typeof value !== "string" || !value.trim()))) throw new ApplicationError("validation");
+      try {
+        await recordChange(id, fromStage, fromStage, access.staff.name, undefined, interview);
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") throw new ApplicationError("conflict");
+        throw error;
+      }
     },
-    async recordInterviewResult(id: number, interviewId: number, outcome: { score: number; result: "Passed" | "Not passed" }): Promise<void> {
+    async recordInterviewResult(id: number, interviewId: number, outcome: { score: number; result: "Passed" | "Not passed"; privateNotes?: string; resultEmailAt?: string }): Promise<void> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (!validId(id) || !(Number.isSafeInteger(interviewId) && interviewId > 0 && interviewId <= 2_147_483_647)
         || !outcome || !Number.isInteger(outcome.score) || outcome.score < 1 || outcome.score > 5
-        || !["Passed", "Not passed"].includes(outcome.result)) throw new ApplicationError("validation");
+        || !["Passed", "Not passed"].includes(outcome.result)
+        || (outcome.privateNotes !== undefined && typeof outcome.privateNotes !== "string")
+        || (outcome.resultEmailAt !== undefined && (typeof outcome.resultEmailAt !== "string"
+          || !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(outcome.resultEmailAt) || !Number.isFinite(Date.parse(outcome.resultEmailAt))))) throw new ApplicationError("validation");
       // Keep the private result and its Staff activity in the same atomic statement.
       // The database clock enforces the start-time boundary for every caller.
       const { rows } = await db.query<{ recorded: boolean; exists: boolean }>(`
         WITH recorded AS (
-          UPDATE public.hrms_application_interviews SET score = $3, result = $4
+          UPDATE public.hrms_application_interviews SET score = $3, result = $4, private_notes = $7, result_email_at = $8::timestamptz
           WHERE application_id = $1 AND id = $2 AND starts_at <= statement_timestamp()
           RETURNING id, application_id
         ), activity AS (
@@ -278,7 +288,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         SELECT EXISTS(SELECT 1 FROM recorded) AS recorded,
           EXISTS(SELECT 1 FROM public.hrms_application_interviews WHERE application_id = $1 AND id = $2) AS exists`,
       [id, interviewId, outcome.score, outcome.result, access.staff.name,
-        `Interview result: ${outcome.result} (score: ${outcome.score}/5)`]);
+        `Interview result: ${outcome.result} (score: ${outcome.score}/5)`, outcome.privateNotes ?? null, outcome.resultEmailAt ?? null]);
       if (!rows[0].recorded) throw new ApplicationError(rows[0].exists ? "conflict" : "not-found");
     },
     async downloadDocument(id: number, documentId: number): Promise<Response> {
@@ -321,7 +331,10 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         SELECT a.documents_snapshot, j.required_documents, a.id,
           COALESCE((SELECT jsonb_agg(jsonb_build_object(
             'id', i.id, 'startsAt', i.starts_at, 'endsAt', i.ends_at, 'type', i.type,
-            'interviewerName', i.interviewer_name, 'location', i.location, 'score', i.score, 'result', i.result
+            'interviewerName', i.interviewer_name, 'location', i.location, 'score', i.score, 'result', i.result,
+            'interviewerId', i.interviewer_id, 'meetingLink', i.meeting_link, 'mapLink', i.map_link,
+            'province', i.province, 'city', i.city, 'address', i.address,
+            'privateNotes', i.private_notes, 'resultEmailAt', i.result_email_at
           ) ORDER BY i.starts_at DESC, i.id DESC) FROM public.hrms_application_interviews i
             WHERE i.application_id = a.id), '[]'::jsonb) AS interviews,
           jsonb_build_object('New', a.created_at) || COALESCE((
@@ -375,7 +388,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           SELECT applicant_id FROM public.applications WHERE id = $1
         ) AND id = ANY($2::integer[])`, [id, documents_snapshot.map((document) => document.id)]) : { rows: [] };
       return { ...profile, notes,
-        interviews: interviews.map((item) => ({ ...item, startsAt: new Date(item.startsAt), endsAt: new Date(item.endsAt) })),
+        interviews: interviews.map((item) => ({ ...item, startsAt: new Date(item.startsAt), endsAt: new Date(item.endsAt), resultEmailAt: item.resultEmailAt ? new Date(item.resultEmailAt) : null })),
         stageDates: Object.fromEntries(Object.entries(stage_dates).map(([stage, date]) => [stage, new Date(date)])),
         activity: activity.map((entry) => ({ ...entry, occurredAt: new Date(entry.occurredAt) })),
         documents: [
