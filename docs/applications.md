@@ -166,3 +166,35 @@ history, activity, interviews and notes use the shared HRMS tables. No Applicant
 queued, since there is no Careers user. Document download rejects these ids with `validation`, as they have no submitted documents.
 Migration `0018-manual-application-workflow.sql` adds the status column and drops the foreign keys
 from those HRMS tables to Careers' `applications` so they can hold HR-added ids. Run `npm run db:migrate`.
+
+
+### Booking and rescheduling Interviews
+
+`applicationsFor(...).scheduleInterview(applicationId, "Interview", input)` books
+one Interview after the Application reaches the Interview Stage.
+`rescheduleInterview(applicationId, interviewId, input)` updates that same row;
+an Interview with a result cannot be rescheduled. Both methods recheck Portal
+access and Interviewer eligibility, and use `interviewValidation` for Manila
+weekdays, future starts, 8 AM–5 PM hours and type-specific location requirements.
+The Interviewer's name is read from the Portal, never trusted from the input.
+
+`ApplicationError.detail` supplies the specific validation or conflict reason.
+Overlap conflicts also carry `conflicts` (Applicant name and interval) and
+`freeSlots` (up to four duration-matched suggestions over the next 30 days).
+Suggestions must be revalidated when saved. Touching ends are permitted.
+Interviews dropped by a Stage move without a result do not block booking.
+
+Migration `0023-interview-booking.sql` installs the atomic save function. It
+serializes Interview saves with an advisory transaction lock, locks the
+Application against concurrent Stage changes, and writes the Interview and
+activity together. The lock is intentionally global for this low-volume HR
+workflow, including moves between Interviewers. Existing rows are unchanged.
+Invite delivery is handled by follow-up #271; saves make no external delivery
+call. The shared dialog migration is follow-up #270.
+
+The regular Applications tests use PGlite. To also run the independent-session
+PostgreSQL concurrency acceptance check, set `TEST_POSTGRES_URL` to a disposable
+local PostgreSQL server whose role may create databases, then run
+`npx vitest run tests/interview-concurrency.test.ts`. The test creates and removes
+its own database. It deliberately commits one booking while another session
+competes, verifying the post-lock snapshot sees the committed Interview.

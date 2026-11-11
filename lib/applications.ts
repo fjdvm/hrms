@@ -1,3 +1,4 @@
+import { interviewValidation, freeInterviewSlots, type InterviewConflict, type FreeInterviewSlot } from "./interview-booking";
 import { listModuleStaff } from "./portal/client";
 import { INTERVIEWER_COLOURS, type Interviewer } from "./interviewers";
 import { gatewayDocumentFiles, type DocumentFiles } from "@/lib/document-files";
@@ -58,7 +59,7 @@ export type ApplicationJobPostingOption = { id: string; title: string; applicati
 export type ApplicationPage = { jobPostingOptions: ApplicationJobPostingOption[]; newThisWeek: number; stageCounts: Record<ApplicationTab, number>; rows: ApplicationListItem[]; total: number; page: number; pageSize: 25 };
 
 export class ApplicationError extends Error {
-  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict") {
+  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict", public readonly detail?: string, public readonly conflicts?: InterviewConflict[], public readonly freeSlots?: FreeInterviewSlot[]) {
     super(`Application: ${reason}`);
   }
 }
@@ -139,7 +140,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     };
   }
 
-  async function recordChange(id: number, fromStage: ApplicationStage, toStage: ApplicationStage, actorName: string, reason?: string, interview?: InterviewInput) {
+  async function recordChange(id: number, fromStage: ApplicationStage, toStage: ApplicationStage, actorName: string, reason?: string) {
       // One statement is one transaction: a failed history/activity insert rolls back the status.
       // PostgreSQL rechecks this status predicate after waiting for a concurrent writer.
       const { rows } = await db.query<{ moved: boolean; exists: boolean }>(`
@@ -153,11 +154,6 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           RETURNING id, NULL::text AS applicant_id, updated_at
         ), moved AS (
           SELECT * FROM moved_careers UNION ALL SELECT * FROM moved_manual
-        ), interview AS (
-          INSERT INTO public.hrms_application_interviews
-            (application_id, starts_at, ends_at, type, interviewer_name, location, interviewer_id, meeting_link, map_link, province, city, address)
-          SELECT id, $7::timestamptz, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15, $16, $17 FROM moved WHERE $7::timestamptz IS NOT NULL
-          RETURNING id
         ), history AS (
           INSERT INTO public.hrms_application_stage_history (application_id, stage, reached_at)
           SELECT id, $3, updated_at FROM moved WHERE $2 <> $3
@@ -176,13 +172,39 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
           ON CONFLICT (id) DO NOTHING
         ), activity AS (
           INSERT INTO public.hrms_application_activity
-            (application_id, from_stage, to_stage, actor_name, reason, occurred_at, interview_id)
-          SELECT id, $4, $3, $5, $6, updated_at, (SELECT id FROM interview) FROM moved
+            (application_id, from_stage, to_stage, actor_name, reason, occurred_at)
+          SELECT id, $4, $3, $5, $6, updated_at FROM moved
         )
         SELECT EXISTS(SELECT 1 FROM moved) AS moved,
           EXISTS(SELECT 1 FROM public.hrms_all_applications WHERE id = $1) AS exists`,
-      [id, fromStage === "New" ? "Received" : fromStage, toStage, fromStage, actorName, reason ?? null, interview?.startsAt ?? null, interview?.endsAt ?? null, interview?.type ?? null, interview?.interviewerName.trim() ?? null, interview ? interview.location?.trim() ?? "" : null, interview?.interviewerId ?? null, interview?.meetingLink ?? null, interview?.mapLink ?? null, interview?.province ?? null, interview?.city ?? null, interview?.address ?? null]);
+      [id, fromStage === "New" ? "Received" : fromStage, toStage, fromStage, actorName, reason ?? null]);
       if (!rows[0].moved) throw new ApplicationError(rows[0].exists ? "conflict" : "not-found");
+  }
+
+  async function saveInterview(id: number, input: InterviewInput, interviewId: number | undefined, stage: ApplicationStage) {
+    const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+    if (access.decision !== "allowed") throw new ApplicationError(access.decision);
+    if (!validId(id) || (interviewId !== undefined && (!Number.isSafeInteger(interviewId) || interviewId <= 0))) throw new ApplicationError("validation", "Provide a valid Application and Interview.");
+    if (stage !== "Interview") throw new ApplicationError("validation", "Application must be in the Interview Stage.");
+    const detail = interviewValidation(input);
+    if (detail) throw new ApplicationError("validation", detail);
+    const staff = await listModuleStaff("Recruitment and Hiring");
+    if (!staff) throw new ApplicationError("unavailable");
+    const interviewer = staff.find(member => member.id === input.interviewerId);
+    if (!interviewer) throw new ApplicationError("validation", "Interviewer must hold Recruitment and Hiring.");
+    const details = { ...input, startsAt: new Date(input.startsAt).toISOString(), endsAt: new Date(input.endsAt).toISOString(), interviewerName: interviewer.name,
+      meetingLink: input.type === "Online" ? input.meetingLink!.trim() : null,
+      province: input.type === "In person" ? input.province : null,
+      city: input.type === "In person" ? input.city : null,
+      address: input.type === "In person" ? input.address!.trim() : null,
+      mapLink: input.type === "In person" ? input.mapLink?.trim() || null : null,
+      location: input.type === "Online" ? input.meetingLink!.trim() : input.address!.trim() };
+    const { rows } = await db.query<{ saved: { error?: ApplicationError["reason"]; detail?: string; busy?: InterviewConflict[]; conflicts?: InterviewConflict[] } }>(
+      "SELECT public.hrms_save_interview($1, $2, $3::jsonb, $4) AS saved", [id, interviewId ?? null, JSON.stringify(details), access.staff.name]);
+    const saved = rows[0].saved;
+    if (saved.error) throw new ApplicationError(saved.error,
+      saved.conflicts ? `${interviewer.name} is already meeting ${saved.conflicts.map(item => item.applicantName).join(", ")}.` : saved.detail,
+      saved.conflicts, saved.busy ? freeInterviewSlots(input, saved.busy) : undefined);
   }
 
   return {
@@ -272,24 +294,10 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       await recordChange(id, fromStage, toStage, access.staff.name, reason);
     },
     async scheduleInterview(id: number, fromStage: ApplicationStage, interview: InterviewInput): Promise<void> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
-      if (access.decision !== "allowed") throw new ApplicationError(access.decision);
-      const timestamp = (value: unknown) => typeof value === "string" && /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
-      if (!validId(id)
-        || !["Screening", "Interview"].includes(fromStage) || !interview
-        || !timestamp(interview.startsAt) || !timestamp(interview.endsAt)
-        || Date.parse(interview.endsAt) <= Date.parse(interview.startsAt)
-        || !["Online", "In person"].includes(interview.type)
-        || typeof interview.interviewerName !== "string" || !interview.interviewerName.trim()
-        || ![interview.location, interview.meetingLink, interview.address].some(value => typeof value === "string" && value.trim())
-        || [interview.interviewerId, interview.meetingLink, interview.mapLink, interview.province, interview.city, interview.address, interview.location]
-          .some(value => value !== undefined && (typeof value !== "string" || !value.trim()))) throw new ApplicationError("validation");
-      try {
-        await recordChange(id, fromStage, fromStage, access.staff.name, undefined, interview);
-      } catch (error) {
-        if ((error as { code?: string }).code === "23505") throw new ApplicationError("conflict");
-        throw error;
-      }
+      await saveInterview(id, interview, undefined, fromStage);
+    },
+    async rescheduleInterview(id: number, interviewId: number, interview: InterviewInput): Promise<void> {
+      await saveInterview(id, interview, interviewId, "Interview");
     },
     async recordInterviewResult(id: number, interviewId: number, outcome: { score: number; result: "Passed" | "Not passed"; privateNotes?: string; resultEmailAt?: string }): Promise<void> {
       const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
