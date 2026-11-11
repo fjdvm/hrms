@@ -738,8 +738,6 @@ function manilaDaysSince(from: string, now: Date): number {
   return Math.max(Math.floor((now.getTime() + OFFSET) / DAY) - Math.floor((Date.parse(from) + OFFSET) / DAY), 0);
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
 /**
  * The three things Staff should act on now, always in the same order, a zero count muted. The headline sums the counts.
  * Null only when the Module has not been read at all.
