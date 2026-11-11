@@ -395,7 +395,7 @@ describe("Needs attention widget", () => {
   it("lists the three rows in order, each with its count and where Staff act", () => {
     expect(data(counts(4, 2, 1))!.rows.map((r) => [r.id, r.title, r.count, r.href])).toEqual([
       ["review", "Applications to review", 4, "/applicants?stage=New"],
-      ["schedule", "Interviews to schedule", 2, "/applicants?stage=Screening"],
+      ["schedule", "Interviews to schedule", 2, "/applicants?stage=Interview"],
       ["results", "Results to record", 1, "/interviews"],
     ]);
   });
