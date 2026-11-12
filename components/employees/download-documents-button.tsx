@@ -21,7 +21,7 @@ export function DownloadDocumentsButton({ employeeId, hasSubmitted }: { employee
       link.href = url;
       link.download = `employee-${employeeId}-digital-201.zip`;
       link.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch {
       toast.error("Could not download the documents. Please try again.");
     } finally {

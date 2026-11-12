@@ -171,7 +171,7 @@ describe("Download all documents", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); save.mockClear(); });
 
-  it("offers the button on the Details card and the Documents tab", async () => {
+  it("offers the button on the Details tab and, once opened, on the Documents tab", async () => {
     render(<EmployeeProfile employee={employee()} history={[]} activity={[]} />);
     expect(screen.getAllByRole("button", { name: "Download all documents" })).toHaveLength(1);
     await userEvent.click(screen.getByRole("tab", { name: /Documents/ }));
