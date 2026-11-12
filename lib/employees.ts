@@ -239,6 +239,21 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
         oldValue: row.field === 'monthlyPay' ? '[redacted]' : row.oldValue,
         newValue: row.field === 'monthlyPay' ? '[redacted]' : row.kind === 'Hired' ? Object.fromEntries(Object.entries(row.newValue as Record<string,unknown>).filter(([key]) => key !== 'monthlyPay')) : row.newValue });
     },
+    /** The real government ID values, requested on click. Only roles that may see them; every field disclosed is logged. */
+    async revealGovernmentIds(id: number, fields: readonly (keyof GovernmentIds)[] = ID_FIELDS) {
+      const staff = await authorise();
+      if (!canSeeEmployeeSensitiveFields(staff.role)) throw new EmployeeError("denied");
+      if (!validId(id) || !fields.length || fields.some(f => !ID_FIELDS.includes(f))) throw new EmployeeError("validation");
+      await requireEmployee(id, db);
+      const { rows } = await db.query<GovernmentIds>(`SELECT sss,philhealth,pagibig_mid AS "pagibigMid",tin FROM public.hrms_employee_government_ids WHERE employee_id = $1`, [id]);
+      const stored = rows[0];
+      const revealed: Partial<GovernmentIds> = {};
+      for (const field of fields) revealed[field] = stored?.[field] ? decryptEmployeeId(stored[field], id, field) : null;
+      const present = fields.filter(f => revealed[f]);
+      if (present.length) await db.query(`INSERT INTO public.hrms_employee_audit (employee_id,actor_id,actor_name,kind,field)
+        SELECT $1,$2,$3,'reveal',field FROM unnest($4::text[]) AS field`, [id,staff.id ?? staff.username,staff.name,present]);
+      return revealed;
+    },
     async read(id: number) {
       const staff = await authorise();
       if (!validId(id)) throw new EmployeeError("validation");
@@ -275,15 +290,15 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
         FROM public.hrms_employee_government_ids WHERE employee_id = $1`, [id]);
       const ids = storedIds[0];
       const sensitive = canSeeEmployeeSensitiveFields(staff.role);
+      // Masked for everyone on read; a permitted role asks for the real value with revealGovernmentIds, which is audited.
       const governmentIds: GovernmentIds | typeof EMPTY_EMPLOYEE_SECTION = ids && Object.values(ids).some(Boolean)
         ? Object.fromEntries(ID_FIELDS.map(field => {
           const value = ids[field] ? decryptEmployeeId(ids[field], id, field) : null;
-          return [field, value && !sensitive ? maskId(value) : value];
+          return [field, value ? maskId(value) : null];
         })) as GovernmentIds : EMPTY_EMPLOYEE_SECTION;
-      // Fail closed: no disclosed response is returned if the durable audit write fails.
+      // Pay is disclosed on read, so its disclosure is logged here. Fail closed: no response if the audit write fails.
       if (sensitive) await db.query(`INSERT INTO public.hrms_employee_audit (employee_id,actor_id,actor_name,kind,field)
-        SELECT $1,$2,$3,'reveal',field FROM unnest($4::text[]) AS field`,
-        [id,staff.id ?? staff.username,staff.name,[...ID_FIELDS.filter(f => ids?.[f]),"monthlyPay"]]);
+        VALUES ($1,$2,$3,'reveal','monthlyPay')`, [id,staff.id ?? staff.username,staff.name]);
       const today = now().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
       let age: number | null = null;
       if (e.birthday) age = Number(today.slice(0, 4)) - Number(e.birthday.slice(0, 4)) - (today.slice(5) < e.birthday.slice(5) ? 1 : 0);
@@ -294,6 +309,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
           probationEndDate: e.probationEndDate, reportsTo: e.reportsTo, schedule: e.schedule,
           hiredFrom: { offerId: e.offerId, applicationId: e.applicationId, offerUrl: `/offers/${e.offerId}`, applicationUrl: `/applicants/${e.applicationId}` } },
         governmentIds,
+        canEdit: { personal: true, employment: true, emergencyContact: true, governmentIds: sensitive, contract: sensitive },
         emergencyContact: contacts[0] && Object.values(contacts[0]).some(Boolean) ? contacts[0] : EMPTY_EMPLOYEE_SECTION,
         documents: await Promise.all(PRE_EMPLOYMENT_DOCUMENTS.map(async document => {
           const stored = documents.find(d => d.type === document.type);
