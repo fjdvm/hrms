@@ -1,3 +1,4 @@
+import { documentZip } from "./employee-document-zip";
 import { encryptEmployeeId, decryptEmployeeId } from "./employee-encryption";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
@@ -86,6 +87,28 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     if (access.decision !== "allowed") throw new EmployeeError(access.decision);
     return access.staff;
   }
+  async function employeeDocuments(id: number, offerId: number, applicationId: number) {
+    const { rows: documents } = await db.query<StoredDocument>(`SELECT document_type AS type, source, file_id AS "fileId", file_name AS "fileName",
+      COALESCE(uploaded_at, (SELECT od.submitted_at FROM public.hrms_offer_documents od
+        WHERE od.offer_id = $2 AND od.document_type = hrms_employee_documents.document_type
+          AND od.file_id = hrms_employee_documents.file_id AND hrms_employee_documents.source = 'upload'))::text AS "uploadedAt",
+      valid_until::text AS "validUntil" FROM public.hrms_employee_documents WHERE employee_id = $1`, [id,offerId]);
+    // At hire, Application-source links retain the applicant_documents id, while upload links retain the gateway file id.
+    // Resolve only files belonging to this Application's Applicant, without requiring the Applications Module.
+    if (documents.some(d => d.source === "application" && d.fileId)) {
+      const { rows: applicationFiles } = await db.query<{ id: string; fileId: string | null; uploadedAt: string | null }>(`
+        SELECT d.id::text, d.file_id AS "fileId", d.created_at::text AS "uploadedAt"
+        FROM public.applicant_documents d JOIN public.applications a ON a.applicant_id = d.applicant_id
+        WHERE a.id = $1 AND d.id::text = ANY($2::text[])`,
+        [applicationId, documents.filter(d => d.source === "application").map(d => d.fileId)]);
+      for (const document of documents.filter(d => d.source === "application")) {
+        const file = applicationFiles.find(f => f.id === document.fileId);
+        document.fileId = file?.fileId ?? null;
+        document.uploadedAt ??= file?.uploadedAt ?? null;
+      }
+    }
+    return documents;
+  }
   async function readList({ status, branch, search }: EmployeeListFilters) {
     await authorise();
     if ((status !== undefined && status !== "Onboarding" && status !== "Active") ||
@@ -156,6 +179,21 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     onboarding: (filters: OnboardingFilters = {}) => readOnboarding(filters),
     /** The Employee list: rows, tab counts, summary and Branch options. Never includes government IDs or pay. */
     list: (filters: EmployeeListFilters = {}) => readList(filters),
+    /** Stream the Digital 201 folder after recording the download attempt. */
+    async downloadDocuments(id: number, signal?: AbortSignal) {
+      const staff = await authorise();
+      await requireEmployee(id, db);
+      const { rows } = await db.query<{ offerId: number; applicationId: number }>(
+        'SELECT offer_id AS "offerId", application_id AS "applicationId" FROM public.hrms_employees WHERE id=$1', [id]);
+      const documents = await employeeDocuments(id, rows[0].offerId, rows[0].applicationId);
+      await db.query(`INSERT INTO public.hrms_employee_audit(employee_id,actor_id,actor_name,kind,field)
+        VALUES($1,$2,$3,'download','documents')`, [id,staff.id ?? staff.username,staff.name]);
+      return new Response(documentZip(documents, files, signal), { headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="employee-${id}-digital-201.zip"`,
+        'Cache-Control': 'private, no-store',
+      } });
+    },
     /** CSV of the current list. Columns are fixed and exclude government IDs and pay for every role. */
     async exportCsv(filters: EmployeeListFilters = {}): Promise<string> {
       const { rows } = await readList(filters);
@@ -267,25 +305,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       if (!e) throw new EmployeeError("not-found");
       const { rows: contacts } = await db.query<{ name: string | null; relationship: string | null; mobile: string | null }>(
         `SELECT name, relationship, mobile FROM public.hrms_employee_emergency_contacts WHERE employee_id = $1`, [id]);
-      const { rows: documents } = await db.query<StoredDocument>(`SELECT document_type AS type, source, file_id AS "fileId", file_name AS "fileName",
-        COALESCE(uploaded_at, (SELECT od.submitted_at FROM public.hrms_offer_documents od
-          WHERE od.offer_id = $2 AND od.document_type = hrms_employee_documents.document_type
-            AND od.file_id = hrms_employee_documents.file_id AND hrms_employee_documents.source = 'upload'))::text AS "uploadedAt",
-        valid_until::text AS "validUntil" FROM public.hrms_employee_documents WHERE employee_id = $1`, [id,e.offerId]);
-      // At hire, Application-source links retain the applicant_documents id, while upload links retain the gateway file id.
-      // Resolve only files belonging to this Application's Applicant, without requiring the Applications Module.
-      if (documents.some(d => d.source === "application" && d.fileId)) {
-        const { rows: applicationFiles } = await db.query<{ id: string; fileId: string | null; uploadedAt: string | null }>(`
-          SELECT d.id::text, d.file_id AS "fileId", d.created_at::text AS "uploadedAt"
-          FROM public.applicant_documents d JOIN public.applications a ON a.applicant_id = d.applicant_id
-          WHERE a.id = $1 AND d.id::text = ANY($2::text[])`,
-          [e.applicationId, documents.filter(d => d.source === "application").map(d => d.fileId)]);
-        for (const document of documents.filter(d => d.source === "application")) {
-          const file = applicationFiles.find(f => f.id === document.fileId);
-          document.fileId = file?.fileId ?? null;
-          document.uploadedAt ??= file?.uploadedAt ?? null;
-        }
-      }
+      const documents = await employeeDocuments(id, e.offerId, e.applicationId);
       const { rows: storedIds } = await db.query<GovernmentIds>(`SELECT sss,philhealth,pagibig_mid AS "pagibigMid",tin
         FROM public.hrms_employee_government_ids WHERE employee_id = $1`, [id]);
       const ids = storedIds[0];

@@ -321,3 +321,56 @@ it("moves a hired Employee record out of Onboarding view once Active", async () 
   await db.exec(`UPDATE hrms_employees SET status = 'Active'`);
   expect((await employees(onboardingViewer()).onboarding()).rows).toEqual([]);
 });
+
+ it("downloads submitted documents with a missing-document manifest and records the actor", async () => {
+  await db.exec(`INSERT INTO hrms_employee_documents (employee_id,document_type,source,file_id,file_name)
+    VALUES (1,'resume','upload','resume-file','../../resume.pdf')`);
+  const portalRequest = portalFetch(portal);
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input) === 'https://files.test/resume-file' ? new Response('resume bytes') : portalRequest(input, init));
+  const response = await employeesFor(handle, db, { viewUrl: async id => `https://files.test/${id}` }).downloadDocuments(1);
+  expect(response.headers.get('content-type')).toBe('application/zip');
+  expect(response.headers.get('cache-control')).toBe('private, no-store');
+  const { unzipSync, strFromU8 } = await import('fflate');
+  const archive = unzipSync(new Uint8Array(await response.arrayBuffer()));
+  expect(Object.keys(archive)).toEqual(['resume-resume.pdf', 'manifest.txt']);
+  expect(strFromU8(archive['resume-resume.pdf'])).toBe('resume bytes');
+  expect(strFromU8(archive['manifest.txt'])).toContain('NBI clearance');
+  expect(strFromU8(archive['manifest.txt'])).not.toContain('Resume');
+  expect(await employees().activity(1)).toContainEqual(expect.objectContaining({ kind: 'download', field: 'documents', actorName: 'Ada' }));
+ });
+
+it("refuses document downloads without a session or Module and rejects invalid or missing employees", async () => {
+  const files = { viewUrl: vi.fn() };
+  await expect(employeesFor(undefined, db, files).downloadDocuments(1)).rejects.toMatchObject({ reason: 'invalid' });
+  const denied = portal.signIn(staff, ['Offers']);
+  await expect(employeesFor(denied, db, files).downloadDocuments(1)).rejects.toMatchObject({ reason: 'denied' });
+  await expect(employees().downloadDocuments(0)).rejects.toMatchObject({ reason: 'validation' });
+  await expect(employees().downloadDocuments(999)).rejects.toMatchObject({ reason: 'not-found' });
+  expect(files.viewUrl).not.toHaveBeenCalled();
+});
+
+it("streams before the file finishes and cancels the upstream body when the download is cancelled", async () => {
+  await db.exec(`INSERT INTO hrms_employee_documents (employee_id,document_type,source,file_id,file_name)
+    VALUES (1,'resume','upload','resume-file','resume.pdf')`);
+  let cancelled = false;
+  const portalRequest = portalFetch(portal);
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input) === 'https://files.test/resume' ? new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('first chunk')); },
+      cancel() { cancelled = true; },
+    })) : portalRequest(input, init));
+  const response = await employeesFor(handle, db, { viewUrl: async () => 'https://files.test/resume' }).downloadDocuments(1);
+  const reader = response.body!.getReader();
+  expect((await reader.read()).value!.length).toBeGreaterThan(0);
+  expect((await reader.read()).value!.length).toBeGreaterThan(0);
+  await reader.cancel();
+  expect(cancelled).toBe(true);
+});
+
+it("fails a download when the file service fails instead of silently omitting a submitted document", async () => {
+  await db.exec(`INSERT INTO hrms_employee_documents (employee_id,document_type,source,file_id)
+    VALUES (1,'resume','upload','resume-file')`);
+  const response = await employeesFor(handle, db, { viewUrl: async () => { throw new Error('offline'); } }).downloadDocuments(1);
+  await expect(response.arrayBuffer()).rejects.toThrow('offline');
+});
