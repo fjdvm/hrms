@@ -472,15 +472,22 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
           ON CONFLICT (id) DO NOTHING
         ), employee AS (
           INSERT INTO public.hrms_employees (employee_number, offer_id, application_id, full_name, email, position, department, branch,
-            start_date, monthly_salary, employment_type, schedule, probation, reports_to, hired_by_name)
+            start_date, monthly_salary, employment_type, schedule, probation, reports_to, hired_by_name, mobile, home_address, probation_end_date)
           SELECT 'BR-EMP-' || lpad(nextval('public.hrms_employee_number_seq')::text, 4, '0'), ok.id, ok.application_id, ok.applicant_name,
             ok.applicant_email, ok.job_posting_title, (SELECT j.department FROM public.job_postings j WHERE j.id = ok.job_posting_id), ok.branch,
-            ok.start_date, ok.monthly_salary, ok.employment_type, ok.schedule, ok.probation, ok.reports_to, $2
+            ok.start_date, ok.monthly_salary, ok.employment_type, ok.schedule, ok.probation, ok.reports_to, $2,
+            CASE WHEN ok.application_id > 0 THEN (SELECT profile_snapshot->>'phone' FROM public.applications WHERE id = ok.application_id)
+              ELSE (SELECT mobile FROM public.hrms_manual_applications WHERE id = ok.application_id) END,
+            CASE WHEN ok.application_id > 0 THEN (SELECT profile_snapshot->>'location' FROM public.applications WHERE id = ok.application_id)
+              ELSE (SELECT address FROM public.hrms_manual_applications WHERE id = ok.application_id) END,
+            CASE ok.probation WHEN '3 months' THEN (ok.start_date + interval '3 months')::date
+              WHEN '6 months' THEN (ok.start_date + interval '6 months')::date END
           FROM ok WHERE EXISTS (SELECT 1 FROM moved)
           RETURNING id
         ), employee_documents AS (
-          INSERT INTO public.hrms_employee_documents (employee_id, document_type, source, file_id, file_name)
-          SELECT employee.id, f.type, f.source, f."fileId", f."fileName"
+          INSERT INTO public.hrms_employee_documents (employee_id, document_type, source, file_id, file_name, uploaded_at)
+          SELECT employee.id, f.type, f.source, f."fileId", f."fileName",
+            (SELECT d.submitted_at FROM public.hrms_offer_documents d WHERE d.offer_id = $1 AND d.document_type = f.type AND f.source = 'upload')
           FROM employee, jsonb_to_recordset($3::jsonb) AS f(type text, source text, "fileId" text, "fileName" text)
         ), activity AS (
           INSERT INTO public.hrms_offer_activity (offer_id, kind, actor_name, detail)
