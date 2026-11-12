@@ -113,7 +113,7 @@ it("rejects a missing encryption key and authenticated ciphertext tampering", as
 
 
 it("seeds four Onboarding scenarios and three Active records with one missing document, idempotently", async () => {
-  await db.exec(`DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  await db.exec(`DELETE FROM hrms_employee_history; DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
   const seeded = await seedEmployees(db);
   expect(seeded.filter(e => e.status === 'Onboarding').map(e => e.account)).toEqual([null,null,'requested','account_created']);
   expect(seeded.filter(e => e.status === 'Active')).toHaveLength(3);
@@ -132,7 +132,7 @@ it("masks full-width government ID digits for an unauthorised role", async () =>
 });
 
 it("lists every Employee record with counts, summary, Branch filter and search, and an unauthorised Staff member is refused", async () => {
-  await db.exec(`DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  await db.exec(`DELETE FROM hrms_employee_history; DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
   const seeded = await seedEmployees(db);
   const all = await employees().list();
   expect(all.counts).toEqual({ all: 7, active: 3, onboarding: 4 });
@@ -166,4 +166,85 @@ it("exports the current list as CSV without government IDs or pay, even for a ma
   expect(csv).toContain(`BR-EMP-0001,"'=HYPERLINK(""x"")",maria@example.test,"Cashier, Senior",,Cainta,2026-01-01,0/7 · 7 missing,Onboarding`);
   expect(csv).not.toMatch(/1234567|19000|sss|salary|pay/i);
   expect((await employees(manager).exportCsv({ status: "Active" })).trim().split("\r\n")).toHaveLength(1);
+});
+
+it("lets a Module holder correct personal information with accountable old and new values", async () => {
+  await employees().editSection(1, 'personal', { name: 'Maria Cruz' });
+  expect((await employees().read(1)).personal.name).toBe('Maria Cruz');
+  expect(await employees().activity(1)).toContainEqual(expect.objectContaining({ actorName: 'Ada', field: 'name', oldValue: 'Maria Santos', newValue: 'Maria Cruz' }));
+});
+
+it('rejects invalid dates, mobiles, required fields, section injection and unauthorised pay', async () => {
+  for (const input of [{ birthday: '2026-02-30' }, { mobile: '123' }, { name: '' }, { email: 'bad' }, { monthlyPay: 1 }]) {
+    await expect(employees().editSection(1,'personal',input)).rejects.toMatchObject({ reason: 'validation' });
+  }
+  await expect(employees().editSection(1,'contract',{ monthlyPay: 25000 })).rejects.toMatchObject({ reason: 'denied' });
+  await expect(employees().editSection(1,'employment',{ startDate: '2026-03-01', probationEndDate: '2026-02-01' })).rejects.toMatchObject({ reason: 'validation' });
+});
+
+it('records the hire and every employment change with effective dates, hiding pay from other roles', async () => {
+  expect(await employees().history(1)).toContainEqual(expect.objectContaining({ kind: 'Hired', effectiveDate: '2026-01-01', newValue: expect.objectContaining({ position: 'Cashier' }) }));
+  await employees().editSection(1,'employment',{ position: 'Supervisor', department: 'Retail', branch: 'Taytay', employmentType: 'Regular', reportsTo: 'Ana' },'2026-12-01');
+  const history = await employees().history(1);
+  for (const [field,oldValue,newValue] of [['position','Cashier','Supervisor'],['department',null,'Retail'],['branch','Cainta','Taytay'],['employmentType','Full-time','Regular'],['reportsTo','Liza','Ana']]) {
+    expect(history).toContainEqual(expect.objectContaining({ field,oldValue,newValue,effectiveDate: '2026-12-01' }));
+  }
+  for (const role of ['Super Admin','HRMS Manager']) {
+    const manager = portal.signIn({ ...staff,role },['Employee Information']);
+    await employees(manager).editSection(1,'contract',{ monthlyPay: role === 'Super Admin' ? 25000 : 26000 });
+    expect(await employees(manager).history(1)).toContainEqual(expect.objectContaining({ field: 'monthlyPay',newValue: role === 'Super Admin' ? 25000 : 26000 }));
+  }
+  expect(JSON.stringify(await employees().history(1))).not.toMatch(/19000|25000|26000/);
+  expect(JSON.stringify(await employees().activity(1))).not.toMatch(/19000|25000|26000/);
+  const count = (await employees().history(1)).length;
+  await employees().editSection(1,'employment',{ position: 'Supervisor' });
+  expect(await employees().history(1)).toHaveLength(count);
+});
+
+it('edits emergency contacts and government IDs with redacted, newest-first activity', async () => {
+  await employees().editSection(1,'emergencyContact',{ name: 'Juan',relationship: 'Brother',mobile: '+639171111111' });
+  expect((await employees().read(1)).emergencyContact).toEqual({ name: 'Juan',relationship: 'Brother',mobile: '+639171111111' });
+  const manager = portal.signIn({ ...staff,role: 'HRMS Manager' },['Employee Information']);
+  await employees(manager).replaceGovernmentIds(1,{ sss: '34-1234567-8' });
+  const activity = await employees().activity(1);
+  expect(activity[0]).toMatchObject({ field: 'sss',oldValue: '[redacted]',newValue: '[redacted]',actorId: 'ada',actorName: 'Ada' });
+  expect(JSON.stringify(activity)).not.toContain('1234567');
+});
+
+it('refuses every edit and read-model operation without Employee Information', async () => {
+  const noModule = portal.signIn({ ...staff,role: 'Super Admin' },['Offers']);
+  for (const section of ['personal','employment','emergencyContact','contract'] as const) {
+    await expect(employees(noModule).editSection(1,section,{ name: 'X' })).rejects.toMatchObject({ reason: 'denied' });
+  }
+  await expect(employees(noModule).replaceGovernmentIds(1,{ sss: '123' })).rejects.toMatchObject({ reason: 'denied' });
+  await expect(employees(noModule).activity(1)).rejects.toMatchObject({ reason: 'denied' });
+  await expect(employees(noModule).history(1)).rejects.toMatchObject({ reason: 'denied' });
+});
+
+it('feeds hires and automatic status changes to Recent Activity without leaking pay', async () => {
+  const { dashboardSummaryFor } = await import('@/lib/dashboard-data');
+  const { dashboardRange } = await import('@/lib/dashboard');
+  const range = dashboardRange('this-month',new Date('2026-11-13T00:00:00Z'));
+  await db.exec(`UPDATE hrms_employees SET status='Active' WHERE id=1`);
+  const summary = await dashboardSummaryFor(['/employee-information'],range,new Date(),db);
+  expect(summary.recentActivity).toContainEqual(expect.objectContaining({ kind: 'hire',employeeName: 'Maria Santos' }));
+  expect(summary.recentActivity?.[0]).toMatchObject({ kind: 'status-change',description: 'Onboarding → Active' });
+  expect(await employees().activity(1)).toContainEqual(expect.objectContaining({ kind: 'status',actorName: 'System',field: 'status' }));
+  expect(JSON.stringify(summary)).not.toContain('19000');
+  expect(await dashboardSummaryFor([],range,new Date(),db)).not.toHaveProperty('recentActivity');
+});
+
+it('rolls back invalid edits without audit or history and records old and new government values privately', async () => {
+  const before = await employees().history(1);
+  await expect(employees().editSection(1,'employment',{ startDate: '2026-03-01',probationEndDate: '2026-02-01',position: 'Invalid' })).rejects.toMatchObject({ reason: 'validation' });
+  expect((await employees().read(1)).employment.position).toBe('Cashier');
+  expect(await employees().history(1)).toEqual(before);
+  expect(await employees().activity(1)).toEqual([]);
+  const manager = portal.signIn({ ...staff,role: 'HRMS Manager' },['Employee Information']);
+  await employees(manager).replaceGovernmentIds(1,{ tin: '123-456-789' });
+  await employees(manager).replaceGovernmentIds(1,{ tin: '987-654-321' });
+  expect((await employees(manager).read(1)).governmentIds).toMatchObject({ tin: '987-654-321' });
+  const edits = (await employees().activity(1)).filter(e => e.kind === 'edit');
+  expect(edits).toHaveLength(2);
+  expect(edits.every(e => e.oldValue === '[redacted]' && e.newValue === '[redacted]')).toBe(true);
 });
