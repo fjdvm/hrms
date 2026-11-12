@@ -298,3 +298,29 @@ body {
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 }
+
+/* Interviews Calendar: FullCalendar restyled to the Figma. */
+.hrms-calendar {
+  --fc-border-color: #ebebeb;
+  --fc-page-bg-color: #ffffff;
+  --fc-today-bg-color: #f8f5fc;
+  --fc-neutral-bg-color: #fafafa;
+  --fc-event-bg-color: transparent;
+  --fc-event-border-color: transparent;
+  font-size: 12px;
+}
+.hrms-calendar .fc-theme-standard td,
+.hrms-calendar .fc-theme-standard th,
+.hrms-calendar .fc-theme-standard .fc-scrollgrid { border-color: var(--fc-border-color); }
+.hrms-calendar .fc-timegrid-slot { height: 32px; }
+.hrms-calendar .fc-timegrid-slot-label-cushion { font-size: 11px; color: #71717a; }
+.hrms-calendar .fc-col-header-cell { font-weight: 500; color: #71717a; }
+.hrms-calendar .fc-col-header-cell-cushion { padding: 0; width: 100%; }
+.hrms-calendar .fc-daygrid-day-number { padding: 6px 8px; font-size: 12px; color: #3f3f46; }
+.hrms-calendar .fc-day-today .fc-daygrid-day-number { font-weight: 600; color: var(--primary); }
+.hrms-calendar .fc-event { box-shadow: none; background: transparent; border: 0; cursor: pointer; }
+.hrms-calendar .fc-timegrid-event-harness-inset .fc-timegrid-event { box-shadow: none; }
+.hrms-calendar .fc-event-main { padding: 0; height: 100%; }
+.hrms-calendar .fc-daygrid-event { margin: 1px 4px; }
+.hrms-calendar .fc-more-link { padding: 0 8px; font-size: 11px; color: var(--primary); }
+.hrms-calendar .fc-timegrid-now-indicator-line { border-color: var(--primary); }

@@ -113,6 +113,7 @@ export async function saveInterview(applicationId: number, stage: ApplicationSta
   after(() => retryApplicationNotifications());
   revalidatePath(`/applicants/${applicationId}`);
   revalidatePath("/applicants");
+  revalidatePath("/interviews");
   return { saved: true };
 }
 
@@ -142,6 +143,7 @@ export async function recordInterviewResult(applicationId: number, interviewId: 
     return { error: RESULT_MESSAGES[error.reason] };
   }
   revalidatePath(`/applicants/${applicationId}`);
+  revalidatePath("/interviews");
   after(() => retryApplicationNotifications());
   return { recorded: (previous.recorded ?? 0) + 1 };
 }

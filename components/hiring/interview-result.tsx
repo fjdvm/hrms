@@ -16,7 +16,7 @@ type Result = "Passed" | "Not passed";
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /** True once `startsAt` has passed. Flips at that moment with a single in-memory timer: no network, no polling. */
-function useStarted(startsAt: Date): boolean {
+export function useStarted(startsAt: Date): boolean {
   const [started, setStarted] = useState(() => startsAt.getTime() <= Date.now());
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -62,6 +62,12 @@ export function InterviewResult({ applicationId, interviewId, startsAt, applican
     </div>
     </TooltipProvider>
   );
+}
+
+/** The Interview result dialog opened from outside this file (the Calendar pop-up), starting on Passed. */
+export function RecordResultDialog({ onClose, ...props }: { applicationId: number; interviewId: number; subtitle: string; applicantName: string; onClose: () => void }) {
+  const [result, setResult] = useState<Result>("Passed");
+  return <ResultDialog applicationId={props.applicationId} interviewId={props.interviewId} subtitle={props.subtitle} firstName={props.applicantName.split(" ")[0]} {...{ result, setResult, onClose }} />;
 }
 
 function ResultDialog({ applicationId, interviewId, subtitle, firstName, result, setResult, onClose }: { applicationId: number; interviewId: number; subtitle: string; firstName: string; result: Result; setResult: (result: Result) => void; onClose: () => void }) {
