@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { BackLink, CardTitle, PAGE, PageHeader, ProfileColumns } from "@/components/hiring/parts";
@@ -10,6 +9,7 @@ import type { Interviewer } from "@/lib/interviewers";
 import { STAGE_BADGE, canReject, detailOrDash, formatAppliedFor, formatAvailableFrom, formatSalary, formatSource, trackerSteps } from "@/lib/application-view";
 import { applicationsForRequest } from "@/lib/portal/applications";
 import { requireModule } from "@/lib/portal/staff";
+import { ProfileInterviewsProvider, StageBadge, WhileStage } from "@/components/hiring/profile-interviews";
 import { ApplicationActivity } from "@/components/hiring/application-activity";
 import { RejectApplication } from "@/components/hiring/reject-application";
 import { StageActions } from "@/components/hiring/stage-actions";
@@ -88,19 +88,19 @@ async function Profile({ id }: { id: number }) {
     throw error;
   }
   return (
-    <>
+    <ProfileInterviewsProvider interviews={profile.interviews} stage={profile.stage}>
       <BackLink href="/applicants">Applicants</BackLink>
       <PageHeader
         title={profile.applicantName}
         subtitle={formatAppliedFor(profile.jobPostingTitle, profile.location, profile.appliedAt)}
-        badge={<Badge variant={STAGE_BADGE[profile.stage]}>{profile.stage}</Badge>}
+        badge={<StageBadge stage={profile.stage} variants={STAGE_BADGE} />}
       >
-        {canReject(profile.stage) && <RejectApplication applicationId={id} stage={profile.stage} applicantName={profile.applicantName} />}
-        <StageActions applicationId={id} stage={profile.stage} applicantName={profile.applicantName} applicantEmail={profile.applicantEmail} jobTitle={profile.jobPostingTitle} location={profile.location} interviewers={interviewers} booked={profile.interviews.find((interview) => interview.result === null)} />
+        {canReject(profile.stage) && <WhileStage stage={profile.stage}><RejectApplication applicationId={id} stage={profile.stage} applicantName={profile.applicantName} /></WhileStage>}
+        <WhileStage stage={profile.stage}><StageActions applicationId={id} stage={profile.stage} applicantName={profile.applicantName} applicantEmail={profile.applicantEmail} jobTitle={profile.jobPostingTitle} location={profile.location} interviewers={interviewers} booked={profile.interviews.find((interview) => interview.result === null)} /></WhileStage>
       </PageHeader>
       <Tracker profile={profile} />
       <ProfileColumns main={<><ApplicationDetails profile={profile} /><ApplicationInterviews applicationId={id} stage={profile.stage} applicantName={profile.applicantName} applicantEmail={profile.applicantEmail} jobTitle={profile.jobPostingTitle} location={profile.location} interviewers={interviewers} interviews={profile.interviews} /></>} aside={<><ApplicationActivity profile={profile} /><ApplicationNotes applicationId={id} notes={profile.notes} /></>} />
-    </>
+    </ProfileInterviewsProvider>
   );
 }
 

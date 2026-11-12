@@ -1,18 +1,19 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { recordInterviewResult, type ResultState } from "@/app/(hrms)/applicants/[id]/actions";
+import { recordInterviewResult } from "@/app/(hrms)/applicants/[id]/actions";
+import type { InterviewPatch } from "@/lib/interview-optimistic";
 import { SCORE_LABELS } from "@/lib/application-view";
 import { sendTimeOptions } from "@/lib/result-email-times";
 import { OptionGroup } from "./dialog-parts";
 
-type Result = "Passed" | "Not passed";
+export type Result = "Passed" | "Not passed";
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /** True once `startsAt` has passed. Flips at that moment with a single in-memory timer: no network, no polling. */
@@ -32,11 +33,11 @@ export function useStarted(startsAt: Date): boolean {
 }
 
 /** The Not passed / Passed row buttons of an Interview, and the Interview result dialog they open with that result already chosen. */
-export function InterviewResult({ applicationId, interviewId, startsAt, applicantName, subtitle }: { applicationId: number; interviewId: number; startsAt: Date; applicantName: string; subtitle: string }) {
+export function InterviewResult({ applicationId, interviewId, startsAt, applicantName, subtitle, onOptimistic, onChoose }: { applicationId: number; interviewId: number; startsAt: Date; applicantName: string; subtitle: string; onOptimistic?: (patch: InterviewPatch) => void; /** When given, the caller hosts the result dialog (so it outlives this row) and this only renders the buttons. */ onChoose?: (result: Result) => void }) {
   const started = useStarted(startsAt);
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<Result>("Passed");
-  const choose = (next: Result) => { setResult(next); setOpen(true); };
+  const choose = (next: Result) => { if (onChoose) return onChoose(next); setResult(next); setOpen(true); };
   const rowButton = (label: Result, tone: string, icon: React.ReactNode) => {
     const button = (
       <Button type="button" variant="outline" size="sm" disabled={!started} onClick={() => choose(label)} className={`h-auto gap-[6px] rounded-lg border-[#e6e1ee] px-[12px] py-[6px] text-[13px] font-medium shadow-none [&_svg]:size-[14px] ${tone}`}>
@@ -58,35 +59,60 @@ export function InterviewResult({ applicationId, interviewId, startsAt, applican
     <div className="flex items-center justify-end gap-sm">
       {rowButton("Not passed", "text-red-700", <X />)}
       {rowButton("Passed", "text-[#1e6b3a]", <Check />)}
-      {open && <ResultDialog key={result} {...{ applicationId, interviewId, subtitle, firstName, result, setResult, onClose: () => setOpen(false) }} />}
+      {open && <ResultDialog key={result} {...{ applicationId, interviewId, subtitle, firstName, result, setResult, onOptimistic, onClose: () => setOpen(false) }} />}
     </div>
     </TooltipProvider>
   );
 }
 
 /** The Interview result dialog opened from outside this file (the Calendar pop-up), starting on Passed. */
-export function RecordResultDialog({ onClose, ...props }: { applicationId: number; interviewId: number; subtitle: string; applicantName: string; onClose: () => void }) {
-  const [result, setResult] = useState<Result>("Passed");
-  return <ResultDialog applicationId={props.applicationId} interviewId={props.interviewId} subtitle={props.subtitle} firstName={props.applicantName.split(" ")[0]} {...{ result, setResult, onClose }} />;
+export function RecordResultDialog({ onClose, onOptimistic, initialResult = "Passed", ...props }: { applicationId: number; interviewId: number; subtitle: string; applicantName: string; onClose: () => void; onOptimistic?: (patch: InterviewPatch) => void; initialResult?: Result }) {
+  const [result, setResult] = useState<Result>(initialResult);
+  return <ResultDialog applicationId={props.applicationId} interviewId={props.interviewId} subtitle={props.subtitle} firstName={props.applicantName.split(" ")[0]} {...{ result, setResult, onClose, onOptimistic }} />;
 }
 
-function ResultDialog({ applicationId, interviewId, subtitle, firstName, result, setResult, onClose }: { applicationId: number; interviewId: number; subtitle: string; firstName: string; result: Result; setResult: (result: Result) => void; onClose: () => void }) {
+/**
+ * Saving is optimistic: the dialog closes and the screen shows the result at once. If the server refuses, the dialog reopens with
+ * what HR typed and the reason, and the screen rolls back.
+ */
+function ResultDialog({ applicationId, interviewId, subtitle, firstName, result, setResult, onClose, onOptimistic }: { applicationId: number; interviewId: number; subtitle: string; firstName: string; result: Result; setResult: (result: Result) => void; onClose: () => void; onOptimistic?: (patch: InterviewPatch) => void }) {
   const [sendEmail, setSendEmail] = useState(true);
   const [times] = useState(() => sendTimeOptions(new Date()));
-  const [state, submit, pending] = useActionState(async (previous: ResultState, data: FormData) => {
-    const next = await recordInterviewResult(applicationId, interviewId, previous, data);
-    if (next.recorded) onClose();
-    return next;
-  }, {} as ResultState);
+  const [score, setScore] = useState("4");
+  const [notes, setNotes] = useState("");
+  const [emailAt, setEmailAt] = useState(() => times.find((time) => time.label.startsWith("Tomorrow"))?.value ?? times[0]?.value ?? "");
+  const [error, setError] = useState<string>();
+  const [hidden, setHidden] = useState(false);
+  const [saving, startSaving] = useTransition();
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const data = new FormData();
+    data.set("result", result);
+    data.set("score", score);
+    data.set("privateNotes", notes);
+    if (sendEmail) data.set("resultEmailAt", emailAt);
+    setError(undefined);
+    setHidden(true);
+    startSaving(async () => {
+      onOptimistic?.({ kind: "result", applicationId, result, score: Number(score), privateNotes: notes || null });
+      let next: { error?: string; recorded?: number };
+      try { next = await recordInterviewResult(applicationId, interviewId, {}, data); }
+      catch { next = { error: "Could not save the result. Please try again." }; }
+      if (next.recorded) return onClose();
+      setError(next.error ?? "Could not save the result. Please try again.");
+      setHidden(false);
+    });
+  };
+  const state = { error };
+  const pending = saving;
   return (
-    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+    <Dialog open={!hidden} onOpenChange={(next) => { if (!next && !saving) onClose(); }}>
       <DialogContent
         showClose={false}
         overlayClassName="bg-[rgba(18,13,26,0.45)]"
         className="max-h-[calc(100vh-32px)] w-[calc(100vw-32px)] max-w-[580px] gap-0 overflow-y-auto rounded-2xl border-0 !p-0 shadow-[0_20px_24px_rgba(0,0,0,0.2)] sm:max-w-[580px] sm:rounded-2xl sm:!p-0 md:max-w-[580px] lg:max-w-[580px]"
       >
-        <form action={submit}>
-          <input type="hidden" name="result" value={result} />
+        <form onSubmit={submit}>
           <div className="flex items-start gap-[12px] border-b border-[#ebebeb] pb-[16px] pl-[24px] pr-[18px] pt-[20px]">
             <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
               <DialogTitle className="text-[17px] font-semibold leading-[normal] tracking-normal text-foreground">Interview result</DialogTitle>
@@ -109,7 +135,7 @@ function ResultDialog({ applicationId, interviewId, subtitle, firstName, result,
             <div className="flex flex-col gap-[6px]">
               <label htmlFor="interview-score" className="text-[13px] font-medium text-zinc-800">Score</label>
               <div className="relative flex items-center rounded-lg border border-zinc-200 bg-white focus-within:border-[#8b5cf6]">
-                <select id="interview-score" name="score" defaultValue="4" className="w-full cursor-pointer appearance-none bg-transparent px-[12px] py-[9px] text-sm text-zinc-900 outline-none">
+                <select id="interview-score" name="score" value={score} onChange={(event) => setScore(event.target.value)} className="w-full cursor-pointer appearance-none bg-transparent px-[12px] py-[9px] text-sm text-zinc-900 outline-none">
                   {SCORE_LABELS.map((label, index) => <option key={label} value={index + 1}>{index + 1} / 5 · {label}</option>)}
                 </select>
                 <ChevronDown aria-hidden className="pointer-events-none absolute right-[12px] size-4 text-zinc-500" />
@@ -117,7 +143,7 @@ function ResultDialog({ applicationId, interviewId, subtitle, firstName, result,
             </div>
             <div className="flex flex-col gap-[6px]">
               <label htmlFor="interview-notes" className="text-[13px] font-medium text-zinc-800">Interview notes <span className="font-normal text-zinc-500">(private)</span></label>
-              <Textarea id="interview-notes" name="privateNotes" className="h-16 min-h-0 resize-none rounded-lg border-zinc-200 bg-white px-[12px] py-[9px] text-sm leading-5 shadow-none" />
+              <Textarea id="interview-notes" name="privateNotes" value={notes} onChange={(event) => setNotes(event.target.value)} className="h-16 min-h-0 resize-none rounded-lg border-zinc-200 bg-white px-[12px] py-[9px] text-sm leading-5 shadow-none" />
               <p className="text-xs text-zinc-500">Scores and notes are private to HR and never shown to the Applicant.</p>
             </div>
             <div className="flex items-center gap-[12px]">
@@ -131,7 +157,7 @@ function ResultDialog({ applicationId, interviewId, subtitle, firstName, result,
               <div className="flex flex-col gap-[6px]">
                 <label htmlFor="result-email-at" className="text-[13px] font-medium text-zinc-800">Send email</label>
                 <div className="relative flex items-center rounded-lg border border-zinc-200 bg-white focus-within:border-[#8b5cf6]">
-                  <select id="result-email-at" name="resultEmailAt" defaultValue={times.find((time) => time.label.startsWith("Tomorrow"))?.value} className="w-full cursor-pointer appearance-none bg-transparent px-[12px] py-[9px] text-sm text-zinc-900 outline-none">
+                  <select id="result-email-at" name="resultEmailAt" value={emailAt} onChange={(event) => setEmailAt(event.target.value)} className="w-full cursor-pointer appearance-none bg-transparent px-[12px] py-[9px] text-sm text-zinc-900 outline-none">
                     {times.map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}
                   </select>
                   <ChevronDown aria-hidden className="pointer-events-none absolute right-[12px] size-4 text-zinc-500" />
@@ -146,7 +172,7 @@ function ResultDialog({ applicationId, interviewId, subtitle, firstName, result,
             <DialogClose asChild>
               <Button type="button" variant="outline" className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] text-sm font-medium shadow-none">Cancel</Button>
             </DialogClose>
-            <Button type="submit" disabled={pending} className="h-auto rounded-lg px-[16px] py-[9px] text-sm font-medium shadow-none">{pending ? "Saving…" : "Save result"}</Button>
+            <Button type="submit" disabled={pending} className="h-auto rounded-lg px-[16px] py-[9px] text-sm font-medium shadow-none">Save result</Button>
           </div>
         </form>
       </DialogContent>

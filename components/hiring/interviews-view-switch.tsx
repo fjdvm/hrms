@@ -1,15 +1,20 @@
+"use client";
+
 import Link from "next/link";
 import { Calendar, LayoutGrid } from "lucide-react";
 import type { InterviewsView } from "@/lib/calendar-view";
+import { useOptimisticNav } from "@/hooks/use-optimistic-nav";
 import { cn } from "@/lib/utils";
 
 /** The By job | Calendar switch shared by both Interviews screens. */
 export function InterviewsViewSwitch({ current }: { current: InterviewsView }) {
+  const { shown, go } = useOptimisticNav(current);
   const item = (view: InterviewsView, href: string, label: string, Icon: typeof Calendar) => (
     <Link
       href={href}
-      aria-current={current === view ? "page" : undefined}
-      className={cn("flex items-center gap-[6px] rounded-md px-[12px] py-[6px] text-sm font-medium text-zinc-500", current === view && "bg-white text-foreground shadow-sm")}
+      onClick={go(view, href)}
+      aria-current={shown === view ? "page" : undefined}
+      className={cn("flex items-center gap-[6px] rounded-md px-[12px] py-[6px] text-sm font-medium text-zinc-500", shown === view && "bg-white text-foreground shadow-sm")}
     >
       <Icon className="size-[14px]" /> {label}
     </Link>

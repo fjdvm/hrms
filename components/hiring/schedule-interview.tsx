@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { AlertCircle, Calendar as CalendarIcon, Clock, Link2, Mail, Map as MapIcon, MapPin, Video, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -10,7 +9,8 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, Dia
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { saveInterview } from "@/app/(hrms)/applicants/[id]/actions";
-import type { ApplicationInterview, ApplicationStage } from "@/lib/applications";
+import type { ApplicationInterview, ApplicationStage, InterviewInput } from "@/lib/applications";
+import type { InterviewPatch } from "@/lib/interview-optimistic";
 import type { Interviewer } from "@/lib/interviewers";
 import { PHILIPPINE_PLACES, type FreeInterviewSlot, type InterviewConflict } from "@/lib/interview-booking";
 
@@ -45,13 +45,19 @@ function initialValues(interview: ApplicationInterview | undefined): InterviewFo
   };
 }
 
-function ScheduleForm({ applicationId, stage, interview, applicantName, applicantEmail, jobTitle, location, interviewers, today, onSaved }: Omit<Props, "label"> & { today: string; onSaved: () => void }) {
+/** The dialog's typed-in values and server complaints. They live above the dialog so a refused save can reopen it exactly as HR left it. */
+function useDraft(interview: ApplicationInterview | undefined) {
   const [form, setForm] = useState(() => initialValues(interview));
   const [shown, setShown] = useState(false);
   const [conflict, setConflict] = useState<Conflict>();
   const [failure, setFailure] = useState<string>();
+  return { form, setForm, shown, setShown, conflict, setConflict, failure, setFailure };
+}
+type Draft = ReturnType<typeof useDraft>;
+
+function ScheduleForm({ interview, applicantName, applicantEmail, jobTitle, location, interviewers, today, draft, onSubmit }: Pick<Props, "interview" | "applicantName" | "applicantEmail" | "jobTitle" | "location" | "interviewers"> & { today: string; draft: Draft; onSubmit: (form: InterviewFormValues, interviewer: Interviewer) => void }) {
+  const { form, setForm, shown, setShown, conflict, setConflict, failure, setFailure } = draft;
   const [pickingDate, setPickingDate] = useState(false);
-  const [pending, start] = useTransition();
   const errors = shown ? interviewFormErrors(form) : {};
   const interviewer = interviewers.find((item) => item.id === form.interviewerId);
   const preview = invitePreview(form, applicantName, jobTitle, interviewer?.name ?? "");
@@ -70,12 +76,7 @@ function ScheduleForm({ applicationId, stage, interview, applicantName, applican
     event.preventDefault();
     setShown(true);
     if (Object.keys(interviewFormErrors(form)).length > 0 || !interviewer || hasConflict) return;
-    start(async () => {
-      const result = await saveInterview(applicationId, stage, interview?.id, interviewInputFrom(form, interviewer.name));
-      if (result.saved) return onSaved();
-      if (result.conflicts?.length) setConflict({ message: result.error, conflicts: result.conflicts, freeSlots: result.freeSlots ?? [] });
-      else setFailure(result.error);
-    });
+    onSubmit(form, interviewer);
   };
   const pickSlot = (slot: FreeInterviewSlot) => {
     const [from, to] = [manilaParts(slot.startsAt), manilaParts(slot.endsAt)];
@@ -220,7 +221,7 @@ function ScheduleForm({ applicationId, stage, interview, applicantName, applican
       <div className="flex items-center gap-sm border-t border-[#ebebeb] bg-zinc-50 px-[24px] py-[14px]">
         <p className={cn("flex-1 text-xs", hasConflict ? "text-[#b91c1c]" : "text-zinc-500")}>{hasConflict ? "Pick a free time to continue." : interview ? "The Applicant is sent the new time." : "The invite is sent when you schedule."}</p>
         <DialogClose asChild><Button type="button" variant="outline" className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] text-sm font-medium shadow-none">Cancel</Button></DialogClose>
-        <Button type="submit" disabled={pending || hasConflict} className="h-auto rounded-lg px-[16px] py-[9px] text-sm font-medium shadow-none">{pending ? "Scheduling…" : "Schedule & send invite"}</Button>
+        <Button type="submit" disabled={hasConflict} className="h-auto rounded-lg px-[16px] py-[9px] text-sm font-medium shadow-none">Schedule & send invite</Button>
       </div>
     </form>
   );
@@ -237,15 +238,50 @@ type Props = {
   compact?: boolean;
   /** Controlled by the caller (the Calendar opens it from a pop-up or banner): no trigger button is rendered. */
   controlled?: { open: boolean; onOpenChange: (open: boolean) => void };
+  /** Shows the booking on the caller's screen the moment HR saves; the caller's `useOptimistic` rolls it back if the server refuses. */
+  onOptimistic?: (patch: InterviewPatch) => void;
 };
 
-/** The one Schedule interview dialog: books an Interview, or reschedules `interview`. Used on the Application profile and the Interviews tab. */
-export function ScheduleInterview({ label, today, compact, controlled, ...props }: Props) {
+const toSaved = (input: InterviewInput, interviewerId: string) => ({
+  startsAt: new Date(input.startsAt), endsAt: new Date(input.endsAt), type: input.type, interviewerName: input.interviewerName, interviewerId,
+  location: input.location ?? "", meetingLink: input.meetingLink ?? null, mapLink: input.mapLink ?? null,
+  province: input.province ?? null, city: input.city ?? null, address: input.address ?? null,
+});
+
+/**
+ * The one Schedule interview dialog: books an Interview, or reschedules `interview`. Used on the Application profile and the Interviews tab.
+ * Saving is optimistic: the dialog closes and the caller's screen updates at once. If the server refuses (a clash, a rule), the dialog
+ * reopens with what HR typed and the reason, and the screen rolls back.
+ */
+export function ScheduleInterview({ label, today, compact, controlled, onOptimistic, ...props }: Props) {
   const [ownOpen, setOwnOpen] = useState(false);
+  const [saving, startSaving] = useTransition();
+  const [hidden, setHidden] = useState(false);
+  const draft = useDraft(props.interview);
   const open = controlled?.open ?? ownOpen, setOpen = controlled?.onOpenChange ?? setOwnOpen;
-  const router = useRouter();
+  const { applicationId, stage, interview } = props;
+
+  const save = (form: InterviewFormValues, interviewer: Interviewer) => {
+    const input = interviewInputFrom(form, interviewer.name);
+    setHidden(true);
+    startSaving(async () => {
+      onOptimistic?.({ kind: "save", applicationId, interview: toSaved(input, interviewer.id) });
+      let result: Awaited<ReturnType<typeof saveInterview>>;
+      try { result = await saveInterview(applicationId, stage, interview?.id, input); }
+      catch { result = { error: "Could not save the interview. Please try again." }; }
+      if (result.saved) { setHidden(false); draft.setForm(initialValues(undefined)); return setOpen(false); }
+      if (result.conflicts?.length) draft.setConflict({ message: result.error, conflicts: result.conflicts, freeSlots: result.freeSlots ?? [] });
+      else draft.setFailure(result.error);
+      setHidden(false);
+    });
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open && !hidden} onOpenChange={(next) => {
+      if (saving) return;
+      if (next) { draft.setForm(initialValues(interview)); draft.setShown(false); draft.setConflict(undefined); draft.setFailure(undefined); }
+      setOpen(next);
+    }}>
       {!controlled && <DialogTrigger asChild>
         {compact
           ? <Button className="h-auto gap-[6px] rounded-lg px-[12px] py-[6px] text-[13px] font-medium shadow-none [&_svg]:size-[14px]"><CalendarIcon /> {label}</Button>
@@ -256,7 +292,7 @@ export function ScheduleInterview({ label, today, compact, controlled, ...props 
         overlayClassName="bg-[rgba(18,13,26,0.45)]"
         className="max-h-[calc(100vh-32px)] w-[calc(100vw-32px)] max-w-[580px] gap-0 overflow-y-auto rounded-2xl border-0 !p-0 shadow-[0_20px_24px_rgba(0,0,0,0.2)] sm:max-w-[580px] sm:rounded-2xl sm:!p-0 md:max-w-[580px] lg:max-w-[580px]"
       >
-        <ScheduleForm {...props} today={today ?? manilaToday()} onSaved={() => { setOpen(false); router.refresh(); }} />
+        <ScheduleForm {...props} today={today ?? manilaToday()} draft={draft} onSubmit={save} />
       </DialogContent>
     </Dialog>
   );
