@@ -1,1 +1,10 @@
-export { default } from "../dashboard/loading";
+import { PAGE } from "@/components/hiring/parts";
+import { EmployeeListSkeleton } from "./employee-list-skeleton";
+
+export default function Loading() {
+  return (
+    <div className={PAGE}>
+      <EmployeeListSkeleton />
+    </div>
+  );
+}
