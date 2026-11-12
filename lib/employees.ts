@@ -22,7 +22,7 @@ type EmployeeRow = {
 export type GovernmentIds = { sss: string | null; philhealth: string | null; pagibigMid: string | null; tin: string | null };
 const ID_FIELDS = ["sss", "philhealth", "pagibigMid", "tin"] as const;
 const validId = (id: number) => Number.isInteger(id) && id > 0 && id <= 2147483647;
-const maskId = (value: string) => value.length > 3 ? value.slice(0, 2) + value.slice(2, -1).replace(/[A-Za-z0-9]/g, "•") + value.slice(-1) : "•".repeat(value.length);
+const maskId = (value: string) => value.length > 3 ? value.slice(0, 2) + value.slice(2, -1).replace(/[^ -]/gu, "•") + value.slice(-1) : "•".repeat(value.length);
 type StoredDocument = { type: string; source: string; fileId: string | null; fileName: string | null; uploadedAt: string | null; validUntil: string | null };
 
 /** Session-scoped Employee Information boundary. Every operation validates the Module with the Portal. */
@@ -35,7 +35,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
   }
   return {
     /** Internal write seam for Employee editors; encryption and edit auditing are inseparable. Replaces all four fields. */
-    async setGovernmentIds(id: number, input: Partial<GovernmentIds>) {
+    async replaceGovernmentIds(id: number, input: Partial<GovernmentIds>) {
       const staff = await authorise();
       if (!canSeeEmployeeSensitiveFields(staff.role)) throw new EmployeeError("denied");
       if (!validId(id) || !input || typeof input !== "object" || Object.keys(input).some(f => !ID_FIELDS.includes(f as typeof ID_FIELDS[number])) ||
@@ -66,7 +66,10 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       const { rows: contacts } = await db.query<{ name: string | null; relationship: string | null; mobile: string | null }>(
         `SELECT name, relationship, mobile FROM public.hrms_employee_emergency_contacts WHERE employee_id = $1`, [id]);
       const { rows: documents } = await db.query<StoredDocument>(`SELECT document_type AS type, source, file_id AS "fileId", file_name AS "fileName",
-        uploaded_at::text AS "uploadedAt", valid_until::text AS "validUntil" FROM public.hrms_employee_documents WHERE employee_id = $1`, [id]);
+        COALESCE(uploaded_at, (SELECT od.submitted_at FROM public.hrms_offer_documents od
+          WHERE od.offer_id = $2 AND od.document_type = hrms_employee_documents.document_type
+            AND od.file_id = hrms_employee_documents.file_id AND hrms_employee_documents.source = 'upload'))::text AS "uploadedAt",
+        valid_until::text AS "validUntil" FROM public.hrms_employee_documents WHERE employee_id = $1`, [id,e.offerId]);
       // At hire, Application-source links retain the applicant_documents id, while upload links retain the gateway file id.
       // Resolve only files belonging to this Application's Applicant, without requiring the Applications Module.
       if (documents.some(d => d.source === "application" && d.fileId)) {

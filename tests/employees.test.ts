@@ -49,7 +49,7 @@ it("returns a complete detail with seven missing documents and absent pay for an
 
 it("stores ciphertext, masks IDs and omits pay for other roles, and logs privileged disclosures", async () => {
   const manager = portal.signIn({ ...staff, role: "HRMS Manager" }, ["Employee Information"]);
-  await employees(manager).setGovernmentIds(1, { sss: "34-1234567-8", philhealth: "123456789012", pagibigMid: "123456789012", tin: "123-456-789" });
+  await employees(manager).replaceGovernmentIds(1, { sss: "34-1234567-8", philhealth: "123456789012", pagibigMid: "123456789012", tin: "123-456-789" });
   const restricted = await employees().read(1);
   expect(restricted.governmentIds).toMatchObject({ sss: "34-•••••••-8", tin: "12•-•••-••9" });
   expect(restricted.contract).not.toHaveProperty("monthlyPay");
@@ -65,7 +65,7 @@ it("stores ciphertext, masks IDs and omits pay for other roles, and logs privile
   const audit = (await db.query<{ actor_id: string; field: string; occurred_at: Date }>(`SELECT actor_id,field,occurred_at FROM hrms_employee_audit WHERE kind = 'reveal'`)).rows;
   expect(audit).toHaveLength(10);
   expect(audit).toContainEqual({ actor_id: "ada", field: "sss", occurred_at: expect.any(Date) });
-  await expect(employees().setGovernmentIds(1, { sss: "1" })).rejects.toMatchObject({ reason: "denied" });
+  await expect(employees().replaceGovernmentIds(1, { sss: "1" })).rejects.toMatchObject({ reason: "denied" });
 });
 
 it("refuses detail access without the Module, invalid sessions and invalid or missing records", async () => {
@@ -82,8 +82,10 @@ it("returns age on the Manila date, emergency contact and private document URLs 
   await db.exec(`UPDATE hrms_employees SET birthday = '2000-11-14', sex = 'Female', civil_status = 'Single', mobile = '09170000000', home_address = 'Cainta';
     INSERT INTO hrms_employee_emergency_contacts VALUES (1,'Juan Santos','Brother','09171111111');
     INSERT INTO hrms_employee_documents (employee_id,document_type,source,file_id,file_name,uploaded_at,valid_until)
-    VALUES (1,'nbi','upload','nbi-file','nbi.pdf','2026-11-01 00:00:00Z','2027-05-01'),
+    VALUES (1,'nbi','upload','nbi-file','nbi.pdf',NULL,'2027-05-01'),
       (1,'resume','application','11','resume.pdf',NULL,NULL);
+    INSERT INTO hrms_offer_documents (offer_id,document_type,status,file_id,submitted_at)
+      VALUES (1,'nbi','Submitted','nbi-file','2026-11-01 00:00:00Z');
     INSERT INTO job_postings (id,title,department,description,requirements,employment_type,location,required_documents,screening_criteria,status)
       VALUES ('posting','Cashier','Retail','','','Full time','Manila','[]','[]','open');
     INSERT INTO applications (applicant_id,job_posting_id,reference_number,status,profile_snapshot,documents_snapshot,consented_at)
@@ -101,9 +103,9 @@ it("returns age on the Manila date, emergency contact and private document URLs 
 it("rejects a missing encryption key and authenticated ciphertext tampering", async () => {
   const manager = portal.signIn({ ...staff, role: 'HRMS Manager' }, ['Employee Information']);
   vi.stubEnv('HRMS_EMPLOYEE_ENCRYPTION_KEY', '');
-  await expect(employees(manager).setGovernmentIds(1, { sss: '34-1234567-8' })).rejects.toThrow('HRMS_EMPLOYEE_ENCRYPTION_KEY');
+  await expect(employees(manager).replaceGovernmentIds(1, { sss: '34-1234567-8' })).rejects.toThrow('HRMS_EMPLOYEE_ENCRYPTION_KEY');
   vi.stubEnv('HRMS_EMPLOYEE_ENCRYPTION_KEY', Buffer.alloc(32, 7).toString('base64'));
-  await employees(manager).setGovernmentIds(1, { sss: '34-1234567-8', tin: '123-456-789' });
+  await employees(manager).replaceGovernmentIds(1, { sss: '34-1234567-8', tin: '123-456-789' });
   await db.exec(`UPDATE hrms_employee_government_ids SET tin = sss`);
   await expect(employees().read(1)).rejects.toThrow();
   expect((await db.query(`SELECT 1 FROM hrms_employee_audit WHERE kind = 'reveal'`)).rows).toHaveLength(0);
@@ -121,4 +123,10 @@ it("seeds four Onboarding scenarios and three Active records with one missing do
   const missing = seeded.find(e => e.missing)!;
   const detail = await employees().read(missing.employeeId);
   expect(detail.documents.filter(d => d.status === 'Not provided yet').map(d => d.type)).toEqual(['nbi']);
+});
+
+it("masks full-width government ID digits for an unauthorised role", async () => {
+  const manager = portal.signIn({ ...staff, role: 'HRMS Manager' }, ['Employee Information']);
+  await employees(manager).replaceGovernmentIds(1, { sss: '１２３４５６７８９' });
+  expect((await employees().read(1)).governmentIds).toMatchObject({ sss: '１２••••••９' });
 });
