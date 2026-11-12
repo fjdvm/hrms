@@ -82,7 +82,7 @@ export default async function Page({ searchParams }: PageProps<"/interviews">) {
       </PageHeader>
       {jobs.length === 0 ? (
         <p className="rounded-xl border bg-card px-[20px] py-[28px] text-sm text-zinc-500">
-          No applicants are in the interview stage yet. Move an applicant to Interview from Applicants to see their job here.
+          No jobs are posted yet. Open job postings appear here, ready for applicants moved to Interview.
         </p>
       ) : (
         <div className="grid gap-md md:grid-cols-2 xl:grid-cols-3">
@@ -92,7 +92,7 @@ export default async function Page({ searchParams }: PageProps<"/interviews">) {
         </div>
       )}
       <InfoNote>
-        Only jobs with applicants in the interview stage are shown. Open a job to schedule interviews and record results.
+        Every open job is shown, plus any closed or filled job that still has applicants in the interview stage. Open a job to schedule interviews and record results.
       </InfoNote>
     </div>
   );

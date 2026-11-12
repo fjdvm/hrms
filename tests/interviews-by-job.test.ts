@@ -61,22 +61,42 @@ async function addToPosting1(name: string, n: number) {
 }
 const FUTURE = (days: number, hour = 2) => new Date(Date.UTC(2099, 0, 1 + days, hour)).toISOString();
 
-it("lists a job while any Application is in the Interview Stage, whatever the posting status, labelled when not Open", async () => {
+it("lists every Open job, and a Closed or Filled one while any Application is in the Interview Stage, labelled when not Open", async () => {
   await seed(1, "Interview", "open");
   await seed(2, "Interview", "closed");
   await seed(3, "Interview", "filled");
   await seed(4, "Screening", "open");
-  await seed(5, "Offer", "open");
+  await seed(5, "Offer", "closed");
+  await seed(6, "Received", "draft");
   const { jobs } = await applicationsFor(handle, db).interviewJobs();
   expect(jobs.map(({ jobPostingId, label }) => [jobPostingId, label])).toEqual([
-    ["posting-1", null], ["posting-2", "Closed"], ["posting-3", "Filled"]]);
+    ["posting-1", null], ["posting-2", "Closed"], ["posting-3", "Filled"], ["posting-4", null]]);
 });
 
-it("drops a job when its last Application leaves the Interview Stage", async () => {
+it("shows a card with zero counts for an Open job nobody has been moved to Interview for", async () => {
+  await seed(1, "Screening", "open");
+  const { jobs, totals } = await applicationsFor(handle, db).interviewJobs();
+  expect(jobs).toMatchObject([{ jobPostingId: "posting-1", toSchedule: 0, scheduled: 0, nextInterview: null, label: null }]);
+  expect(totals.jobs).toBe(1);
+  const detail = await applicationsFor(handle, db).interviewJob("posting-1", "All");
+  expect(detail.rows).toEqual([]);
+  expect(detail.counts).toEqual({ All: 0, "To schedule": 0, Scheduled: 0 });
+});
+
+it("shows a card for an Open job with no Applications at all", async () => {
+  await db.query(`INSERT INTO job_postings (id,title,department,description,requirements,employment_type,location,required_documents,screening_criteria,status)
+    VALUES ('empty','Baker','Kitchen','','','Full time','Manila','[]','[]','open')`);
+  expect((await applicationsFor(handle, db).interviewJobs()).jobs).toMatchObject([{ jobPostingId: "empty", toSchedule: 0, scheduled: 0 }]);
+});
+
+it("drops a Closed job when its last Application leaves the Interview Stage, but keeps an Open one", async () => {
+  const closed = await seed(2, "Interview", "closed");
+  await db.query("UPDATE applications SET status = 'Rejected' WHERE id = $1", [closed]);
+  expect((await applicationsFor(handle, db).interviewJobs()).jobs).toEqual([]);
   const id = await seed(1, "Interview");
   expect((await applicationsFor(handle, db).interviewJobs()).jobs).toHaveLength(1);
   await db.query("UPDATE applications SET status = 'Rejected' WHERE id = $1", [id]);
-  expect((await applicationsFor(handle, db).interviewJobs()).jobs).toEqual([]);
+  expect((await applicationsFor(handle, db).interviewJobs()).jobs).toMatchObject([{ jobPostingId: "posting-1", toSchedule: 0, scheduled: 0 }]);
 });
 
 it("counts To schedule and Scheduled per job and reports the next upcoming Interview", async () => {
@@ -114,7 +134,7 @@ it("totals jobs, Interviews this week and Interviews today in Manila time", asyn
     const done = await seed(6, "Offer");
     const doneId = await book(done, "2026-11-10T01:00:00Z", "2026-11-10T02:00:00Z");
     await db.query("UPDATE hrms_application_interviews SET result = 'Passed', score = 4 WHERE id = $1", [doneId]);
-    expect((await applicationsFor(handle, db).interviewJobs()).totals).toEqual({ jobs: 5, interviewsThisWeek: 4, interviewsToday: 2 });
+    expect((await applicationsFor(handle, db).interviewJobs()).totals).toEqual({ jobs: 6, interviewsThisWeek: 4, interviewsToday: 2 });
   } finally { vi.useRealTimers(); }
 });
 
@@ -134,7 +154,7 @@ it("lists a job's Interview Stage Applications by tab and counts every tab", asy
 });
 
 it("removes an Application from the list once a result is recorded or it leaves the Stage", async () => {
-  const id = await seed(1, "Interview");
+  const id = await seed(1, "Interview", "closed");
   const interviewId = await book(id, "2020-01-01T01:00:00Z", "2020-01-01T02:00:00Z");
   const applications = applicationsFor(handle, db);
   await applications.recordInterviewResult(id, interviewId, { result: "Passed", score: 4 });
@@ -147,8 +167,8 @@ it("keeps a Closed job's Applications listable and labelled", async () => {
   expect((await applicationsFor(handle, db).interviewJob("posting-1", "All")).job.label).toBe("Closed");
 });
 
-it("rejects unknown tabs and reports not-found for a job with no Interview Stage Applications", async () => {
-  await seed(1, "Screening");
+it("rejects unknown tabs and reports not-found for a Closed job with no Interview Stage Applications", async () => {
+  await seed(1, "Screening", "closed");
   const applications = applicationsFor(handle, db);
   await expect(applications.interviewJob("posting-1", "Passed" as never)).rejects.toMatchObject({ reason: "validation" });
   await expect(applications.interviewJob("posting-1", "All")).rejects.toMatchObject({ reason: "not-found" });
