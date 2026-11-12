@@ -488,12 +488,14 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         SELECT COALESCE((SELECT jsonb_agg(to_jsonb(card) ORDER BY card.title, card."jobPostingId") FROM (
           SELECT j.id AS "jobPostingId", j.title, j.location, j.employment_type AS "employmentType",
             CASE j.status WHEN 'closed' THEN 'Closed' WHEN 'filled' THEN 'Filled' END AS label,
-            count(*) FILTER (WHERE l.starts_at IS NULL)::integer AS "toSchedule",
-            count(*) FILTER (WHERE l.starts_at IS NOT NULL)::integer AS scheduled,
+            count(l.id) FILTER (WHERE l.starts_at IS NULL)::integer AS "toSchedule",
+            count(l.id) FILTER (WHERE l.starts_at IS NOT NULL)::integer AS scheduled,
             (SELECT jsonb_build_object('applicantName', n.applicant_name, 'startsAt', n.starts_at, 'interviewerName', n.interviewer_name)
               FROM live n WHERE n.job_posting_id = j.id AND n.starts_at >= $1::timestamptz
               ORDER BY n.starts_at, n.id LIMIT 1) AS next
-          FROM live l JOIN public.job_postings j ON j.id = l.job_posting_id
+          FROM public.job_postings j LEFT JOIN live l ON l.job_posting_id = j.id
+          -- Every Open posting gets a card, even with nobody in the Stage yet; a Closed or Filled one only while someone is still in it.
+          WHERE j.status = 'open' OR l.id IS NOT NULL
           GROUP BY j.id, j.title, j.location, j.employment_type, j.status
         ) card), '[]'::jsonb) AS jobs`, [new Date().toISOString()]);
       const { thisWeek, today } = await interviewsSummary(new Date(), db);
