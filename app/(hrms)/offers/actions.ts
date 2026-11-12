@@ -114,7 +114,7 @@ export async function markAsHired(offerId: number): Promise<{ error?: string }> 
   after(() => deliverOfferEmails());
   revalidatePath("/offers");
   revalidatePath(`/offers/${offerId}`);
-  revalidatePath("/hired");
+  revalidatePath("/employee-information");
   return {};
 }
 
