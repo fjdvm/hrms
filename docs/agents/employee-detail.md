@@ -15,3 +15,11 @@ After `npm run db:migrate`, explicitly opt into `HRMS_ALLOW_DEMO_SEED=true node 
 The seed creates four Onboarding records (Not requested twice, Requested, Account created), and three Active records (one lacks NBI). The second Not requested record is for the later No account needed flow. Account requests are local synthetic records; no Portal accounts, requests or emails are sent. The additive Account request table supplies storage for the subsequent #329/#332 work; no request actions are implemented here.
 
 Demo document rows contain filenames and dates, but do not forge storage File ids. Their view URLs are null until real files are supplied; production documents resolve through the gateway as usual. Seed data is opt-in and is not part of the production schema migration.
+
+## Onboarding read model (#329)
+
+`employeesFor(...).onboarding({ state?, search? })` validates the `Employee Onboarding` Module (not Employee Information). It lists only Employee records with status Onboarding; Active records never appear. Each row has name, Employee ID, position, branch, start date, work email, `accountState`, the request reference and raw status, `overdue` (Manila start date passed with no account or "No account needed") and `becomesActiveOn` (account exists, start date still ahead).
+
+Account state comes from the employee's active request (`requested`/`seen` → Requested, `account_created`/`login_sent` → Account created); cancelled and declined requests are ignored. Otherwise `no_account_needed_at` set → No account needed, else Not requested. The work email is the active request's, or `firstname.lastname@brenraphaels.ph` derived from the name. Counts (All, Needs account, Requested, Account created, No account needed) cover the search narrowing, not the state tab; `summary` has the three workload counts.
+
+`actions` are filled only for Super Admin and HRMS Manager (`ONBOARDING_ACTING_ROLES`, one list shared with the sensitive-field roles): Not requested → `request`, `no-account-needed`; Requested → `remind`, `cancel`; No account needed → `undo-no-account-needed`. Other holders get `canAct: false` and empty actions. Migration 0029 adds the nullable `no_account_needed_at/by` pair; the action that sets it belongs to #345.

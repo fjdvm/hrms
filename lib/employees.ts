@@ -5,7 +5,29 @@ import { DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS } from "./offer-documents";
 import { gatewayDocumentFiles, type DocumentFiles } from "./document-files";
 
 export const EMPTY_EMPLOYEE_SECTION = "Not provided yet";
-export const SENSITIVE_EMPLOYEE_ROLES = ["Super Admin", "HRMS Manager"] as const;
+// The one place that names the Portal roles allowed to see unmasked IDs and pay, and to act in Onboarding.
+const MANAGER_ROLES = ["Super Admin", "HRMS Manager"] as const;
+export const SENSITIVE_EMPLOYEE_ROLES = MANAGER_ROLES;
+export const ONBOARDING_ACTING_ROLES = MANAGER_ROLES;
+export const canActInOnboarding = (role: string) => ONBOARDING_ACTING_ROLES.some(r => r === role);
+export type AccountState = "Not requested" | "Requested" | "Account created" | "No account needed";
+export type OnboardingAction = "request" | "no-account-needed" | "undo-no-account-needed" | "remind" | "cancel";
+export type OnboardingFilters = { state?: AccountState; search?: string };
+export type OnboardingRow = {
+  id: number; employeeNumber: string; name: string; initials: string; position: string; branch: string; startDate: string;
+  workEmail: string; accountState: AccountState; requestReference: string | null; requestStatus: string | null;
+  /** The start date has passed (Manila) and there is still no account or "No account needed". */
+  overdue: boolean; /** Set when the account exists but the start date has not arrived: the date it becomes Active. */
+  becomesActiveOn: string | null; actions: OnboardingAction[];
+};
+const DOMAIN = "brenraphaels.ph";
+const emailPart = (word: string) => word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+/** firstname.lastname@brenraphaels.ph; a single name gives just that name. */
+export function defaultWorkEmail(fullName: string) {
+  const words = fullName.split(/\s+/u).map(emailPart).filter(Boolean);
+  const local = words.length > 1 ? `${words[0]}.${words[words.length - 1]}` : words[0] ?? "employee";
+  return `${local}@${DOMAIN}`;
+}
 export const canSeeEmployeeSensitiveFields = (role: string) => SENSITIVE_EMPLOYEE_ROLES.some(r => r === role);
 export type EmployeeStatus = "Onboarding" | "Active";
 export type EmployeeListFilters = { status?: EmployeeStatus; branch?: string; search?: string };
@@ -42,8 +64,8 @@ type StoredDocument = { type: string; source: string; fileId: string | null; fil
 /** Session-scoped Employee Information boundary. Every operation validates the Module with the Portal. */
 export function employeesFor(sessionHandle: string | undefined, db: Database = database,
   files: DocumentFiles = gatewayDocumentFiles(), now: () => Date = () => new Date()) {
-  async function authorise() {
-    const access = await accessFor(sessionHandle).check("Employee Information");
+  async function authorise(module: "Employee Information" | "Employee Onboarding" = "Employee Information") {
+    const access = await accessFor(sessionHandle).check(module);
     if (access.decision !== "allowed") throw new EmployeeError(access.decision);
     return access.staff;
   }
@@ -73,7 +95,48 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       branches: branches.map(b => b.branch),
     };
   }
+  async function readOnboarding({ state, search }: OnboardingFilters) {
+    const staff = await authorise("Employee Onboarding");
+    const states: string[] = ["Not requested", "Requested", "Account created", "No account needed"];
+    if ((state !== undefined && !states.includes(state)) || (search !== undefined && (typeof search !== "string" || search.length > 100))) throw new EmployeeError("validation");
+    const term = search?.trim().replace(/[\\%_]/g, "\\$&");
+    const today = now().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+    // The active request (not cancelled or declined) decides the state; otherwise the "No account needed" decision; otherwise none.
+    const { rows } = await db.query<{ id: number; employeeNumber: string; name: string; position: string; branch: string; startDate: string;
+      noAccountNeeded: boolean; requestStatus: string | null; requestReference: string | null; requestEmail: string | null }>(`
+      SELECT e.id, e.employee_number AS "employeeNumber", e.full_name AS name, e.position, e.branch, e.start_date::text AS "startDate",
+        e.no_account_needed_at IS NOT NULL AS "noAccountNeeded", r.status AS "requestStatus", r.reference AS "requestReference", r.work_email AS "requestEmail"
+      FROM public.hrms_employees e
+      LEFT JOIN LATERAL (SELECT status, reference, work_email FROM public.hrms_account_requests q WHERE q.employee_id = e.id
+        ORDER BY (q.status IN ('requested','seen','account_created','login_sent')) DESC, q.id DESC LIMIT 1) r ON true
+      WHERE e.status = 'Onboarding'
+        AND ($1::text IS NULL OR e.full_name ILIKE '%' || $1 || '%' OR e.employee_number ILIKE '%' || $1 || '%')
+      ORDER BY e.start_date, e.employee_number`, [term || null]);
+    const acting = canActInOnboarding(staff.role);
+    const all = rows.map((r): OnboardingRow => {
+      const active = r.requestStatus && ["requested", "seen", "account_created", "login_sent"].includes(r.requestStatus);
+      const accountState: AccountState = active ? (r.requestStatus === "requested" || r.requestStatus === "seen" ? "Requested" : "Account created")
+        : r.noAccountNeeded ? "No account needed" : "Not requested";
+      const actions: OnboardingAction[] = !acting ? [] : accountState === "Not requested" ? ["request", "no-account-needed"]
+        : accountState === "Requested" ? ["remind", "cancel"] : accountState === "No account needed" ? ["undo-no-account-needed"] : [];
+      return { id: r.id, employeeNumber: r.employeeNumber, name: r.name, initials: initialsOf(r.name), position: r.position, branch: r.branch,
+        startDate: r.startDate, workEmail: active ? r.requestEmail! : defaultWorkEmail(r.name), accountState,
+        requestReference: r.requestReference, requestStatus: r.requestStatus,
+        overdue: r.startDate < today && (accountState === "Not requested" || accountState === "Requested"),
+        becomesActiveOn: accountState === "Account created" && r.startDate > today ? r.startDate : null, actions };
+    });
+    const count = (s: AccountState) => all.filter(r => r.accountState === s).length;
+    return {
+      rows: state ? all.filter(r => r.accountState === state) : all,
+      counts: { all: all.length, needsAccount: count("Not requested"), requested: count("Requested"),
+        accountCreated: count("Account created"), noAccountNeeded: count("No account needed") },
+      summary: { needsAccount: count("Not requested"), requested: count("Requested"), accountCreated: count("Account created") },
+      canAct: acting,
+    };
+  }
   return {
+    /** Onboarding: every Onboarding Employee record with its account state. Active records never appear. Read-only unless the role may act. */
+    onboarding: (filters: OnboardingFilters = {}) => readOnboarding(filters),
     /** The Employee list: rows, tab counts, summary and Branch options. Never includes government IDs or pay. */
     list: (filters: EmployeeListFilters = {}) => readList(filters),
     /** CSV of the current list. Columns are fixed and exclude government IDs and pay for every role. */
