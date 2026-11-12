@@ -59,12 +59,17 @@ it("stores ciphertext, masks IDs and omits pay for other roles, and logs privile
   for (const role of ["Super Admin", "HRMS Manager"]) {
     const allowed = portal.signIn({ ...staff, role }, ["Employee Information"]);
     const full = await employees(allowed).read(1);
-    expect(full.governmentIds).toMatchObject({ sss: "34-1234567-8", tin: "123-456-789" });
+    expect(full.governmentIds).toMatchObject({ sss: "34-•••••••-8" });
     expect(full.contract).toHaveProperty("monthlyPay", 19000);
+    expect(full.canEdit).toMatchObject({ governmentIds: true, contract: true });
+    expect(await employees(allowed).revealGovernmentIds(1, ["sss", "tin"])).toEqual({ sss: "34-1234567-8", tin: "123-456-789" });
   }
+  expect(restricted.canEdit).toMatchObject({ personal: true, governmentIds: false, contract: false });
+  await expect(employees().revealGovernmentIds(1)).rejects.toMatchObject({ reason: "denied" });
   const audit = (await db.query<{ actor_id: string; field: string; occurred_at: Date }>(`SELECT actor_id,field,occurred_at FROM hrms_employee_audit WHERE kind = 'reveal'`)).rows;
-  expect(audit).toHaveLength(10);
-  expect(audit).toContainEqual({ actor_id: "ada", field: "sss", occurred_at: expect.any(Date) });
+  expect(audit.filter(a => a.field === "sss")).toHaveLength(2);
+  expect(audit.filter(a => a.field === "monthlyPay")).toHaveLength(2);
+  expect(audit).toHaveLength(6);
   await expect(employees().replaceGovernmentIds(1, { sss: "1" })).rejects.toMatchObject({ reason: "denied" });
 });
 
@@ -108,6 +113,7 @@ it("rejects a missing encryption key and authenticated ciphertext tampering", as
   await employees(manager).replaceGovernmentIds(1, { sss: '34-1234567-8', tin: '123-456-789' });
   await db.exec(`UPDATE hrms_employee_government_ids SET tin = sss`);
   await expect(employees().read(1)).rejects.toThrow();
+  await expect(employees(manager).revealGovernmentIds(1)).rejects.toThrow();
   expect((await db.query(`SELECT 1 FROM hrms_employee_audit WHERE kind = 'reveal'`)).rows).toHaveLength(0);
 });
 
@@ -243,7 +249,7 @@ it('rolls back invalid edits without audit or history and records old and new go
   const manager = portal.signIn({ ...staff,role: 'HRMS Manager' },['Employee Information']);
   await employees(manager).replaceGovernmentIds(1,{ tin: '123-456-789' });
   await employees(manager).replaceGovernmentIds(1,{ tin: '987-654-321' });
-  expect((await employees(manager).read(1)).governmentIds).toMatchObject({ tin: '987-654-321' });
+  expect(await employees(manager).revealGovernmentIds(1)).toMatchObject({ tin: '987-654-321' });
   const edits = (await employees().activity(1)).filter(e => e.kind === 'edit');
   expect(edits).toHaveLength(2);
   expect(edits.every(e => e.oldValue === '[redacted]' && e.newValue === '[redacted]')).toBe(true);

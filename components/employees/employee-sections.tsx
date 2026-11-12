@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { CardTitle } from "@/components/hiring/parts";
 import { EMPTY_EMPLOYEE_SECTION, type EmployeeDetail, type GovernmentIds } from "@/lib/employees";
+import { RevealableId } from "./edit-section";
 import {
   NOT_PROVIDED, documentSummary, validUntilLabel, formatBirthday, formatEmployeeDate, formatMonthlyPay, isSubmitted, orNotProvided, submittedCount,
   type EmployeeDocument,
@@ -34,9 +35,9 @@ function Section({ title, aside, cols = "sm:grid-cols-3", children }: { title: s
 
 const Empty = () => <p className={`text-sm ${MISSING} sm:col-span-full`}>{EMPTY_EMPLOYEE_SECTION}</p>;
 
-export function PersonalInformation({ personal }: { personal: EmployeeDetail["personal"] }) {
+export function PersonalInformation({ personal, edit }: { personal: EmployeeDetail["personal"]; edit?: React.ReactNode }) {
   return (
-    <Section title="Personal information">
+    <Section title="Personal information" aside={edit}>
       {text("Full name", personal.name)}
       <Field label="Birthday" missing={!personal.birthday}>{formatBirthday(personal.birthday, personal.age)}</Field>
       {text("Sex", personal.sex)}
@@ -48,10 +49,10 @@ export function PersonalInformation({ personal }: { personal: EmployeeDetail["pe
   );
 }
 
-export function Employment({ employment, employmentType }: { employment: EmployeeDetail["employment"]; employmentType: string }) {
+export function Employment({ employment, employmentType, edit }: { employment: EmployeeDetail["employment"]; employmentType: string; edit?: React.ReactNode }) {
   const { hiredFrom } = employment;
   return (
-    <Section title="Employment">
+    <Section title="Employment" aside={edit}>
       {text("Position", employment.position)}
       {text("Department", employment.department)}
       {text("Branch", employment.branch)}
@@ -71,20 +72,25 @@ export function Employment({ employment, employmentType }: { employment: Employe
 
 const ID_LABELS: [keyof GovernmentIds, string][] = [["sss", "SSS number"], ["philhealth", "PhilHealth number"], ["pagibigMid", "Pag-IBIG MID"], ["tin", "TIN"]];
 
-/** The server has already masked these for roles that may not read them; this only lays them out. */
-export function GovernmentIdsSection({ ids }: { ids: EmployeeDetail["governmentIds"] }) {
+/** Values arrive masked for everyone; a role that may see them gets a reveal button that asks the server on click. */
+export function GovernmentIdsSection({ ids, employeeId, canReveal, edit }: { ids: EmployeeDetail["governmentIds"]; employeeId: number; canReveal: boolean; edit?: React.ReactNode }) {
   return (
     <Section title="Government IDs" cols="sm:grid-cols-2 lg:grid-cols-4" aside={
-      <span className="flex items-center gap-[6px] text-xs font-medium text-zinc-500"><Lock aria-hidden className="size-[14px]" />Visible to HR only</span>
+      <>
+        <span className="flex items-center gap-[6px] text-xs font-medium text-zinc-500"><Lock aria-hidden className="size-[14px]" />Visible to HR only</span>
+        {edit}
+      </>
     }>
-      {typeof ids === "string" ? <Empty /> : ID_LABELS.map(([key, label]) => text(label, ids[key]))}
+      {typeof ids === "string" ? <Empty /> : ID_LABELS.map(([key, label]) => ids[key] && canReveal
+        ? <Field key={key} label={label}><RevealableId employeeId={employeeId} field={key} masked={ids[key]!} /></Field>
+        : text(label, ids[key]))}
     </Section>
   );
 }
 
-export function EmergencyContact({ contact }: { contact: EmployeeDetail["emergencyContact"] }) {
+export function EmergencyContact({ contact, edit }: { contact: EmployeeDetail["emergencyContact"]; edit?: React.ReactNode }) {
   return (
-    <Section title="Emergency contact">
+    <Section title="Emergency contact" aside={edit}>
       {typeof contact === "string" ? <Empty /> : <>{text("Name", contact.name)}{text("Relationship", contact.relationship)}{text("Mobile", contact.mobile)}</>}
     </Section>
   );
@@ -151,20 +157,12 @@ export function DocumentsTable({ documents }: { documents: EmployeeDocument[] })
   );
 }
 
-export function Contract({ contract }: { contract: EmployeeDetail["contract"] }) {
+export function Contract({ contract, edit }: { contract: EmployeeDetail["contract"]; edit?: React.ReactNode }) {
   return (
-    <Section title="Contract" cols="grid-cols-1">
+    <Section title="Contract" cols="grid-cols-1" aside={edit}>
       <Field label="Offer letter">{contract.offerLetterSigned ? "Signed" : "Not signed"}</Field>
       {text("Contract type", contract.contractType)}
       {"monthlyPay" in contract && typeof contract.monthlyPay === "number" && <Field label="Monthly pay">{formatMonthlyPay(contract.monthlyPay)}</Field>}
     </Section>
-  );
-}
-
-export function ComingSoon({ title }: { title: string }) {
-  return (
-    <Card className="rounded-xl px-[20px] py-[28px] shadow-none">
-      <p className="text-center text-sm text-zinc-500">{title} is coming soon.</p>
-    </Card>
   );
 }

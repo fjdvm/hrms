@@ -1,16 +1,21 @@
 import Link from "next/link";
-import { ClipboardCheck, Pencil } from "lucide-react";
+import { ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BackLink, ProfileColumns } from "@/components/hiring/parts";
 import { initialsOf } from "@/lib/hiring-mock";
-import type { EmployeeDetail } from "@/lib/employees";
+import type { EmployeeAudit, EmployeeDetail, EmployeeHistory } from "@/lib/employees";
+import { initialValues } from "@/lib/employee-edit-form";
+import { EditSectionButton } from "./edit-section";
+import { EmployeeActivity, EmploymentHistory } from "./employee-timeline";
 import { ONBOARDING_ROW_URL, headerSubtitle, submittedCount } from "@/lib/employee-view";
 import { EmployeeTabs } from "./employee-tabs";
-import { ComingSoon, Contract, DocumentsCard, DocumentsTable, EmergencyContact, Employment, GovernmentIdsSection, PersonalInformation } from "./employee-sections";
+import { Contract, DocumentsCard, DocumentsTable, EmergencyContact, Employment, GovernmentIdsSection, PersonalInformation } from "./employee-sections";
 
-export function EmployeeProfile({ employee }: { employee: EmployeeDetail }) {
-  const { personal, employment, documents } = employee;
+export function EmployeeProfile({ employee, history, activity }: { employee: EmployeeDetail; history: EmployeeHistory[]; activity: EmployeeAudit[] }) {
+  const { personal, employment, documents, canEdit } = employee;
+  const edit = (section: Parameters<typeof initialValues>[0], allowed = true) => allowed
+    ? <EditSectionButton employeeId={employee.id} section={section} initial={initialValues(section, employee)} /> : undefined;
   return (
     <>
       <BackLink href="/employee-information">Employee information</BackLink>
@@ -26,20 +31,19 @@ export function EmployeeProfile({ employee }: { employee: EmployeeDetail }) {
         <Button asChild variant="outline" className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] shadow-none">
           <Link href={ONBOARDING_ROW_URL(employee.id)}><ClipboardCheck /> View onboarding</Link>
         </Button>
-        {/* Editing arrives in its own slice; the button holds its place from the Figma. */}
-        <Button disabled className="h-auto rounded-lg bg-[#5b2a86] px-[14px] py-[9px]"><Pencil /> Edit details</Button>
+        <EditSectionButton primary label="Edit details" employeeId={employee.id} section="personal" initial={initialValues("personal", employee)} />
       </div>
       <EmployeeTabs
         documentCount={submittedCount(documents)}
         details={
           <ProfileColumns
-            main={<><PersonalInformation personal={personal} /><Employment employment={employment} employmentType={employee.contract.contractType} /><GovernmentIdsSection ids={employee.governmentIds} /><EmergencyContact contact={employee.emergencyContact} /></>}
-            aside={<><DocumentsCard documents={documents} /><Contract contract={employee.contract} /></>}
+            main={<><PersonalInformation personal={personal} edit={edit("personal")} /><Employment employment={employment} employmentType={employee.contract.contractType} edit={edit("employment")} /><GovernmentIdsSection ids={employee.governmentIds} employeeId={employee.id} canReveal={canEdit.governmentIds} edit={edit("governmentIds", canEdit.governmentIds)} /><EmergencyContact contact={employee.emergencyContact} edit={edit("emergencyContact")} /></>}
+            aside={<><DocumentsCard documents={documents} /><Contract contract={employee.contract} edit={edit("contract", canEdit.contract)} /></>}
           />
         }
         documents={<DocumentsTable documents={documents} />}
-        history={<ComingSoon title="Employment history" />}
-        activity={<ComingSoon title="Activity" />}
+        history={<EmploymentHistory history={history} />}
+        activity={<EmployeeActivity activity={activity} />}
       />
     </>
   );
