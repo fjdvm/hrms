@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 const dash = (value: string | null) => value ?? "—";
 
 export default async function Page({ searchParams }: PageProps<"/offers">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Offers");
   const { tab: param } = await searchParams;
   const tab = offerTabFromParam(Array.isArray(param) ? param[0] : param);
 

@@ -3,7 +3,7 @@
 Ticket #30 implements `jobPostingsFor(sessionHandle)` in `lib/job-postings.ts`.
 Call it only on the server with the opaque Portal session handle from the current
 request. It uses `DATABASE_URL`; tests may supply disposable Postgres as the second
-argument. Each operation rechecks the Recruitment and Hiring Module through the
+argument. Each operation rechecks the Job Postings Module through the
 Portal, including reads. Invalid, denied and unavailable decisions fail closed.
 
 - `saveDraft(fields)` accepts any subset of the Job Posting fields.

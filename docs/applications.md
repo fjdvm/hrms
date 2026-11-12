@@ -1,7 +1,7 @@
 # Applications list
 
 `applicationsFor(sessionHandle, db).list({ page, stage, search, jobPostingId })` is the server-side boundary
-for the Applicants list. Every call rechecks the Recruitment and Hiring Module
+for the Applicants list. Every call rechecks the Applications Module (Interviews for scheduling, results and the calendar)
 through the Portal before querying; invalid, denied and unavailable decisions
 throw `ApplicationError` with the corresponding reason.
 
@@ -110,7 +110,7 @@ booking never supplies or overrides the date the Application reached that Stage.
 note with the acting Staff member's Portal name and a database timestamp. Text
 is trimmed; blank or non-string text and invalid Application ids return
 validation. An unknown Application returns not-found. The caller cannot supply
-an author or timestamp. Each write rechecks the Recruitment and Hiring Module.
+an author or timestamp. Each write rechecks the Applications Module (Interviews for scheduling, results and the calendar).
 
 `readProfile(id).notes` returns `{ id, text, authorName, createdAt }` entries,
 newest first by timestamp and then id for stable ties. `createdAt` is a Date.
@@ -125,7 +125,7 @@ table and its Application/time index without changing Careers tables.
 
 `applicationsFor(sessionHandle, db).recordInterviewResult(applicationId, interviewId,
 { score, result })` records a whole-number score from 1 through 5 and either
-`Passed` or `Not passed`. Every call rechecks Recruitment and Hiring access.
+`Passed` or `Not passed`. Every call rechecks Interviews access.
 The interview must belong to the Application and have reached its start time
 according to the database clock. A future interview returns `conflict`; a missing
 interview or one belonging to another Application returns `not-found`. Invalid

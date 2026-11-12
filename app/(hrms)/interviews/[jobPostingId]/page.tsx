@@ -8,7 +8,7 @@ import { applicationsForRequest } from "@/lib/portal/applications";
 import { requireModule } from "@/lib/portal/staff";
 
 export default async function Page({ params, searchParams }: PageProps<"/interviews/[jobPostingId]">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Interviews");
   const { jobPostingId } = await params;
   const tab = interviewTabFromParam((await searchParams).tab as string | undefined);
   const applications = await applicationsForRequest();

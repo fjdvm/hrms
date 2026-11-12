@@ -85,7 +85,7 @@ async function Listing() {
 }
 
 export default async function Page() {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Job Postings");
 
   return (
     <div className="flex flex-col gap-lg p-md sm:p-lg">

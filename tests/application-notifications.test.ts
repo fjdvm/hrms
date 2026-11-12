@@ -21,7 +21,7 @@ beforeEach(async () => {
   }
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY);`);
   portal = new FakePortal();
-  handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);
@@ -136,7 +136,7 @@ const invite = { startsAt: '2099-11-03T09:00:00+08:00', endsAt: '2099-11-03T10:0
 it("emails a booked Interview to everyone and also tells Applicants with a Careers account", async () => {
   const id = await seed(1, 'Interview');
   await db.exec(`INSERT INTO neon_auth."user" VALUES ('person-1')`);
-  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
   const sends: { url: string; body: Record<string, unknown> }[] = [];
   const boundary = portalFetch(portal);
   vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
@@ -162,7 +162,7 @@ it("emails a booked Interview to everyone and also tells Applicants with a Caree
 
 it.each(['Walk-in', 'Referral'] as const)('emails a %s without a Careers account, including updated In person invites', async (source) => {
   await seed(1);
-  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
   const sends: { url: string; key: string | null; body: Record<string, unknown> }[] = [];
   const boundary = portalFetch(portal);
   vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');
@@ -198,7 +198,7 @@ it.each(['Walk-in', 'Referral'] as const)('emails a %s without a Careers account
 it('retains a saved Interview when email fails, retries its stable key, and delivers Careers independently', async () => {
   const id = await seed(1, 'Interview');
   await db.exec(`INSERT INTO neon_auth."user" VALUES ('person-1')`);
-  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
   const attempts: { url: string; key: string | null; body: string }[] = [];
   const boundary = portalFetch(portal);
   let fail = true;
@@ -239,7 +239,7 @@ it('also tells a manually-added Applicant whose email belongs to a Careers accou
   await seed(1);
   await seed(2);
   await db.exec(`INSERT INTO neon_auth."user" VALUES ('person-1')`);
-  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ['Recruitment and Hiring'] }];
+  portal.directory = [{ id: 'bea', username: 'bea', name: 'Bea Santos', modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
   const sends: Record<string, unknown>[] = [];
   const boundary = portalFetch(portal);
   vi.stubEnv('API_GATEWAY_URL', 'https://gateway.test');

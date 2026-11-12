@@ -1,11 +1,15 @@
-// The Portal and HRMS use the same Module names (see CONTEXT.md).
+// The Portal and HRMS use the same nine Module names (see CONTEXT.md).
 export const MODULES = [
   { name: "Dashboard", href: "/dashboard" },
-  { name: "Attendance", href: "/attendance" },
+  { name: "Job Postings", href: "/job-postings" },
+  { name: "Applications", href: "/applicants" },
+  { name: "Interviews", href: "/interviews" },
+  { name: "Offers", href: "/offers" },
   { name: "Employee Information", href: "/employee-information" },
-  { name: "Payroll & ESS", href: "/payroll-ess" },
-  { name: "Recruitment and Hiring", href: "/job-postings" },
-  { name: "User Management", href: "/user-management" },
+  { name: "Employee Onboarding", href: "/employee-onboarding" },
+  { name: "Training", href: "/training" },
+  { name: "Performance", href: "/performance" },
 ] as const;
 
 export type Module = (typeof MODULES)[number];
+export type ModuleName = Module["name"];

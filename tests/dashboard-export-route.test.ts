@@ -32,7 +32,7 @@ beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-28T12:05:00Z"));
   portal = new FakePortal();
-  state.handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  state.handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);
@@ -93,9 +93,18 @@ it("refuses a request without a session", async () => {
   expect(response.headers.get("content-type")).not.toContain("text/csv");
 });
 
-it("refuses Staff without Recruitment and Hiring", async () => {
-  state.handle = portal.signIn(staff, ["Attendance"]);
+it("refuses Staff who hold none of the hiring Modules", async () => {
+  state.handle = portal.signIn(staff, ["Training"]);
   const response = await request();
   expect(response.status).toBe(403);
   expect(response.headers.get("content-type")).not.toContain("text/csv");
+});
+
+it("holds only the hiring cards the Staff member's Modules own", async () => {
+  state.handle = portal.signIn(staff, ["Interviews"]);
+  expect((await (await request("?range=this-month")).text()).split("\r\n")).toEqual([
+    "Card,Value,Detail,Comparison",
+    "Interviews this week,0,None today,",
+    "",
+  ]);
 });

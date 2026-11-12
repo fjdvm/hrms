@@ -19,6 +19,6 @@ Errors are `{ error, message }`: `400` invalid body, `401` bad key, `404` no suc
 
 - A reply follows the same rules as Staff recording one (one shared function), with the email queued to go out at once.
 - An upload marks the row Submitted and replaces any earlier file. It is allowed while the Offer is Sent or Accepted.
-- Staff holding Recruitment and Hiring are notified of each reply and upload, linking to `/offers/{id}`. The notification for the 7th
+- Staff holding Offers are notified of each reply and upload, linking to `/offers/{id}`. The notification for the 7th
   document on an Accepted Offer says "Ready to hire" instead of the usual one; replacing a file never does.
 - No migration: the notifications reuse `hrms_staff_notifications`, and uploads write no Offer activity row.

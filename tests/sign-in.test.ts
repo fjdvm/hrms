@@ -65,7 +65,7 @@ function startHandoff(browser: Browser, page: string) {
 /** Signs in at the Portal and returns through the callback. */
 async function signInThrough(browser: Browser, page: string) {
   const { authorizeUrl } = startHandoff(browser, page);
-  portal.signInAtPortal(ada, ["Attendance"]);
+  portal.signInAtPortal(ada, ["Training"]);
   const granted = await portal.handle(new Request(authorizeUrl));
   const landed = await callback(browser.request(granted.headers.get("location")!));
   browser.keep(landed);
@@ -78,10 +78,10 @@ const sessionSet = (response: Response) => response.headers.getSetCookie().some(
 describe("a request with no session", () => {
   it("is sent to the Portal with the requested page preserved", () => {
     const browser = new Browser();
-    const { gated, authorizeUrl } = startHandoff(browser, "/attendance?week=2");
+    const { gated, authorizeUrl } = startHandoff(browser, "/training?week=2");
 
     expect(browser.location(gated).pathname).toBe("/api/portal/login");
-    expect(browser.location(gated).searchParams.get("returnTo")).toBe("/attendance?week=2");
+    expect(browser.location(gated).searchParams.get("returnTo")).toBe("/training?week=2");
     expect(authorizeUrl.startsWith(`${FAKE_PORTAL_URL}/api/integrations/authorize`)).toBe(true);
     expect(new URL(authorizeUrl).searchParams.get("redirect_uri")).toBe(`${APP}/api/portal/callback`);
   });
@@ -97,9 +97,9 @@ describe("a request with no session", () => {
 describe("completing sign-in", () => {
   it("returns to the page asked for, holding only the opaque handle in an HttpOnly cookie", async () => {
     const browser = new Browser();
-    const { landed } = await signInThrough(browser, "/attendance?week=2");
+    const { landed } = await signInThrough(browser, "/training?week=2");
 
-    expect(browser.location(landed).pathname + browser.location(landed).search).toBe("/attendance?week=2");
+    expect(browser.location(landed).pathname + browser.location(landed).search).toBe("/training?week=2");
 
     const cookie = landed.headers.getSetCookie().find((c) => c.startsWith(`${SESSION_COOKIE}=`))!;
     expect(cookie).toMatch(/HttpOnly/i);
@@ -107,13 +107,13 @@ describe("completing sign-in", () => {
     expect(cookie).not.toContain(FAKE_SECRET);
     expect(landed.headers.get("location")).not.toContain(FAKE_SECRET);
 
-    expect(proxy(browser.request(`${APP}/attendance`)).headers.get("location")).toBeNull();
-    expect((await validateSession(browser.jar.get(SESSION_COOKIE)!, "Attendance")).decision).toBe("allowed");
+    expect(proxy(browser.request(`${APP}/training`)).headers.get("location")).toBeNull();
+    expect((await validateSession(browser.jar.get(SESSION_COOKIE)!, "Training")).decision).toBe("allowed");
   });
 
   it("sends a visitor not yet signed in at the Portal to its login and back to authorize", async () => {
     const browser = new Browser();
-    const { authorizeUrl } = startHandoff(browser, "/attendance");
+    const { authorizeUrl } = startHandoff(browser, "/training");
 
     const toLogin = await portal.handle(new Request(authorizeUrl));
     const back = new URL(new URL(toLogin.headers.get("location")!).searchParams.get("returnTo")!, FAKE_PORTAL_URL);
@@ -124,11 +124,11 @@ describe("completing sign-in", () => {
 
   it("rejects a replayed code and creates no session", async () => {
     const browser = new Browser();
-    const { granted } = await signInThrough(browser, "/attendance");
+    const { granted } = await signInThrough(browser, "/training");
     const target = granted.headers.get("location")!;
 
     const replayer = new Browser();
-    startHandoff(replayer, "/attendance");
+    startHandoff(replayer, "/training");
     const replay = await callback(replayer.request(target));
 
     expect(replay.headers.get("location")).toContain("/sign-in-error");
@@ -137,8 +137,8 @@ describe("completing sign-in", () => {
 
   it("rejects an expired code", async () => {
     const browser = new Browser();
-    const { authorizeUrl } = startHandoff(browser, "/attendance");
-    portal.signInAtPortal(ada, ["Attendance"]);
+    const { authorizeUrl } = startHandoff(browser, "/training");
+    portal.signInAtPortal(ada, ["Training"]);
     const granted = await portal.handle(new Request(authorizeUrl));
     portal.expireCodes();
 
@@ -150,8 +150,8 @@ describe("completing sign-in", () => {
 
   it("rejects a code redeemed with the wrong PKCE verifier", async () => {
     const browser = new Browser();
-    const { authorizeUrl } = startHandoff(browser, "/attendance");
-    portal.signInAtPortal(ada, ["Attendance"]);
+    const { authorizeUrl } = startHandoff(browser, "/training");
+    portal.signInAtPortal(ada, ["Training"]);
     const granted = await portal.handle(new Request(authorizeUrl));
     const forged = new Browser();
     forged.jar.set(HANDOFF_COOKIE, JSON.stringify({ ...JSON.parse(browser.jar.get(HANDOFF_COOKIE)!), verifier: "wrong" }));
@@ -164,7 +164,7 @@ describe("completing sign-in", () => {
 
   it("rejects an unknown state", async () => {
     const browser = new Browser();
-    startHandoff(browser, "/attendance");
+    startHandoff(browser, "/training");
 
     const response = await callback(browser.request(`${APP}/api/portal/callback?code=anything&state=forged`));
 
@@ -180,7 +180,7 @@ describe("completing sign-in", () => {
 
   it("shows the sign-in error when the Portal refuses", async () => {
     const browser = new Browser();
-    startHandoff(browser, "/attendance");
+    startHandoff(browser, "/training");
 
     const response = await callback(browser.request(`${APP}/api/portal/callback?error=access_denied&state=x`));
 
@@ -189,8 +189,8 @@ describe("completing sign-in", () => {
 
   it("shows the sign-in error when the exchange cannot be made", async () => {
     const browser = new Browser();
-    const { authorizeUrl } = startHandoff(browser, "/attendance");
-    portal.signInAtPortal(ada, ["Attendance"]);
+    const { authorizeUrl } = startHandoff(browser, "/training");
+    portal.signInAtPortal(ada, ["Training"]);
     const granted = await portal.handle(new Request(authorizeUrl));
     portal.unavailable = true;
 
@@ -204,7 +204,7 @@ describe("completing sign-in", () => {
 describe("signing out", () => {
   it("clears the session cookie and ends the Portal session", async () => {
     const browser = new Browser();
-    await signInThrough(browser, "/attendance");
+    await signInThrough(browser, "/training");
     const handle = browser.jar.get(SESSION_COOKIE)!;
 
     const response = logout();
@@ -217,6 +217,6 @@ describe("signing out", () => {
     // The browser follows the redirect to the Portal's logout.
     await portal.handle(new Request(response.headers.get("location")!));
 
-    expect((await validateSession(handle, "Attendance")).decision).toBe("invalid");
+    expect((await validateSession(handle, "Training")).decision).toBe("invalid");
   });
 });

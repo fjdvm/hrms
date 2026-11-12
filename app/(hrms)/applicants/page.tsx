@@ -151,7 +151,7 @@ async function Listing({ page, stage, search, job }: { page: number; stage: Appl
 }
 
 export default async function Page({ searchParams }: PageProps<"/applicants">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Applications");
   const { page, stage, q, job } = await searchParams;
   const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 

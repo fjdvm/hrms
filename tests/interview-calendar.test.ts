@@ -22,8 +22,8 @@ beforeEach(async () => {
   }
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY);`);
   portal = new FakePortal();
-  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
-  handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
+  handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);
@@ -133,7 +133,7 @@ it("keeps a conflict visible when the Job Posting filter hides one side", async 
   expect(conflicts).toHaveLength(1);
 });
 
-it("rejects an invalid range or filter and denies Staff without Recruitment and Hiring", async () => {
+it("rejects an invalid range or filter and denies Staff without Interviews", async () => {
   const applications = applicationsFor(handle, db);
   await expect(applications.calendar({ from: "nope", to: RANGE.to })).rejects.toMatchObject({ reason: "validation" });
   await expect(applications.calendar({ from: RANGE.to, to: RANGE.from })).rejects.toMatchObject({ reason: "validation" });

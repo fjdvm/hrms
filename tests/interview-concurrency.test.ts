@@ -36,8 +36,8 @@ it.skipIf(!process.env.TEST_POSTGRES_URL)("prevents two independent Postgres ses
       VALUES ('one','role','ONE','Interview','{"fullName":"First Applicant"}','[]',now()),
              ('two','role','TWO','Interview','{"fullName":"Second Applicant"}','[]',now())`);
     const portal = new FakePortal();
-    portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
-    const handle = portal.signIn({ name: "HR Staff", username: "hr", email: "hr@example.test", role: "HR Officer" }, ["Recruitment and Hiring"]);
+    portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
+    const handle = portal.signIn({ name: "HR Staff", username: "hr", email: "hr@example.test", role: "HR Officer" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
     vi.stubGlobal("fetch", portalFetch(portal));
     vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
     vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);

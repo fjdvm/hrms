@@ -13,11 +13,11 @@ The central sign-in site that Staff sign in through and are sent into HRMS from.
 _Avoid_: Auth app, login site
 
 **Module**:
-A feature area of HRMS that the Portal grants or revokes per Staff member, shown as one tab in the sidebar. Each HRMS page belongs to exactly one Module. The Modules are Dashboard, Attendance, Employee Information, Payroll & ESS, Recruitment and Hiring, and User Management. The Portal and HRMS use the same Module names.
+A feature area of HRMS that the Portal grants or revokes per Staff member, shown as one tab in the sidebar. Each HRMS page belongs to exactly one Module. The Modules are Dashboard, Job Postings, Applications, Interviews, Offers, Employee Information, Employee Onboarding, Training and Performance. The Portal and HRMS use the same Module names.
 _Avoid_: Permission, feature, section, page
 
 **HR-ATS**:
-The company's Applicant Tracking System, which is the Recruitment and Hiring Module of HRMS. It is where Staff author Job Postings and, later, work Applications through the hiring workflow. The Careers site of the e-commerce app reads what HR-ATS publishes.
+The company's Applicant Tracking System, which is the Job Postings, Applications, Interviews and Offers Modules of HRMS. It is where Staff author Job Postings and, later, work Applications through the hiring workflow. The Careers site of the e-commerce app reads what HR-ATS publishes.
 _Avoid_: ATS app, recruitment app
 
 **Job Posting**:
@@ -73,17 +73,17 @@ A summary block on the Dashboard that belongs to exactly one Module and is shown
 _Avoid_: Tile, panel
 
 **Key Summary Card**:
-A kind of Widget that shows one headline figure at the top of the Dashboard, with an optional line of detail beneath it. The Key Summary Cards are Open jobs, Applicants, Interviews this week, Offer acceptance, Average time to hire, Total Employee, and Attendance Rate. The hiring cards (owned by Recruitment and Hiring) sit in a row of their own above the rest. The owning Module of Attendance Rate may change if Attendance is replaced.
+A kind of Widget that shows one headline figure at the top of the Dashboard, with an optional line of detail beneath it. The Key Summary Cards are Open jobs, Applicants, Interviews this week, Offer acceptance, Average time to hire, Total Employee, and Attendance Rate. The hiring cards (owned by Job Postings, Applications, Interviews and Offers, Average time to hire cross-cutting) sit in a row of their own above the rest. Attendance Rate has no owning Module and shows to every Dashboard holder as "Nothing to show yet".
 _Avoid_: KPI, stat tile, Open Positions (replaced by Open jobs)
 
 **Open jobs**:
-A Key Summary Card, owned by Recruitment and Hiring, that shows how many Job Postings are Open right now, with the openings they list in total and the locations they cover. "Jobs" is only the card's label; the thing counted is the Open Job Posting. It is read from the shared database and is not affected by any date range.
+A Key Summary Card, owned by Job Postings, that shows how many Job Postings are Open right now, with the openings they list in total and the locations they cover. "Jobs" is only the card's label; the thing counted is the Open Job Posting. It is read from the shared database and is not affected by any date range.
 
 **Applicants**:
-A Key Summary Card, owned by Recruitment and Hiring, that shows how many Applications were received in the Dashboard Range, including HR-added, rejected and withdrawn ones. Its detail line is the comparison with the Previous period. "Applicants" is only the card's label; the thing counted is the Application.
+A Key Summary Card, owned by Applications, that shows how many Applications were received in the Dashboard Range, including HR-added, rejected and withdrawn ones. Its detail line is the comparison with the Previous period. "Applicants" is only the card's label; the thing counted is the Application.
 
 **Interviews this week**:
-A Key Summary Card, owned by Recruitment and Hiring, that shows how many Interviews start in the current Monday-to-Sunday week (Manila time), finished ones included, with how many start today. It shows 0, not "Nothing to show yet", when there are none. It is not affected by the Dashboard Range and makes no comparison.
+A Key Summary Card, owned by Interviews, that shows how many Interviews start in the current Monday-to-Sunday week (Manila time), finished ones included, with how many start today. It shows 0, not "Nothing to show yet", when there are none. It is not affected by the Dashboard Range and makes no comparison.
 
 **Dropped Interview**:
 An Interview with no result whose Application has left the Interview Stage (Rejected, Withdrawn, or moved on). It is treated as not taking place: off the list and Calendar and ignored by conflicts, but kept on the Application profile's Interviews table, where its status reads "Dropped". Rescheduling and recording a result are no longer offered.
@@ -92,10 +92,10 @@ An Interview with no result whose Application has left the Interview Stage (Reje
 An Application that reached the Offer Stage and then left it with an answer: reached Hired (accepted) or Rejected (not accepted). It is dated by when it was decided, not when the offer was made. An offer still waiting is not a decided offer. An Applicant who withdraws after an offer has no decision date to read, so is not counted.
 
 **Offer acceptance**:
-A Key Summary Card, owned by Recruitment and Hiring, that shows accepted decided offers as a whole percent of the decided offers whose decision date is in the Dashboard Range, with "X of Y offers accepted" beneath. Its comparison with the Previous period is in percentage points. It shows "Nothing to show yet", never 0%, when no offer was decided.
+A Key Summary Card, owned by Offers, that shows accepted decided offers as a whole percent of the decided offers whose decision date is in the Dashboard Range, with "X of Y offers accepted" beneath. Its comparison with the Previous period is in percentage points. It shows "Nothing to show yet", never 0%, when no offer was decided.
 
 **Average time to hire**:
-A Key Summary Card, owned by Recruitment and Hiring, that shows the mean number of whole days (Manila dates) from an Application being received to being Hired, over the Applications Hired in the Dashboard Range. Its comparison with the Previous period says how many days faster or slower. It shows "Nothing to show yet", never 0 days, when nobody was Hired.
+A Key Summary Card, cross-cutting, shown to holders of Applications or Offers, that shows the mean number of whole days (Manila dates) from an Application being received to being Hired, over the Applications Hired in the Dashboard Range. Its comparison with the Previous period says how many days faster or slower. It shows "Nothing to show yet", never 0 days, when nobody was Hired.
 
 **Dashboard Range**:
 The period the range-dependent Key Summary Cards cover, chosen from the presets This month (default), Last month, Last 30 days, Last 90 days and Year to date, or as a Custom range of two dates no later than today and at most a year apart. It is kept in the URL, anything unknown or invalid means This month, and every date and boundary is in Manila time. This month and Year to date run from the start of the month or year to today; Last 30 and 90 days include today. Only Staff who hold Recruitment and Hiring see the selector.
@@ -105,7 +105,7 @@ _Avoid_: Date filter, period (for the range itself)
 The period a Dashboard Range is compared with. This month is compared with the same days of last month (held at the end of a shorter month), Last month with the month before it, Last 30 or 90 days with the same number of days just before, Year to date with the same days of last year, and a Custom range with the period of the same length just before it. A comparison is left out when either period has no data.
 
 **Detail Widget**:
-A kind of Widget that shows more than one headline figure, such as a chart or a list, on the Dashboard beside or below the Key Summary Cards. The Detail Widgets are Hiring pipeline, Needs attention, Applicants by job, Where applicants come from, Upcoming interviews, Headcount Trend, Department Distribution, Recent Activity, and Upcoming Events. The hiring ones are owned by Recruitment and Hiring. Where a Detail Widget has a headline sentence, it is computed from the data and falls back to a neutral line when there is none. In the code, `Widget` on its own is not used; the Key Summary Cards and the Detail Widgets are separate types.
+A kind of Widget that shows more than one headline figure, such as a chart or a list, on the Dashboard beside or below the Key Summary Cards. The Detail Widgets are Hiring pipeline, Needs attention, Applicants by job, Where applicants come from, Upcoming interviews, Headcount Trend, Department Distribution, Recent Activity, and Upcoming Events. The hiring ones are owned by Job Postings, Applications, Interviews and Offers, and Hiring pipeline and Needs attention are cross-cutting. Where a Detail Widget has a headline sentence, it is computed from the data and falls back to a neutral line when there is none. In the code, `Widget` on its own is not used; the Key Summary Cards and the Detail Widgets are separate types.
 _Avoid_: Panel, tile
 
 **Headcount Trend**:
@@ -118,22 +118,22 @@ A kind of Widget, owned by Employee Information, that shows how the company's em
 A kind of Widget, owned by Employee Information, that lists the latest employee-record events such as hires, transfers and status changes. It does not draw on other Modules.
 
 **Upcoming Events**:
-A kind of Widget, owned by Attendance, that lists what is coming up such as approved leave and holidays. It does not draw on other Modules.
+A kind of Widget, that has no owning Module, shown to every Dashboard holder as "Nothing to show yet" until something supplies it. It lists what is coming up such as approved leave and holidays.
 
 **Hiring pipeline**:
-A Detail Widget, owned by Recruitment and Hiring, that shows how many Applications received in the Dashboard Range have ever reached each Stage (Applied, Screening, Interview, Offer, Hired), each as a percent of all Applications received. Rejected and Withdrawn are not bars. Its headline names how many applicants it takes to get one hire and the Stage where most drop off.
+A Detail Widget, cross-cutting, shown to a holder of Applications, Interviews or Offers with each line gated by its own Module (Applied and Screening by Applications, Interview by Interviews, Offer and Hired by Offers), that shows how many Applications received in the Dashboard Range have ever reached each Stage (Applied, Screening, Interview, Offer, Hired), each as a percent of all Applications received. Rejected and Withdrawn are not bars. Its headline names how many applicants it takes to get one hire and the Stage where most drop off.
 
 **Needs attention**:
-A Detail Widget, owned by Recruitment and Hiring, that lists what Staff should act on now, not affected by the Dashboard Range: Applications to review (at New), Interviews to schedule (at Screening with no interview booked), Results to record (interviews that ended with no result), Offers past reply date (Sent Offers whose reply-by date, in Manila, has passed) and Missing documents (Sent or Accepted Offers with a Pre-employment Document Staff requested that is not yet Submitted, counted per Offer). An Offer on a Withdrawn Application, and any Draft or Declined Offer, is never counted in either. Offer acceptance keeps its own definition.
+A Detail Widget, cross-cutting, shown to a holder of Applications, Interviews or Offers with each line gated by its own Module (review by Applications, schedule and results by Interviews, offers and documents by Offers), that lists what Staff should act on now, not affected by the Dashboard Range: Applications to review (at New), Interviews to schedule (at Screening with no interview booked), Results to record (interviews that ended with no result), Offers past reply date (Sent Offers whose reply-by date, in Manila, has passed) and Missing documents (Sent or Accepted Offers with a Pre-employment Document Staff requested that is not yet Submitted, counted per Offer). An Offer on a Withdrawn Application, and any Draft or Declined Offer, is never counted in either. Offer acceptance keeps its own definition.
 
 **Applicants by job**:
-A Detail Widget, owned by Recruitment and Hiring, that ranks the five Job Postings with the most Applications received in the Dashboard Range, each with its count and its percent of all Applications received in the range. Job Postings that are no longer Open are included. Its headline names the Job Posting with the most Applications.
+A Detail Widget, owned by Applications, that ranks the five Job Postings with the most Applications received in the Dashboard Range, each with its count and its percent of all Applications received in the range. Job Postings that are no longer Open are included. Its headline names the Job Posting with the most Applications.
 
 **Upcoming interviews**:
-A Detail Widget, owned by Recruitment and Hiring, that lists the next five Interviews still to start in the current Monday-to-Sunday week (Manila time), each with the applicant, the Job Posting and the Interview type. Finished Interviews are left out, and the Dashboard Range does not affect it. Its headline says how many start today and how many more this week. Unrelated to Upcoming Events, which lists leave and holidays.
+A Detail Widget, owned by Interviews, that lists the next five Interviews still to start in the current Monday-to-Sunday week (Manila time), each with the applicant, the Job Posting and the Interview type. Finished Interviews are left out, and the Dashboard Range does not affect it. Its headline says how many start today and how many more this week. Unrelated to Upcoming Events, which lists leave and holidays.
 
 **Where applicants come from**:
-A Detail Widget, owned by Recruitment and Hiring, that shows each Source's share of the Applications received in the Dashboard Range and its hire rate, the Applications from that Source that have reached Hired as a percent of those from it. "Unspecified" appears as a row only when it has Applications and never wins a headline. Its headline names the Source with the most Applications and the Source with the highest hire rate, falling back to "Careers page brings the most applicants" when no Application was received.
+A Detail Widget, owned by Applications, that shows each Source's share of the Applications received in the Dashboard Range and its hire rate, the Applications from that Source that have reached Hired as a percent of those from it. "Unspecified" appears as a row only when it has Applications and never wins a headline. Its headline names the Source with the most Applications and the Source with the highest hire rate, falling back to "Careers page brings the most applicants" when no Application was received.
 
 ## UI design reference
 

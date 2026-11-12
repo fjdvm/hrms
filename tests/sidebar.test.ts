@@ -13,34 +13,31 @@ const layout = (pages: string[]) =>
   }));
 
 describe("sidebar", () => {
-  it("lists Dashboard, RECRUITMENT, HIRING, then the remaining Module tabs", () => {
+  it("lists Dashboard, RECRUITMENT, HIRING, then the EMPLOYEE section", () => {
     expect(layout(ALL_PAGES)).toEqual([
       { label: undefined, items: ["Dashboard"] },
       { label: "RECRUITMENT", items: ["Job Postings", "Applicants"] },
       { label: "HIRING", items: ["Interviews", "Offers", "Hired"] },
-      {
-        label: undefined,
-        items: ["Attendance", "Employee Information", "Payroll & ESS", "User Management"],
-      },
+      { label: "EMPLOYEE", items: ["Information", "Onboarding"] },
     ]);
   });
 
-  it("hides both groups without the Recruitment and Hiring Module", () => {
-    const pages = ALL_PAGES.filter((href) => href !== "/job-postings");
+  it("gates each tab by the Module for its area", () => {
+    expect(layout(["/job-postings"])).toEqual([{ label: "RECRUITMENT", items: ["Job Postings"] }]);
+    expect(layout(["/applicants"])).toEqual([{ label: "RECRUITMENT", items: ["Applicants"] }]);
+    expect(layout(["/interviews"])).toEqual([{ label: "HIRING", items: ["Interviews"] }]);
+    expect(layout(["/offers"])).toEqual([{ label: "HIRING", items: ["Offers", "Hired"] }]);
+    expect(layout(["/employee-information"])).toEqual([{ label: "EMPLOYEE", items: ["Information"] }]);
+    expect(layout(["/employee-onboarding"])).toEqual([{ label: "EMPLOYEE", items: ["Onboarding"] }]);
+  });
 
-    expect(layout(pages).flatMap((s) => s.items)).toEqual([
-      "Dashboard",
-      "Attendance",
-      "Employee Information",
-      "Payroll & ESS",
-      "User Management",
-    ]);
+  it("hides the groups whose Modules are not held, and lists no tab for Training or Performance yet", () => {
+    const pages = ALL_PAGES.filter((href) => !["/job-postings", "/applicants", "/interviews", "/offers"].includes(href));
+
+    expect(layout(pages).flatMap((s) => s.items)).toEqual(["Dashboard", "Information", "Onboarding"]);
     expect(layout(pages).map((s) => s.label)).not.toContain("RECRUITMENT");
     expect(layout(pages).map((s) => s.label)).not.toContain("HIRING");
-  });
-
-  it("shows only the tabs the Staff member holds a Module for", () => {
-    expect(layout(["/attendance"])).toEqual([{ label: undefined, items: ["Attendance"] }]);
+    expect(layout(["/training", "/performance"])).toEqual([]);
   });
 
   it("belongs every tab to a Module, with a page and a loading state", () => {

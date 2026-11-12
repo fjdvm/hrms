@@ -24,11 +24,13 @@ beforeEach(async () => {
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY, email text, "emailVerified" boolean);`);
   portal = new FakePortal();
   portal.directory = [
-    { id: "hr-1", username: "ada", modules: ["Recruitment and Hiring", "Dashboard"] },
-    { id: "hr-2", username: "bo", modules: ["Recruitment and Hiring"] },
-    { id: "pay-1", username: "cy", modules: ["Payroll & ESS"] },
+    { id: "hr-1", username: "ada", modules: ["Applications", "Dashboard"] },
+    { id: "hr-2", username: "bo", modules: ["Job Postings", "Applications", "Interviews", "Offers"] },
+    { id: "posting-1", username: "di", modules: ["Job Postings"] },
+    { id: "offer-1", username: "ed", modules: ["Offers"] },
+    { id: "pay-1", username: "cy", modules: ["Performance"] },
   ];
-  handle = portal.signIn({ name: "Ada", username: "ada", email: "ada@example.test", role: "HR Officer" }, ["Recruitment and Hiring"]);
+  handle = portal.signIn({ name: "Ada", username: "ada", email: "ada@example.test", role: "HR Officer" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
   const boundary = portalFetch(portal);
   sends = [];
   gatewayDown = false;
@@ -60,7 +62,7 @@ async function careersApplication() {
     VALUES ('person-1','p1','REF-1','Received','{"fullName":"Kristine Aquino"}','[]',now(),now()) RETURNING id`)).rows[0].id;
 }
 
-it("notifies every Recruitment and Hiring user, and only them, when a Careers application arrives", async () => {
+it("notifies every Applications holder, and only them, when a Careers application arrives", async () => {
   await insertPosting();
   const id = await careersApplication();
   await deliverStaffNotifications(db);
@@ -89,6 +91,21 @@ it("notifies when a posting is published and when it is closed, once each", asyn
   await deliverStaffNotifications(db);
   expect(sends.map((s) => s.body.type).sort()).toEqual(["job-posting.closed", "job-posting.published"]);
   expect(sends.find((s) => s.body.type === "job-posting.closed")?.body.title).toBe("Job posting closed: Recruiter");
+  for (const send of sends) expect([...send.body.userIds].sort()).toEqual(["hr-2", "posting-1"]);
+});
+
+it("tells Offers holders, and only them, about an offer notification", async () => {
+  await db.query(`INSERT INTO hrms_staff_notifications (id, payload) VALUES ('offer.accepted:1', '{"type":"offer.accepted","title":"Offer accepted","body":"b","link":"/offers/1"}')`);
+  await deliverStaffNotifications(db);
+  expect(sends.map((s) => s.body.type)).toEqual(["offer.accepted"]);
+  expect([...sends[0].body.userIds].sort()).toEqual(["hr-2", "offer-1"]);
+});
+
+it("keeps a notification of an unknown type rather than telling the wrong people", async () => {
+  await db.query(`INSERT INTO hrms_staff_notifications (id, payload) VALUES ('mystery:1', '{"type":"mystery.thing","title":"t","body":"b","link":"/"}')`);
+  await deliverStaffNotifications(db);
+  expect(sends).toHaveLength(0);
+  expect((await db.query("SELECT 1 FROM hrms_staff_notifications WHERE delivered_at IS NULL")).rows).toHaveLength(1);
 });
 
 it("notifies when a posting is created already open", async () => {

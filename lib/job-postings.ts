@@ -145,7 +145,7 @@ function normalisedDocuments(expression: string): string {
  */
 export function jobPostingsFor(sessionHandle: string | undefined, db: PostingDatabase = database) {
   async function authorize() {
-    const result = await accessFor(sessionHandle).check("Recruitment and Hiring");
+    const result = await accessFor(sessionHandle).check("Job Postings");
     if (result.decision !== "allowed") throw new JobPostingError(result.decision);
     return result.staff;
   }
@@ -322,7 +322,7 @@ const templateColumns = `id, name, title, department, employment_type AS "employ
 /** Explicit template saves only. Postings keep copied values, never a template id. */
 export function jobTemplatesFor(sessionHandle: string | undefined, db: PostingDatabase = database) {
   async function authorize() {
-    const result = await accessFor(sessionHandle).check("Recruitment and Hiring");
+    const result = await accessFor(sessionHandle).check("Job Postings");
     if (result.decision !== "allowed") throw new JobTemplateError(result.decision);
     return result.staff;
   }

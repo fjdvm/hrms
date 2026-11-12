@@ -22,7 +22,7 @@ beforeEach(async () => {
       ('unverified','unverified@example.test',false), ('no-profile','missing@example.test',false);
     INSERT INTO applicant_profiles VALUES ('yes',true), ('no',false), ('unverified',true);`);
   const portal = new FakePortal();
-  handle = portal.signIn({ name: "Ada", username: "ada", email: "ada@example.test", role: "HR Officer" }, ["Recruitment and Hiring"]);
+  handle = portal.signIn({ name: "Ada", username: "ada", email: "ada@example.test", role: "HR Officer" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
   const boundary = portalFetch(portal);
   sends = [];
   fail = false;
@@ -153,7 +153,7 @@ it.each(["draft", "direct"] as const)("queues one published event for %s publica
   const queued = await db.query<{ id: string; payload: Record<string, unknown> }>("SELECT id, payload FROM hrms_audit_outbox");
   expect(queued.rows).toHaveLength(1);
   expect(queued.rows[0].payload).toMatchObject({
-    source: "HRMS", module: "Recruitment and Hiring", action: "job_posting.published", outcome: "success",
+    source: "HRMS", module: "Job Postings", action: "job_posting.published", outcome: "success",
     target: { type: "job_posting", id: posting.id, display_name: "Recruiter" },
     idempotency_key: queued.rows[0].id, metadata: { applicants_notified: false },
   });
@@ -212,7 +212,7 @@ it.each([
     const attempt = sends[0];
     expect(attempt.path).toBe("/audit/events");
     expect(attempt.body).toMatchObject({
-      source: "HRMS", module: "Recruitment and Hiring", action, outcome: "success",
+      source: "HRMS", module: "Job Postings", action, outcome: "success",
       actor: { type: "user", id: "ada", display_name: "Ada" },
       target: { type: "job_posting", id: posting.id, display_name: "Recruiter" },
       idempotency_key: expect.any(String),
@@ -263,7 +263,7 @@ it.each(["saveDraft", "editDraft", "editOpen"] as const)("delivers %s with its o
   expect(await jobPostingsFor(handle, db).read(saved.id)).toMatchObject({ title: "Senior Recruiter", status: method === "editOpen" ? "open" : "draft" });
   expect(sends).toHaveLength(1);
   expect(sends[0]).toMatchObject({ path: "/audit/events", body: {
-    source: "HRMS", module: "Recruitment and Hiring", outcome: "success",
+    source: "HRMS", module: "Job Postings", outcome: "success",
     action: method === "saveDraft" ? "job_posting.created" : "job_posting.updated",
     actor: { type: "user", id: "ada", display_name: "Ada" },
     target: { type: "job_posting", id: saved.id, display_name: "Senior Recruiter" },
@@ -337,7 +337,7 @@ it.each(["direct", "saveDraft", "editDraft", "createAndPublish", "publish"] as c
     expect(queued).toHaveLength(mode === "direct" ? 1 : 2);
     const event = queued.find(row => row.payload.action === "job_template.created")!;
     expect(event.payload).toMatchObject({
-      source: "HRMS", module: "Recruitment and Hiring", action: "job_template.created", outcome: "success",
+      source: "HRMS", module: "Job Postings", action: "job_template.created", outcome: "success",
       actor: { type: "user", id: "ada", display_name: "Ada" },
       target: { type: "job_template", id: template.id, display_name: "Recruiter" },
       occurred_at: expect.any(String), idempotency_key: event.id,
@@ -404,7 +404,7 @@ it.each(["edit", "delete"] as const)("delivers Job Template %s with its own acti
     ? [expect.objectContaining({ id: template.id, title: "Senior Recruiter" })] : []);
   expect(sends).toHaveLength(1);
   expect(sends[0]).toMatchObject({ path: "/audit/events", body: {
-    source: "HRMS", module: "Recruitment and Hiring", outcome: "success",
+    source: "HRMS", module: "Job Postings", outcome: "success",
     action: method === "edit" ? "job_template.updated" : "job_template.deleted",
     actor: { type: "user", id: "ada", display_name: "Ada" },
     target: { type: "job_template", id: template.id, display_name: method === "edit" ? "Senior Recruiter" : "Recruiter" },

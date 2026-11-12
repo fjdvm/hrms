@@ -20,8 +20,8 @@ beforeEach(async () => {
   }
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY);`);
   portal = new FakePortal();
-  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
-  handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
+  handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);
@@ -174,7 +174,7 @@ it("rejects unknown tabs and reports not-found for a Closed job with no Intervie
   await expect(applications.interviewJob("posting-1", "All")).rejects.toMatchObject({ reason: "not-found" });
 });
 
-it("denies Staff without Recruitment and Hiring", async () => {
+it("denies Staff without Interviews", async () => {
   const other = portal.signIn({ ...staff, username: "x", email: "x@example.test" }, []);
   await expect(applicationsFor(other, db).interviewJobs()).rejects.toMatchObject({ reason: "denied" });
   await expect(applicationsFor(other, db).interviewJob("posting-1", "All")).rejects.toMatchObject({ reason: "denied" });

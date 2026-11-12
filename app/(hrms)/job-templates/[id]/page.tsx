@@ -10,7 +10,7 @@ import { removeTemplate, updateTemplate } from "../actions";
 export default async function Page({
   params,
 }: PageProps<"/job-templates/[id]">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Job Postings");
   const { id } = await params;
   const template = (await (await templatesForRequest()).list()).find(
     (t) => t.id === id,

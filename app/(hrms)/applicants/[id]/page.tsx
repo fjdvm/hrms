@@ -82,7 +82,11 @@ async function Profile({ id }: { id: number }) {
   try {
     const applications = await applicationsForRequest();
     profile = await applications.readProfile(id);
-    if (profile.stage === "Interview") interviewers = await applications.interviewers();
+    // Scheduling belongs to Interviews: without that Module the profile still opens, with no interviewer to pick.
+    if (profile.stage === "Interview") interviewers = await applications.interviewers().catch((error) => {
+      if (error instanceof ApplicationError && error.reason === "denied") return [];
+      throw error;
+    });
   } catch (error) {
     if (error instanceof ApplicationError && (error.reason === "not-found" || error.reason === "validation")) notFound();
     throw error;
@@ -105,7 +109,7 @@ async function Profile({ id }: { id: number }) {
 }
 
 export default async function Page({ params }: PageProps<"/applicants/[id]">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Applications");
   const { id } = await params;
   // Anything that is not a whole number is no Application; the boundary rejects ids out of range.
   const applicationId = /^-?\d+$/.test(id) ? Number(id) : NaN;

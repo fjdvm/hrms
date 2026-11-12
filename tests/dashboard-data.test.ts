@@ -52,9 +52,9 @@ it("is all zero when no Job Posting is Open", async () => {
   expect(await openJobsSummary(db)).toEqual({ count: 0, openings: 0, locations: 0 });
 });
 
-it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring", async () => {
+it("fills the summary with every hiring figure for Staff who hold every hiring Module", async () => {
   await post("a", "open", "Antipolo", 2);
-  expect(await dashboardSummaryFor(["/dashboard", "/job-postings"], RANGE, NOW, db)).toEqual({
+  expect(await dashboardSummaryFor(["/dashboard", "/job-postings", "/applicants", "/interviews", "/offers"], RANGE, NOW, db)).toEqual({
     openJobs: { count: 1, openings: 2, locations: 1 },
     applicants: { current: 0, previous: 0 },
     hiringPipeline: { applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 },
@@ -68,9 +68,22 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
   });
 });
 
-it("does not read the database for Staff who do not hold Recruitment and Hiring", async () => {
+it("does not read the database for Staff who hold none of the hiring Modules", async () => {
   const unreachable = { query: () => Promise.reject(new Error("must not be queried")) };
-  expect(await dashboardSummaryFor(["/dashboard", "/attendance"], RANGE, NOW, unreachable)).toEqual({});
+  expect(await dashboardSummaryFor(["/dashboard", "/employee-information", "/training"], RANGE, NOW, unreachable)).toEqual({});
+});
+
+it("reads only what each Module owns: a Job Postings holder gets Open jobs and nothing else", async () => {
+  await post("a", "open", "Antipolo", 2);
+  expect(await dashboardSummaryFor(["/dashboard", "/job-postings"], RANGE, NOW, db)).toEqual({ openJobs: { count: 1, openings: 2, locations: 1 } });
+});
+
+it.each([
+  ["/applicants", ["applicantSources", "applicants", "applicantsByJob", "hiringPipeline", "needsAttention", "timeToHire"]],
+  ["/interviews", ["hiringPipeline", "interviews", "needsAttention", "upcomingInterviews"]],
+  ["/offers", ["hiringPipeline", "needsAttention", "offers", "timeToHire"]],
+])("reads for a %s holder only the figures its Module feeds", async (page, keys) => {
+  expect(Object.keys(await dashboardSummaryFor(["/dashboard", page], RANGE, NOW, db)).sort()).toEqual(keys);
 });
 
 let received = 0;

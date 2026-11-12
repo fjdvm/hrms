@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
-const state = vi.hoisted(() => ({ cookie: undefined as string | undefined, returnTo: "/payroll-ess" }));
+const state = vi.hoisted(() => ({ cookie: undefined as string | undefined, returnTo: "/performance" }));
 
 vi.mock("next/server", () => ({ connection: async () => {} }));
 vi.mock("next/headers", () => ({
@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { getShell, homePage, requireModule } from "@/lib/portal/staff";
+import { MODULES } from "@/lib/modules";
 
 const ada = { name: "Ada Okafor", username: "ada.okafor", email: "ada@brenraphaels.test", role: "HR Officer" };
 
@@ -37,17 +38,17 @@ afterEach(() => {
 
 describe("a Staff member granted only Attendance", () => {
   beforeEach(() => {
-    state.cookie = portal.signIn(ada, ["Attendance"]);
+    state.cookie = portal.signIn(ada, ["Training"]);
   });
 
   it("sees only Attendance in the shell, and the root goes to Attendance", async () => {
-    expect(await getShell()).toEqual({ staff: ada, permittedPages: ["/attendance"] });
-    expect(await homePage()).toBe("/attendance");
+    expect(await getShell()).toEqual({ staff: ada, permittedPages: ["/training"] });
+    expect(await homePage()).toBe("/training");
   });
 
   it("opens Attendance but is sent to no-access for a denied Module's URL", async () => {
-    expect(await requireModule("Attendance")).toEqual(ada);
-    await expect(requireModule("Payroll & ESS")).rejects.toThrow("REDIRECT /no-access");
+    expect(await requireModule("Training")).toEqual(ada);
+    await expect(requireModule("Performance")).rejects.toThrow("REDIRECT /no-access");
   });
 });
 
@@ -62,11 +63,11 @@ describe("a Staff member with no Module granted", () => {
 
 describe("a Portal outage", () => {
   it("shows the unavailable page with a way back, and never allows", async () => {
-    state.cookie = portal.signIn(ada, ["Payroll & ESS"]);
+    state.cookie = portal.signIn(ada, ["Performance"]);
     portal.unavailable = true;
 
-    await expect(requireModule("Payroll & ESS")).rejects.toThrow(
-      "REDIRECT /unavailable?returnTo=%2Fpayroll-ess",
+    await expect(requireModule("Performance")).rejects.toThrow(
+      "REDIRECT /unavailable?returnTo=%2Fperformance",
     );
     await expect(getShell()).rejects.toThrow("REDIRECT /unavailable");
   });
@@ -74,11 +75,11 @@ describe("a Portal outage", () => {
 
 describe("an invalid or expired session", () => {
   it("restarts sign-in and comes back to the page asked for", async () => {
-    state.cookie = portal.signIn(ada, ["Payroll & ESS"]);
+    state.cookie = portal.signIn(ada, ["Performance"]);
     portal.endSession(state.cookie);
 
-    await expect(requireModule("Payroll & ESS")).rejects.toThrow(
-      "REDIRECT /api/portal/login?returnTo=%2Fpayroll-ess",
+    await expect(requireModule("Performance")).rejects.toThrow(
+      "REDIRECT /api/portal/login?returnTo=%2Fperformance",
     );
   });
 
@@ -99,6 +100,6 @@ describe("the dev-bypass", () => {
     vi.stubEnv("NODE_ENV", "development");
 
     expect(await homePage()).toBe("/dashboard");
-    expect((await getShell()).permittedPages).toHaveLength(6);
+    expect((await getShell()).permittedPages).toHaveLength(MODULES.length);
   });
 });

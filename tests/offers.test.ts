@@ -24,7 +24,7 @@ beforeEach(async () => {
   }
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY);`);
   portal = new FakePortal();
-  handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);
@@ -49,8 +49,8 @@ async function seed(index: number, status = "Offer") {
     [`person-${index}`, `posting-${index}`, `REF-${index}`, status, JSON.stringify({ fullName: `Applicant ${index}` })])).rows[0].id;
 }
 
-it("refuses every operation without the Recruitment and Hiring Module", async () => {
-  const other = portal.signIn(staff, ["Attendance"]);
+it("refuses every operation without the Offers Module", async () => {
+  const other = portal.signIn(staff, ["Training"]);
   const id = await seed(1);
   await expect(offers(other).list()).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).create(id, terms)).rejects.toMatchObject({ reason: "denied" });
@@ -253,7 +253,7 @@ it("shows the stage tracker dates and activity on the offer page data", async ()
 });
 
 it("refuses send, extend and detail without the Module", async () => {
-  const other = portal.signIn(staff, ["Attendance"]);
+  const other = portal.signIn(staff, ["Training"]);
   await expect(offers(other).send(1, "2099-10-29")).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).extendReplyBy(1, "2099-10-29")).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).detail(1)).rejects.toMatchObject({ reason: "denied" });
@@ -348,7 +348,7 @@ it("replies after the reply-by date still count; nothing expires", async () => {
 });
 
 it("refuses to record a reply without the Module", async () => {
-  const other = portal.signIn(staff, ["Attendance"]);
+  const other = portal.signIn(staff, ["Training"]);
   await expect(offers(other).recordReply(1, { answer: "Accepted", repliedAt: justNow(), sendAt: null })).rejects.toMatchObject({ reason: "denied" });
 });
 
@@ -474,7 +474,7 @@ it("records the documents email in the activity once delivered", async () => {
 });
 
 it("refuses documents and requests without the Module", async () => {
-  const other = portal.signIn(staff, ["Attendance"]);
+  const other = portal.signIn(staff, ["Training"]);
   await expect(offers(other).documents(1)).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).requestDocuments(1, { types: ["nbi"], dueDate: DUE })).rejects.toMatchObject({ reason: "denied" });
 });
@@ -594,7 +594,14 @@ it("fills the Job Posting only when hires reach its openings, and a Closed posti
 });
 
 it("refuses hiring and the Hired list without the Module", async () => {
-  const other = portal.signIn(staff, ["Attendance"]);
+  const other = portal.signIn(staff, ["Training"]);
   await expect(offers(other).hire(1)).rejects.toMatchObject({ reason: "denied" });
   await expect(offers(other).employees()).rejects.toMatchObject({ reason: "denied" });
+});
+
+it("opens Offers to the Offers Module alone, not to the other hiring Modules", async () => {
+  for (const holder of ["Job Postings", "Applications", "Interviews"]) {
+    await expect(offers(portal.signIn(staff, [holder])).list()).rejects.toMatchObject({ reason: "denied" });
+  }
+  await expect(offers(portal.signIn(staff, ["Offers"])).list()).resolves.toBeDefined();
 });

@@ -11,7 +11,7 @@ export async function auditedMutation<T>(db: PostingDatabase, staff: Staff, acti
   const id = randomUUID();
   const type = action.split(".")[0];
   const event = {
-    source: "HRMS", module: "Recruitment and Hiring", action, outcome: "success",
+    source: "HRMS", module: "Job Postings", action, outcome: "success",
     actor: { type: "user", id: staff.id ?? staff.username, display_name: staff.name },
     customer_description: null, occurred_at: new Date().toISOString(), idempotency_key: id,
     description: `${staff.name} performed ${action}.`,

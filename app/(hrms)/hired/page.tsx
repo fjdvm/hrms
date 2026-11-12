@@ -11,7 +11,7 @@ import { offersForRequest } from "@/lib/portal/offers";
 import { requireModule } from "@/lib/portal/staff";
 
 export default async function Page() {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Offers");
 
   let result: EmployeeList;
   try {
