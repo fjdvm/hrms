@@ -248,3 +248,70 @@ it('rolls back invalid edits without audit or history and records old and new go
   expect(edits).toHaveLength(2);
   expect(edits.every(e => e.oldValue === '[redacted]' && e.newValue === '[redacted]')).toBe(true);
 });
+
+const onboardingViewer = (role = "HRMS Manager") => portal.signIn({ ...staff, role }, ["Employee Onboarding"]);
+
+it("lists only Onboarding records with account state, default work email, counts and summary", async () => {
+  await db.exec(`DELETE FROM hrms_employee_history; DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  await seedEmployees(db);
+  await db.exec(`UPDATE hrms_employees SET full_name = 'María Dela Cruz' WHERE full_name = 'Maria Santos';
+    UPDATE hrms_employees SET no_account_needed_at = now(), no_account_needed_by = 'Ada' WHERE full_name = 'Jose Reyes'`);
+  const page = await employees(onboardingViewer()).onboarding();
+  expect(page.rows.map(r => [r.name, r.accountState])).toEqual(expect.arrayContaining([
+    ["María Dela Cruz", "Not requested"], ["Jose Reyes", "No account needed"], ["Ana Cruz", "Requested"], ["Paolo Garcia", "Account created"]]));
+  expect(page.rows).toHaveLength(4);
+  expect(page.rows.map(r => r.name)).not.toEqual(expect.arrayContaining(["Liza Bautista"]));
+  expect(page.rows.find(r => r.name === "María Dela Cruz")).toMatchObject({ workEmail: "maria.cruz@brenraphaels.ph", initials: "MD", employeeNumber: expect.stringMatching(/^BR-EMP-/), position: "Cashier", branch: "Cainta branch" });
+  expect(page.rows.find(r => r.name === "Ana Cruz")).toMatchObject({ workEmail: "employee-demo-3@example.test", requestReference: expect.stringMatching(/^RQ-\d{4}$/) });
+  expect(page.rows.find(r => r.name === "Paolo Garcia")).toMatchObject({ becomesActiveOn: expect.any(String) });
+  expect(page.counts).toEqual({ all: 4, needsAccount: 1, requested: 1, accountCreated: 1, noAccountNeeded: 1 });
+  expect(page.summary).toEqual({ needsAccount: 1, requested: 1, accountCreated: 1 });
+  expect((await employees(onboardingViewer()).onboarding({ state: "Requested" })).rows.map(r => r.name)).toEqual(["Ana Cruz"]);
+  expect((await employees(onboardingViewer()).onboarding({ search: "BR-EMP-0003" })).rows.map(r => r.name)).toEqual(["Ana Cruz"]);
+  expect((await employees(onboardingViewer()).onboarding({ search: "dela cruz" })).rows.map(r => r.name)).toEqual(["María Dela Cruz"]);
+});
+
+it("ignores cancelled and declined requests, and flags a passed start date without an account", async () => {
+  await db.exec(`DELETE FROM hrms_employee_history; DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  const [first] = await seedEmployees(db);
+  await db.exec(`DELETE FROM hrms_account_requests;
+    INSERT INTO hrms_account_requests (employee_id,status,work_email,portal_role,access_needed_from,personal_email,requester_id,requester_name)
+      VALUES (${first.employeeId},'declined','x@brenraphaels.ph','HR Officer','2026-01-01','p@example.test','ada','Ada');
+    UPDATE hrms_employees SET start_date = '2026-11-12' WHERE id = ${first.employeeId}`);
+  const clock = (iso: string) => employeesFor(onboardingViewer(), db, undefined, () => new Date(iso));
+  // Start date 2026-11-12 Manila: still its first day at 23:00, passed from midnight.
+  const row = (await clock("2026-11-12T15:00:00Z").onboarding()).rows.find(r => r.id === first.employeeId)!;
+  expect(row).toMatchObject({ accountState: "Not requested", requestStatus: "declined", overdue: false });
+  expect((await clock("2026-11-12T16:00:00Z").onboarding()).rows.find(r => r.id === first.employeeId)!.overdue).toBe(true);
+});
+
+it("gives actions only to Super Admin and HRMS Manager; other holders get the page read-only", async () => {
+  await db.exec(`DELETE FROM hrms_employee_history; DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  await seedEmployees(db);
+  for (const role of ["Super Admin", "HRMS Manager"]) {
+    const page = await employees(onboardingViewer(role)).onboarding();
+    expect(page.canAct).toBe(true);
+    expect(Object.fromEntries(page.rows.map(r => [r.accountState, r.actions]))).toEqual({
+      "Not requested": ["request", "no-account-needed"], "Requested": ["remind", "cancel"], "Account created": [] });
+  }
+  const readOnly = await employees(onboardingViewer("HR Officer")).onboarding();
+  expect(readOnly.canAct).toBe(false);
+  expect(readOnly.rows).toHaveLength(4);
+  expect(readOnly.rows.every(r => r.actions.length === 0)).toBe(true);
+});
+
+it("refuses Onboarding without the Module, with an invalid session or filter, or when the Portal is down", async () => {
+  const onlyInformation = portal.signIn({ ...staff, role: "Super Admin" }, ["Employee Information"]);
+  await expect(employees(onlyInformation).onboarding()).rejects.toMatchObject({ reason: "denied" });
+  await expect(employees(onboardingViewer()).list()).rejects.toMatchObject({ reason: "denied" });
+  await expect(employees("unknown").onboarding()).rejects.toMatchObject({ reason: "invalid" });
+  await expect(employees(onboardingViewer()).onboarding({ state: "Bogus" as never })).rejects.toMatchObject({ reason: "validation" });
+  portal.unavailable = true;
+  await expect(employees(onboardingViewer()).onboarding()).rejects.toMatchObject({ reason: "unavailable" });
+});
+
+it("moves a hired Employee record out of Onboarding view once Active", async () => {
+  expect((await employees(onboardingViewer()).onboarding()).rows.map(r => r.employeeNumber)).toEqual(["BR-EMP-0001"]);
+  await db.exec(`UPDATE hrms_employees SET status = 'Active'`);
+  expect((await employees(onboardingViewer()).onboarding()).rows).toEqual([]);
+});
