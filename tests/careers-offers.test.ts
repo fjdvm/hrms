@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { POST as details } from "@/app/api/careers/offers/[id]/details/route";
+import { GET as readDetails, POST as details } from "@/app/api/careers/offers/[id]/details/route";
 import { employeesFor } from "@/lib/employees";
 import { POST as documents } from "@/app/api/careers/offers/[id]/documents/route";
 import { POST as reply } from "@/app/api/careers/offers/[id]/reply/route";
@@ -229,6 +229,27 @@ it("saves Your details through the Careers route and copies the latest answers a
   expect((await employee.read(employeeId)).emergencyContact).toEqual(personalDetails.emergencyContact);
   expect(await employee.revealGovernmentIds(employeeId)).toEqual(personalDetails.governmentIds);
   expect((await call(details, id, { applicantId, ...personalDetails })).status).toBe(409);
+});
+
+it("reads saved Your details back for the signed-in Applicant only", async () => {
+  vi.stubEnv("HRMS_EMPLOYEE_ENCRYPTION_KEY", Buffer.alloc(32, 7).toString("base64"));
+  const { id, applicantId } = await sentOffer();
+  const read = (applicant: string | null, key: string | null = `Bearer ${KEY}`) => readDetails(
+    new Request(`https://hrms.test/api/careers/offers/${id}/details${applicant ? `?applicantId=${applicant}` : ""}`, { headers: key ? { authorization: key } : {} }),
+    { params: Promise.resolve({ id: String(id) }) });
+  const empty = await read(applicantId);
+  expect(await empty.json()).toEqual({ details: { birthday: null, sex: null, civilStatus: null,
+    governmentIds: { sss: null, philhealth: null, pagibigMid: null, tin: null }, emergencyContact: { name: null, relationship: null, mobile: null } } });
+  await call(details, id, { applicantId, ...personalDetails });
+  const saved = await read(applicantId);
+  expect(saved.status).toBe(200);
+  expect(saved.headers.get("cache-control")).toBe("private, no-store");
+  expect(await saved.json()).toEqual({ details: personalDetails });
+  expect((await read(applicantId, null)).status).toBe(401);
+  expect((await read("someone-else")).status).toBe(404);
+  expect((await read(null)).status).toBe(400);
+  await careers().reply(id, applicantId, "Declined");
+  expect((await read(applicantId)).status).toBe(409);
 });
 
 it("refuses Your details for a wrong Applicant, bad key and unavailable Offer states", async () => {
