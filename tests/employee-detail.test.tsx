@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EmployeeProfile } from "@/components/employees/employee-profile";
 import { PRE_EMPLOYMENT_DOCUMENTS } from "@/lib/offer-documents";
@@ -9,7 +9,8 @@ import type { EmployeeDetail } from "@/lib/employees";
 
 const actions = vi.hoisted(() => ({ saveSection: vi.fn(), revealGovernmentIds: vi.fn() }));
 vi.mock("@/app/(hrms)/employee-information/[id]/actions", () => actions);
-vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock("sonner", () => ({ toast }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
@@ -159,4 +160,63 @@ it("Activity tab lists who changed what, including System", async () => {
   expect(items[0].textContent).toContain("System");
   expect(items[1].textContent).toContain("Mobile changed from — to 09171234567");
   expect(items).toHaveLength(2);
+});
+
+describe("Download all documents", () => {
+  const save = vi.fn();
+  beforeEach(() => {
+    URL.createObjectURL = vi.fn(() => "blob:zip");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { save(this.download, this.href); });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); save.mockClear(); });
+
+  it("offers the button on the Details card and the Documents tab", async () => {
+    render(<EmployeeProfile employee={employee()} history={[]} activity={[]} />);
+    expect(screen.getAllByRole("button", { name: "Download all documents" })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("tab", { name: /Documents/ }));
+    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Download all documents" })).toBeTruthy();
+  });
+
+  it("downloads the ZIP from the employee's documents route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("zip", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmployeeProfile employee={employee()} history={[]} activity={[]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Download all documents" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith("employee-58-digital-201.zip", "blob:zip"));
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/employees/58/documents");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("is busy while the ZIP is preparing and blocks a second click", async () => {
+    let finish!: (r: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EmployeeProfile employee={employee()} history={[]} activity={[]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Download all documents" }));
+    const busy = await screen.findByRole("button", { name: /Preparing/ });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(busy);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    finish(new Response("zip"));
+    expect(await screen.findByRole("button", { name: "Download all documents" })).toBeTruthy();
+  });
+
+  it("toasts an error and recovers when the download fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "unavailable" }, { status: 503 })));
+    render(<EmployeeProfile employee={employee()} history={[]} activity={[]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Download all documents" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/could not download/i)));
+    expect(save).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Download all documents" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("is disabled with an explanation when no document has been submitted", () => {
+    const none = documents.map((d) => ({ ...d, fileName: null, uploadedAt: null, validUntil: null, viewUrl: null, status: "Not provided yet" }));
+    render(<EmployeeProfile employee={employee({ documents: none } as Partial<EmployeeDetail>)} history={[]} activity={[]} />);
+    const button = screen.getByRole("button", { name: "Download all documents" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText("No documents have been submitted yet.")).toBeTruthy();
+    expect(button.getAttribute("aria-describedby")).toBe(screen.getByText("No documents have been submitted yet.").id);
+  });
 });
