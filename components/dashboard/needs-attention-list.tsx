@@ -1,4 +1,4 @@
-import { CalendarPlus, ClipboardCheck, FileSearch, type LucideIcon } from "lucide-react";
+import { CalendarPlus, ClipboardCheck, FileSearch, FileWarning, Hourglass, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import type { NeedsAttentionData, NeedsAttentionRow } from "@/lib/dashboard";
 
@@ -6,6 +6,8 @@ const ICON: Record<NeedsAttentionRow["id"], LucideIcon> = {
   review: FileSearch,
   schedule: CalendarPlus,
   results: ClipboardCheck,
+  offers: Hourglass,
+  documents: FileWarning,
 };
 
 export function NeedsAttentionList({ data }: { data: NeedsAttentionData }) {

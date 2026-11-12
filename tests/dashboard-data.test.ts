@@ -58,7 +58,7 @@ it("fills the summary with Open jobs for Staff who hold Recruitment and Hiring",
     openJobs: { count: 1, openings: 2, locations: 1 },
     applicants: { current: 0, previous: 0 },
     hiringPipeline: { applied: 0, screening: 0, interview: 0, offer: 0, hired: 0 },
-    needsAttention: { toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0 },
+    needsAttention: { toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0, offersPastReply: { count: 0, oldestReplyBy: null }, missingDocuments: 0 },
     applicantSources: [],
     applicantsByJob: { total: 0, jobs: [] },
     interviews: { thisWeek: 0, today: 0 },
@@ -311,7 +311,63 @@ it("counts Interviews that ended with no result, not the ones still to come or a
 });
 
 it("reads nothing to act on when nothing is waiting", async () => {
-  expect(await needsAttentionSummary(NOW, db)).toEqual({ toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0 });
+  expect(await needsAttentionSummary(NOW, db)).toEqual({ toReview: { count: 0, oldestAppliedAt: null }, toSchedule: { count: 0, topJob: null }, resultsToRecord: 0, offersPastReply: { count: 0, oldestReplyBy: null }, missingDocuments: 0 });
+});
+
+/** An Offer on a new Application at the Offer Stage (or Withdrawn). Terms are irrelevant here. */
+async function offerOn(status: "Draft" | "Sent" | "Accepted" | "Declined", replyBy: string | null, application = "Offer"): Promise<number> {
+  const applicationId = await receive("2026-10-01T08:00:00Z", application);
+  return (await db.query<{ id: number }>(
+    `INSERT INTO hrms_offers (application_id, status, monthly_salary, start_date, employment_type, schedule, probation, reports_to, branch, sent_at, reply_by, created_by_name)
+     VALUES ($1, $2, 19000, '2026-12-01', 'Full-time', 'Mon-Fri', 'None', 'Paolo', 'Antipolo', $3, $4, 'Ada') RETURNING id`,
+    [applicationId, status, status === "Draft" ? null : "2026-10-10T08:00:00Z", replyBy],
+  )).rows[0].id;
+}
+const requestDocument = (offerId: number, type: string, status: "Requested" | "Submitted" = "Requested") =>
+  db.query("INSERT INTO hrms_offer_documents (offer_id, document_type, status) VALUES ($1, $2, $3)", [offerId, type, status]);
+
+it("counts Sent Offers past their reply-by date in Manila, with the earliest date, whatever the range", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await offerOn("Sent", "2026-10-20"); // past
+  await offerOn("Sent", "2026-10-27"); // past
+  await offerOn("Sent", "2026-10-28"); // due today in Manila: not past yet
+  await offerOn("Sent", "2026-11-05"); // still time
+  await offerOn("Sent", null);
+  expect((await needsAttentionSummary(NOW, db)).offersPastReply).toEqual({ count: 2, oldestReplyBy: "2026-10-20" });
+  // 16:30Z is 00:30 on 29 Oct in Manila, so the offer due on the 28th is now past.
+  expect((await needsAttentionSummary(new Date("2026-10-28T16:30:00Z"), db)).offersPastReply).toEqual({ count: 3, oldestReplyBy: "2026-10-20" });
+});
+
+it("leaves Withdrawn, Draft, Accepted and Declined Offers out of Offers past reply date", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await offerOn("Sent", "2026-10-01", "Withdrawn");
+  await offerOn("Draft", "2026-10-01");
+  await offerOn("Accepted", "2026-10-01");
+  await offerOn("Declined", "2026-10-01");
+  expect((await needsAttentionSummary(NOW, db)).offersPastReply).toEqual({ count: 0, oldestReplyBy: null });
+});
+
+it("counts Sent and Accepted Offers with a Requested document not yet submitted, once per Offer", async () => {
+  await post("a", "open", "Antipolo", 1);
+  const sent = await offerOn("Sent", "2026-11-05");
+  await requestDocument(sent, "nbi");
+  await requestDocument(sent, "sss");
+  const accepted = await offerOn("Accepted", "2026-11-05");
+  await requestDocument(accepted, "health");
+  await requestDocument(accepted, "nbi", "Submitted");
+  const complete = await offerOn("Accepted", "2026-11-05");
+  await requestDocument(complete, "nbi", "Submitted");
+  await offerOn("Sent", "2026-11-05"); // nothing requested
+  expect((await needsAttentionSummary(NOW, db)).missingDocuments).toBe(2);
+});
+
+it("leaves Withdrawn, Draft and Declined Offers out of Missing documents", async () => {
+  await post("a", "open", "Antipolo", 1);
+  await requestDocument(await offerOn("Sent", "2026-11-05", "Withdrawn"), "nbi");
+  await requestDocument(await offerOn("Accepted", "2026-11-05", "Withdrawn"), "nbi");
+  await requestDocument(await offerOn("Draft", null), "nbi");
+  await requestDocument(await offerOn("Declined", "2026-11-05"), "nbi");
+  expect((await needsAttentionSummary(NOW, db)).missingDocuments).toBe(0);
 });
 
 async function addFrom(appliedAt: string, source: string | null, referredBy: string | null = null): Promise<number> {

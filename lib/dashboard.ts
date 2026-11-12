@@ -1,5 +1,6 @@
 import { MANUAL_SOURCES, type ApplicationSource } from "@/lib/application-sources";
 import { applicantsHref } from "@/lib/application-view";
+import { offersHref } from "@/lib/offer-view";
 import type { Module } from "@/lib/modules";
 
 /** Data each owning Module supplies for its Key Summary Cards. Absent until the Module has data. */
@@ -502,10 +503,14 @@ export interface NeedsAttentionCounts {
   toSchedule: { count: number; topJob: { title: string; count: number } | null };
   /** Interviews that ended with no result recorded. */
   resultsToRecord: number;
+  /** Sent Offers past their reply-by date (Manila), and the earliest of those dates "YYYY-MM-DD" (null with none). */
+  offersPastReply: { count: number; oldestReplyBy: string | null };
+  /** Sent or Accepted Offers with a document Staff requested that is not yet submitted. Counts Offers, not documents. */
+  missingDocuments: number;
 }
 
 export interface NeedsAttentionRow {
-  id: "review" | "schedule" | "results";
+  id: "review" | "schedule" | "results" | "offers" | "documents";
   title: string;
   /** Supporting line; null when there is nothing to say. */
   detail: string | null;
@@ -519,7 +524,7 @@ export interface NeedsAttentionRow {
 export interface NeedsAttentionData {
   /** "3 things to do today", or "Nothing needs your attention." */
   headline: string;
-  /** Always the same three rows, in this order. */
+  /** Always the same five rows, in this order. */
   rows: NeedsAttentionRow[];
 }
 
@@ -739,14 +744,15 @@ function manilaDaysSince(from: string, now: Date): number {
 }
 
 /**
- * The three things Staff should act on now, always in the same order, a zero count muted. The headline sums the counts.
+ * The five things Staff should act on now, always in the same order, a zero count muted. The headline sums the counts.
  * Null only when the Module has not been read at all.
  */
 function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionData | null {
   const data = summary.needsAttention;
   if (!data) return null;
-  const { toReview, toSchedule, resultsToRecord } = data;
+  const { toReview, toSchedule, resultsToRecord, offersPastReply, missingDocuments } = data;
   const ago = toReview.oldestAppliedAt === null ? 0 : manilaDaysSince(toReview.oldestAppliedAt, now);
+  const overdueDays = offersPastReply.oldestReplyBy === null ? 0 : manilaDaysSince(offersPastReply.oldestReplyBy, now);
   const rows: NeedsAttentionRow[] = [
     {
       id: "review",
@@ -771,6 +777,22 @@ function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionDat
       count: resultsToRecord,
       href: "/interviews",
       muted: resultsToRecord === 0,
+    },
+    {
+      id: "offers",
+      title: "Offers past reply date",
+      detail: offersPastReply.count === 0 || offersPastReply.oldestReplyBy === null ? null : `Oldest was due ${plural(overdueDays, "day")} ago`,
+      count: offersPastReply.count,
+      href: offersHref("Sent"),
+      muted: offersPastReply.count === 0,
+    },
+    {
+      id: "documents",
+      title: "Missing documents",
+      detail: missingDocuments === 0 ? null : "Requested, not yet submitted",
+      count: missingDocuments,
+      href: offersHref("All"),
+      muted: missingDocuments === 0,
     },
   ];
   const total = rows.reduce((sum, row) => sum + row.count, 0);
