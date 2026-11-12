@@ -1,16 +1,25 @@
-import { Fragment } from "react";
+"use client";
+
+import { Fragment, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ApplicationInterview, ApplicationStage } from "@/lib/applications";
 import { interviewRow } from "@/lib/application-view";
-import { InterviewResult } from "@/components/hiring/interview-result";
+import { InterviewResult, RecordResultDialog, type Result } from "@/components/hiring/interview-result";
+import { useProfileInterviews } from "@/components/hiring/profile-interviews";
 import { CELL, CardTitle, HEAD } from "@/components/hiring/parts";
 import { ScheduleInterview } from "@/components/hiring/schedule-interview";
 import type { Interviewer } from "@/lib/interviewers";
+import { PENDING_INTERVIEW_ID } from "@/lib/interview-optimistic";
 
 /** Every interview booked for the Application, newest first, with its score once HR has recorded a result. */
-export function ApplicationInterviews({ applicationId, stage, applicantName, applicantEmail, jobTitle, location, interviewers, interviews }: { applicationId: number; stage: ApplicationStage; applicantName: string; applicantEmail: string; jobTitle: string; location: string; interviewers: Interviewer[]; interviews: ApplicationInterview[] }) {
+export function ApplicationInterviews({ applicationId, stage: serverStage, applicantName, applicantEmail, jobTitle, location, interviewers, interviews: serverInterviews }: { applicationId: number; stage: ApplicationStage; applicantName: string; applicantEmail: string; jobTitle: string; location: string; interviewers: Interviewer[]; interviews: ApplicationInterview[] }) {
+  // Bookings, moves and results appear here the moment HR saves. The dialogs live here, not in the rows, so a row that completes keeps its dialog.
+  const { state, apply } = useProfileInterviews({ interviews: serverInterviews, stage: serverStage });
+  const { interviews, stage } = state;
+  const [dialog, setDialog] = useState<{ kind: "reschedule"; interview: ApplicationInterview } | { kind: "result"; interview: ApplicationInterview; result: Result; subtitle: string }>();
   return (
     <Card className="flex flex-col gap-[10px] rounded-xl px-[20px] py-[18px] shadow-none">
       <CardTitle aside={<span className="text-xs font-medium text-primary">Scorecards are private to HR</span>}>Interviews</CardTitle>
@@ -45,10 +54,11 @@ export function ApplicationInterviews({ applicationId, stage, applicantName, app
                         <Badge variant={row.status === "Completed" ? "success" : row.status === "Dropped" ? "secondary" : "info"}>{row.status}</Badge>
                       </TableCell>
                       <TableCell className={`${CELL} text-right`}>
-                        {row.live && (
+                        {row.live && interview.id !== PENDING_INTERVIEW_ID && (
                           <div className="flex justify-end gap-2">
-                            <ScheduleInterview applicationId={applicationId} stage={stage} applicantName={applicantName} applicantEmail={applicantEmail} jobTitle={jobTitle} location={location} interviewers={interviewers} interview={interview} label="Reschedule" />
-                            <InterviewResult applicationId={applicationId} interviewId={interview.id} startsAt={interview.startsAt} applicantName={applicantName} subtitle={`${applicantName} · ${jobTitle} · ${row.date}, ${row.type.toLowerCase()} with ${row.interviewer}`} />
+                            <Button variant="outline" onClick={() => setDialog({ kind: "reschedule", interview })} className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] text-sm font-medium shadow-none">Reschedule</Button>
+                            <InterviewResult applicationId={applicationId} interviewId={interview.id} startsAt={interview.startsAt} applicantName={applicantName} subtitle={`${applicantName} · ${jobTitle} · ${row.date}, ${row.type.toLowerCase()} with ${row.interviewer}`}
+                              onChoose={(result) => setDialog({ kind: "result", interview, result, subtitle: `${applicantName} · ${jobTitle} · ${row.date}, ${row.type.toLowerCase()} with ${row.interviewer}` })} />
                           </div>
                         )}
                       </TableCell>
@@ -64,6 +74,19 @@ export function ApplicationInterviews({ applicationId, stage, applicantName, app
             </TableBody>
           </Table>
         )}
+      {dialog?.kind === "reschedule" && (
+        <ScheduleInterview
+          key={dialog.interview.id} label="Reschedule" applicationId={applicationId} stage={stage} applicantName={applicantName} applicantEmail={applicantEmail}
+          jobTitle={jobTitle} location={location} interviewers={interviewers} interview={dialog.interview} onOptimistic={apply}
+          controlled={{ open: true, onOpenChange: (open) => { if (!open) setDialog(undefined); } }}
+        />
+      )}
+      {dialog?.kind === "result" && (
+        <RecordResultDialog
+          key={`${dialog.interview.id}-${dialog.result}`} applicationId={applicationId} interviewId={dialog.interview.id} applicantName={applicantName}
+          initialResult={dialog.result} subtitle={dialog.subtitle} onOptimistic={apply} onClose={() => setDialog(undefined)}
+        />
+      )}
     </Card>
   );
 }

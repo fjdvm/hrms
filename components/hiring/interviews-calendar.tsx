@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useOptimistic, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
@@ -19,6 +19,8 @@ import {
 } from "@/lib/calendar-view";
 import type { Interviewer } from "@/lib/interviewers";
 import { manilaToday } from "@/lib/interview-form";
+import { applyToCalendar, type InterviewPatch } from "@/lib/interview-optimistic";
+import { useOptimisticNav } from "@/hooks/use-optimistic-nav";
 import { cn } from "@/lib/utils";
 
 const VIEWS: Record<CalendarMode, string> = { day: "timeGridDay", week: "timeGridWeek", month: "dayGridMonth" };
@@ -125,13 +127,16 @@ function Popup({ interview, anchor, onClose, onReschedule, onRecord }: { intervi
 }
 
 /** The Interviews Calendar: FullCalendar for the grid, our own header, filters, double-booking banners and Interview pop-up. */
-export function InterviewsCalendar({ state, title, interviews, conflicts, interviewers, jobs }: { state: CalendarState; title: string; interviews: CalendarInterview[]; conflicts: CalendarConflict[]; interviewers: Interviewer[]; jobs: CalendarJob[] }) {
+export function InterviewsCalendar({ state, title, interviews: serverInterviews, conflicts, interviewers, jobs }: { state: CalendarState; title: string; interviews: CalendarInterview[]; conflicts: CalendarConflict[]; interviewers: Interviewer[]; jobs: CalendarJob[] }) {
   const router = useRouter();
+  // A move or a result shows on the grid the moment HR saves; a refused save rolls it back.
+  const [interviews, apply] = useOptimistic<CalendarInterview[], InterviewPatch>(serverInterviews, applyToCalendar);
   const [selected, setSelected] = useState<{ interview: CalendarInterview; anchor: DOMRect }>();
   const [rescheduling, setRescheduling] = useState<CalendarInterview>();
   const [recording, setRecording] = useState<CalendarInterview>();
   const events = useMemo(() => calendarEvents(interviews, conflicts), [interviews, conflicts]);
   const [today] = useState(() => manilaToday());
+  const nav = useOptimisticNav(state.mode);
   const go = (patch: Partial<CalendarState>) => router.push(calendarHref({ ...state, ...patch }));
   const modes: [CalendarMode, string][] = [["day", "Day"], ["week", "Week"], ["month", "Month"]];
 
@@ -145,8 +150,8 @@ export function InterviewsCalendar({ state, title, interviews, conflicts, interv
         <div className="flex-1" />
         <div role="group" aria-label="Calendar view" className="flex gap-[2px] rounded-lg bg-zinc-100 p-[3px]">
           {modes.map(([mode, label]) => (
-            <Link key={mode} href={calendarHref({ ...state, mode })} aria-current={state.mode === mode ? "true" : undefined}
-              className={cn("rounded-md px-[12px] py-[5px] text-sm font-medium text-zinc-500", state.mode === mode && "bg-white text-foreground shadow-sm")}>{label}</Link>
+            <Link key={mode} href={calendarHref({ ...state, mode })} onClick={nav.go(mode, calendarHref({ ...state, mode }))} aria-current={nav.shown === mode ? "true" : undefined}
+              className={cn("rounded-md px-[12px] py-[5px] text-sm font-medium text-zinc-500", nav.shown === mode && "bg-white text-foreground shadow-sm")}>{label}</Link>
           ))}
         </div>
         <Select value={state.interviewerId ?? EVERYONE} onValueChange={(value) => go({ interviewerId: value === EVERYONE ? undefined : value })}>
@@ -174,7 +179,7 @@ export function InterviewsCalendar({ state, title, interviews, conflicts, interv
           </div>
         );
       })}
-      <div className="hrms-calendar overflow-hidden rounded-xl border bg-white">
+      <div aria-busy={nav.pending} className={cn("hrms-calendar overflow-hidden rounded-xl border bg-white transition-opacity", nav.pending && "opacity-60")}>
         <FullCalendar
           key={`${state.mode}-${state.date}`}
           plugins={[dayGridPlugin, timeGridPlugin]}
@@ -217,7 +222,7 @@ export function InterviewsCalendar({ state, title, interviews, conflicts, interv
         <ScheduleInterview
           label="Reschedule" stage="Interview" applicationId={rescheduling.applicationId} applicantName={rescheduling.applicantName}
           applicantEmail={rescheduling.applicantEmail} jobTitle={rescheduling.jobPostingTitle} location={rescheduling.jobLocation}
-          interviewers={interviewers} interview={rescheduleTarget(rescheduling)}
+          interviewers={interviewers} interview={rescheduleTarget(rescheduling)} onOptimistic={apply}
           controlled={{ open: true, onOpenChange: (open) => { if (!open) { setRescheduling(undefined); setSelected(undefined); } } }}
         />
       )}
@@ -225,7 +230,7 @@ export function InterviewsCalendar({ state, title, interviews, conflicts, interv
         <RecordResultDialog
           applicationId={recording.applicationId} interviewId={recording.id} applicantName={recording.applicantName}
           subtitle={`${recording.applicantName} · ${recording.jobPostingTitle} · ${DAY.format(recording.startsAt)}, ${recording.type.toLowerCase()} with ${recording.interviewerName}`}
-          onClose={() => { setRecording(undefined); setSelected(undefined); }}
+          onOptimistic={apply} onClose={() => { setRecording(undefined); setSelected(undefined); }}
         />
       )}
     </div>
