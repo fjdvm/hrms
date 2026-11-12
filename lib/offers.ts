@@ -1,3 +1,4 @@
+import { readApplicantDetails, employeeIdsFromDetails } from "./offer-applicant-details";
 import { randomUUID } from "node:crypto";
 import { database, type Database } from "./database";
 import { retryJobPostingAudit } from "./job-posting-audit";
@@ -431,6 +432,10 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       const { rows: stored } = await db.query<{ type: DocumentType; fileId: string | null }>(
         `SELECT document_type AS type, file_id AS "fileId" FROM public.hrms_offer_documents WHERE offer_id = $1 AND status = 'Submitted'`, [id]);
       for (const row of stored) { const file = files.find((item) => item.type === row.type); if (file) file.fileId = row.fileId; }
+      const snapshot = await readApplicantDetails(db, id);
+      const allocated = await db.query<{ id: number }>(`SELECT nextval(pg_get_serial_sequence('public.hrms_employees', 'id'))::integer AS id`);
+      const employeeId = allocated.rows[0].id;
+      const governmentIds = employeeIdsFromDetails(snapshot.details, id, employeeId);
       const email = hiredEmail({ applicantName: offer.applicantName, role: offer.role, startDate: offer.startDate });
       const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
       const auditId = randomUUID();
@@ -442,11 +447,13 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       };
       const { rows } = await db.query<{ employeeId: number | null; filled: boolean }>(`
         WITH ok AS (
-          SELECT o.id, o.application_id, o.monthly_salary, o.start_date, o.employment_type, o.schedule, o.probation, o.reports_to, o.branch,
-            a.applicant_name, a.applicant_email, a.job_posting_id, a.job_posting_title
-          FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id
-          WHERE o.id = $1 AND o.status = 'Accepted' AND a.stage = 'Offer'
+          UPDATE public.hrms_offers o SET details_revision = details_revision + 1
+          FROM public.hrms_all_applications a
+          WHERE a.id = o.application_id AND o.id = $1 AND o.status = 'Accepted' AND a.stage = 'Offer'
+            AND o.details_revision = $7
             AND NOT EXISTS (SELECT 1 FROM public.hrms_offer_documents d WHERE d.offer_id = o.id AND d.status = 'Requested')
+          RETURNING o.id, o.application_id, o.monthly_salary, o.start_date, o.employment_type, o.schedule, o.probation, o.reports_to, o.branch,
+            a.applicant_name, a.applicant_email, a.job_posting_id, a.job_posting_title
         ), moved_careers AS (
           UPDATE public.applications SET status = 'Hired', updated_at = statement_timestamp()
           WHERE id = (SELECT application_id FROM ok) AND status = 'Offer'
@@ -471,9 +478,10 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
           FROM moved m WHERE m.applicant_id IS NOT NULL AND EXISTS (SELECT 1 FROM neon_auth."user" u WHERE u.id::text = m.applicant_id)
           ON CONFLICT (id) DO NOTHING
         ), employee AS (
-          INSERT INTO public.hrms_employees (employee_number, offer_id, application_id, full_name, email, position, department, branch,
+          INSERT INTO public.hrms_employees (id, birthday, sex, civil_status, employee_number, offer_id, application_id, full_name, email, position, department, branch,
             start_date, monthly_salary, employment_type, schedule, probation, reports_to, hired_by_name, mobile, home_address, probation_end_date)
-          SELECT 'BR-EMP-' || lpad(nextval('public.hrms_employee_number_seq')::text, 4, '0'), ok.id, ok.application_id, ok.applicant_name,
+          OVERRIDING SYSTEM VALUE
+          SELECT $8, ($9::jsonb->>'birthday')::date, $9::jsonb->>'sex', $9::jsonb->>'civilStatus', 'BR-EMP-' || lpad(nextval('public.hrms_employee_number_seq')::text, 4, '0'), ok.id, ok.application_id, ok.applicant_name,
             ok.applicant_email, ok.job_posting_title, (SELECT j.department FROM public.job_postings j WHERE j.id = ok.job_posting_id), ok.branch,
             ok.start_date, ok.monthly_salary, ok.employment_type, ok.schedule, ok.probation, ok.reports_to, $2,
             CASE WHEN ok.application_id > 0 THEN (SELECT profile_snapshot->>'phone' FROM public.applications WHERE id = ok.application_id)
@@ -484,6 +492,13 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
               WHEN '6 months' THEN (ok.start_date + interval '6 months')::date END
           FROM ok WHERE EXISTS (SELECT 1 FROM moved)
           RETURNING id
+        ), employee_ids AS (
+          INSERT INTO public.hrms_employee_government_ids (employee_id, sss, philhealth, pagibig_mid, tin)
+          SELECT id, $10, $11, $12, $13 FROM employee
+        ), employee_contact AS (
+          INSERT INTO public.hrms_employee_emergency_contacts (employee_id, name, relationship, mobile)
+          SELECT id, $9::jsonb->'emergencyContact'->>'name', $9::jsonb->'emergencyContact'->>'relationship',
+            $9::jsonb->'emergencyContact'->>'mobile' FROM employee
         ), employee_documents AS (
           INSERT INTO public.hrms_employee_documents (employee_id, document_type, source, file_id, file_name, uploaded_at)
           SELECT employee.id, f.type, f.source, f."fileId", f."fileName",
@@ -508,7 +523,7 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
           FROM filled
         )
         SELECT (SELECT id FROM employee) AS "employeeId", EXISTS (SELECT 1 FROM filled) AS filled`,
-      [id, staff.name, JSON.stringify(files), JSON.stringify(payload), auditId, JSON.stringify(event)]);
+      [id, staff.name, JSON.stringify(files), JSON.stringify(payload), auditId, JSON.stringify(event), snapshot.revision, employeeId, JSON.stringify(snapshot.details), ...governmentIds]);
       if (rows[0].employeeId === null) throw new OfferError("conflict");
       if (rows[0].filled) await retryJobPostingAudit(db, auditId);
       return { employeeId: rows[0].employeeId };
