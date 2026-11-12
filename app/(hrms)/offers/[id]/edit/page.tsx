@@ -11,7 +11,7 @@ import { requireModule } from "@/lib/portal/staff";
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
 export default async function Page({ params }: PageProps<"/offers/[id]/edit">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Offers");
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
   const offers = await offersForRequest();

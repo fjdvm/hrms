@@ -5,7 +5,7 @@ import { requireModule } from "@/lib/portal/staff";
 import { createTemplate } from "../actions";
 
 export default async function Page() {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Job Postings");
 
   return (
     <div className="flex flex-col gap-md px-md pt-[20px] sm:px-xl">

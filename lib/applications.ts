@@ -106,7 +106,7 @@ const validId = (id: unknown) => Number.isInteger(id) && id !== 0 && Math.abs(id
 /** Server-side boundary. Recheck the Portal on every operation, including repeated reads. */
 export function applicationsFor(sessionHandle: string | undefined, db: Database = database, files: DocumentFiles = gatewayDocumentFiles()) {
   async function read({ page = 1, stage = "All", search = "", jobPostingId }: ApplicationFilters & { page?: number } = {}, paginated = true): Promise<ApplicationPage> {
-    const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+    const access = await accessFor(sessionHandle).check("Applications");
     if (access.decision !== "allowed") throw new ApplicationError(access.decision);
     if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger((page - 1) * 25)
       || !["All", "New", "Screening", "Interview", "Offer", "Hired", "Rejected"].includes(stage)
@@ -208,16 +208,16 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
   }
 
   async function saveInterview(id: number, input: InterviewInput, interviewId: number | undefined, stage: ApplicationStage) {
-    const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+    const access = await accessFor(sessionHandle).check("Interviews");
     if (access.decision !== "allowed") throw new ApplicationError(access.decision);
     if (!validId(id) || (interviewId !== undefined && (!Number.isSafeInteger(interviewId) || interviewId <= 0))) throw new ApplicationError("validation", "Provide a valid Application and Interview.");
     if (stage !== "Interview") throw new ApplicationError("validation", "Application must be in the Interview Stage.");
     const detail = interviewValidation(input);
     if (detail) throw new ApplicationError("validation", detail);
-    const staff = await listModuleStaff("Recruitment and Hiring");
+    const staff = await listModuleStaff("Interviews");
     if (!staff) throw new ApplicationError("unavailable");
     const interviewer = staff.find(member => member.id === input.interviewerId);
-    if (!interviewer) throw new ApplicationError("validation", "Interviewer must hold Recruitment and Hiring.");
+    if (!interviewer) throw new ApplicationError("validation", "Interviewer must hold Interviews.");
     const { rows: applicants } = await db.query<{ applicant_name: string; job_posting_title: string }>(
       "SELECT applicant_name, job_posting_title FROM public.hrms_all_applications WHERE id = $1", [id]);
     if (!applicants[0]) throw new ApplicationError("not-found");
@@ -245,9 +245,9 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
   return {
     /** Current eligible Interviewers; unavailable data is never cached or returned as an empty directory. */
     async interviewers(): Promise<Interviewer[]> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Interviews");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
-      const staff = await listModuleStaff("Recruitment and Hiring");
+      const staff = await listModuleStaff("Interviews");
       if (!staff) throw new ApplicationError("unavailable");
       if (staff.length === 0) return [];
       try {
@@ -265,7 +265,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     },
     /** Records a walk-in or referral on an Open Job Posting in HRMS' own table; applied date is today. */
     async addApplicant(input: ManualApplicantInput): Promise<number> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Applications");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       const text = (value: unknown) => typeof value === "string" && value.trim() !== "";
       const date = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -303,7 +303,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       }
     },
     async addNote(id: number, text: string): Promise<void> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Applications");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (!validId(id)
         || typeof text !== "string" || text.trim() === "") throw new ApplicationError("validation");
@@ -315,7 +315,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     },
     /** The caller supplies the Stage they reviewed, so stale actions cannot advance it twice. */
     async moveStage(id: number, fromStage: ApplicationStage, toStage: ApplicationStage, reason?: string): Promise<void> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check(toStage === "Hired" ? "Offers" : "Applications");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       const forward: Partial<Record<ApplicationStage, ApplicationStage>> = {
         New: "Screening", Screening: "Interview", Interview: "Offer", Offer: "Hired",
@@ -335,7 +335,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       await saveInterview(id, interview, interviewId, "Interview");
     },
     async recordInterviewResult(id: number, interviewId: number, outcome: { score: number; result: "Passed" | "Not passed"; privateNotes?: string; resultEmailAt?: string }): Promise<void> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Interviews");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (!validId(id) || !(Number.isSafeInteger(interviewId) && interviewId > 0 && interviewId <= 2_147_483_647)
         || !outcome || !Number.isInteger(outcome.score) || outcome.score < 1 || outcome.score > 5
@@ -351,7 +351,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       if (rows[0].saved.error) throw new ApplicationError(rows[0].saved.error, rows[0].saved.detail);
     },
     async downloadDocument(id: number, documentId: number): Promise<Response> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Applications");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (![id, documentId].every((value) => Number.isInteger(value) && value > 0 && value <= 2_147_483_647)) {
         throw new ApplicationError("validation");
@@ -382,7 +382,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     },
     /** Earlier rounds retained by migration; separate from the one current booking. */
     async readLegacyInterviews(id: number): Promise<ApplicationInterview[]> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Interviews");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (!validId(id)) throw new ApplicationError("validation");
       const { rows } = await db.query<{ interviews: (Omit<ApplicationInterview, "startsAt" | "endsAt"> & { startsAt: string; endsAt: string })[] }>(`
@@ -400,7 +400,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
       return rows[0].interviews.map(item => ({ ...item, startsAt: new Date(item.startsAt), endsAt: new Date(item.endsAt) }));
     },
     async readProfile(id: number): Promise<ApplicationProfile> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Applications");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (!validId(id)) throw new ApplicationError("validation");
       // Careers snapshots use phone/location. Older snapshots omit email and the
@@ -476,7 +476,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     },
     /** One card per Job Posting with an Application in the Interview Stage, whatever the posting's status. */
     async interviewJobs(): Promise<{ jobs: InterviewJobSummary[]; totals: { jobs: number; interviewsThisWeek: number; interviewsToday: number } }> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Interviews");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       const { rows } = await db.query<{ jobs: (Omit<InterviewJobSummary, "nextInterview"> & { next: { applicantName: string; startsAt: string; interviewerName: string } | null })[] }>(`
         WITH live AS (
@@ -504,7 +504,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     },
     /** A job's Interview Stage Applications; an Application leaves once its result is recorded or it leaves the Stage. */
     async interviewJob(jobPostingId: string, tab: InterviewJobTab = "All"): Promise<{ job: InterviewJobSummary; counts: Record<InterviewJobTab, number>; rows: InterviewJobRow[] }> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Interviews");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       if (typeof jobPostingId !== "string" || jobPostingId.trim() === "" || !["All", "To schedule", "Scheduled"].includes(tab)) throw new ApplicationError("validation");
       const summary = (await this.interviewJobs()).jobs.find(job => job.jobPostingId === jobPostingId);
@@ -524,7 +524,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
     },
     /** Interviews starting in [from, to) with colours and any double-bookings; dropped Interviews are excluded everywhere. */
     async calendar({ from, to, interviewerId, jobPostingId }: CalendarFilters): Promise<{ interviews: CalendarInterview[]; conflicts: CalendarConflict[] }> {
-      const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+      const access = await accessFor(sessionHandle).check("Interviews");
       if (access.decision !== "allowed") throw new ApplicationError(access.decision);
       const instant = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
       const optional = (value: unknown) => value === undefined || (typeof value === "string" && value.trim() !== "");

@@ -1,6 +1,6 @@
 # HRMS and Careers share one database, and Job Postings are written directly
 
-HR-ATS (the Recruitment and Hiring Module of HRMS) and the Careers site of the e-commerce app use the same Neon database, `brenraphaels-ats`. HRMS writes Job Postings straight into the `job_postings` table that Careers reads, so a published, edited or closed Job Posting is visible on Careers at once, with no webhook and no second copy to keep in sync. This supersedes the Job Posting part of the e-commerce repo's ADR-0005, which had Careers keep a webhook-fed copy so that its public page survived an HR-ATS outage; we chose one source of truth over that outage tolerance for a simpler build. Applicant identity stays in the same database but remains unrelated to Customer identity (ADR-0006 there still holds).
+HR-ATS (the Job Postings, Applications, Interviews and Offers Modules of HRMS) and the Careers site of the e-commerce app use the same Neon database, `brenraphaels-ats`. HRMS writes Job Postings straight into the `job_postings` table that Careers reads, so a published, edited or closed Job Posting is visible on Careers at once, with no webhook and no second copy to keep in sync. This supersedes the Job Posting part of the e-commerce repo's ADR-0005, which had Careers keep a webhook-fed copy so that its public page survived an HR-ATS outage; we chose one source of truth over that outage tolerance for a simpler build. Applicant identity stays in the same database but remains unrelated to Customer identity (ADR-0006 there still holds).
 
 ## Consequences
 

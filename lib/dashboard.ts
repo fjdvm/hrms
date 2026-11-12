@@ -76,7 +76,8 @@ export type UpcomingEvent = {
 
 export interface KeySummaryCard {
   label: string;
-  module: Module["name"];
+  /** The Module whose data it shows; null when it is cross-cutting or has no owner. */
+  module: Module["name"] | null;
   /** The headline figure, or null when the owning Module has no data to show yet. */
   figure: string | null;
   /** The line under the figure, or null when there is none. */
@@ -284,10 +285,21 @@ export function rangeSearch(range: DashboardRange): string {
 /** The hiring cards sit in a row of their own above the rest. */
 type CardRow = "hiring" | "people";
 
+/** Who sees a card or Widget: holders of any of these Modules' pages, or every Dashboard holder when it has no owning Module. */
+type Audience = readonly Module["href"][] | "everyone";
+
+/** Whether the Staff member, holding these pages, is in the audience. Every Dashboard holder is in "everyone". */
+const sees = (audience: Audience, permittedPages: readonly string[]) =>
+  audience === "everyone" ? permittedPages.includes("/dashboard") : audience.some((href) => permittedPages.includes(href));
+
+/** The cross-cutting hiring Widgets show to a holder of any of these Modules, each line gated by its own. */
+const HIRING_PAGES = ["/applicants", "/interviews", "/offers"] as const;
+
 interface CardSpec {
   label: string;
-  module: Module["name"];
-  href: Module["href"];
+  /** The owning Module; null for a cross-cutting card or one with no owner. */
+  module: Module["name"] | null;
+  audience: Audience;
   row: CardRow;
   figure: (summary: DashboardSummary) => string | null;
   caption?: (summary: DashboardSummary) => string | null;
@@ -329,8 +341,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const CARDS: readonly CardSpec[] = [
   {
     label: "Open jobs",
-    module: "Recruitment and Hiring",
-    href: "/job-postings",
+    module: "Job Postings",
+    audience: ["/job-postings"],
     row: "hiring",
     figure: ({ openJobs: d }) => (d && d.count > 0 ? String(d.count) : null),
     caption: ({ openJobs: d }) =>
@@ -340,8 +352,8 @@ const CARDS: readonly CardSpec[] = [
   },
   {
     label: "Applicants",
-    module: "Recruitment and Hiring",
-    href: "/job-postings",
+    module: "Applications",
+    audience: ["/applicants"],
     row: "hiring",
     figure: ({ applicants: d }) => (d ? String(d.current) : null),
     comparison: ({ applicants: d }, range) => (d ? compare(d.current, d.previous, range.previous.wording) : null),
@@ -349,8 +361,8 @@ const CARDS: readonly CardSpec[] = [
   },
   {
     label: "Interviews this week",
-    module: "Recruitment and Hiring",
-    href: "/job-postings",
+    module: "Interviews",
+    audience: ["/interviews"],
     row: "hiring",
     // Zero is a figure: the card shows 0, not "Nothing to show yet", until interviews are stored.
     figure: ({ interviews: d }) => (d ? String(d.thisWeek) : null),
@@ -358,8 +370,8 @@ const CARDS: readonly CardSpec[] = [
   },
   {
     label: "Offer acceptance",
-    module: "Recruitment and Hiring",
-    href: "/job-postings",
+    module: "Offers",
+    audience: ["/offers"],
     row: "hiring",
     figure: ({ offers: d }) => (d && d.current.decided > 0 ? `${wholePercent(d.current)}%` : null),
     caption: ({ offers: d }) =>
@@ -369,8 +381,9 @@ const CARDS: readonly CardSpec[] = [
   },
   {
     label: "Average time to hire",
-    module: "Recruitment and Hiring",
-    href: "/job-postings",
+    // Cross-cutting: applying is Applications, being Hired is Offers.
+    module: null,
+    audience: ["/applicants", "/offers"],
     row: "hiring",
     figure: ({ timeToHire: d }) => (d && d.current.averageDays !== null ? plural(Math.round(d.current.averageDays), "day") : null),
     comparison: ({ timeToHire: d }, range) => (d ? compareHireTimes(d, range.previous.wording) : null),
@@ -379,15 +392,15 @@ const CARDS: readonly CardSpec[] = [
   {
     label: "Total Employee",
     module: "Employee Information",
-    href: "/employee-information",
+    audience: ["/employee-information"],
     row: "people",
     figure: ({ totalEmployee: d }) =>
       d ? String(d.regular + d.probationary + d.ojt) : null,
   },
   {
     label: "Attendance Rate",
-    module: "Attendance",
-    href: "/attendance",
+    module: null,
+    audience: "everyone",
     row: "people",
     figure: ({ attendanceRate: d }) =>
       d && d.expected > 0 ? `${Math.round((d.present / d.expected) * 100)}%` : null,
@@ -398,7 +411,7 @@ const CARD_ROWS: readonly CardRow[] = ["hiring", "people"];
 
 /**
  * The Key Summary Cards a Staff member sees, as the Dashboard rows (hiring first, then the rest), each
- * in fixed order: one card per card whose owning Module they hold. A row with no card is left out, and
+ * in fixed order: a card shows to holders of its owning Module (any of its Modules when cross-cutting) and, with no owner, to every Dashboard holder. A row with no card is left out, and
  * unknown addresses are ignored, so only real Modules can produce a card.
  */
 export function cardRowsFor(
@@ -415,7 +428,7 @@ function cardsInRow(
   summary: DashboardSummary,
   range: DashboardRange,
 ): KeySummaryCard[] {
-  return CARDS.filter((c) => c.row === row && permittedPages.includes(c.href)).map((c) => ({
+  return CARDS.filter((c) => c.row === row && sees(c.audience, permittedPages)).map((c) => ({
     label: c.label,
     module: c.module,
     figure: c.figure(summary),
@@ -524,7 +537,7 @@ export interface NeedsAttentionRow {
 export interface NeedsAttentionData {
   /** "3 things to do today", or "Nothing needs your attention." */
   headline: string;
-  /** Always the same five rows, in this order. */
+  /** The rows the Staff member's Modules allow, in this order: review, schedule, results, offers, documents. */
   rows: NeedsAttentionRow[];
 }
 
@@ -580,7 +593,8 @@ export interface ApplicantsByJobData {
 /** A Detail Widget and the data it shows; `data` is null when its owning Module has none yet. */
 export type DetailWidget = {
   label: string;
-  module: Module["name"];
+  /** The Module whose data it shows; null when it is cross-cutting or has no owner. */
+  module: Module["name"] | null;
   /** True when the Dashboard Range changes the widget, so it shows a skeleton while the range reloads. */
   rangeDependent?: boolean;
 } & (
@@ -699,27 +713,33 @@ function upcomingInterviews(summary: DashboardSummary, now: Date): UpcomingInter
   };
 }
 
+/** Each pipeline line with the Module page that owns it: Applications to Screening, Interviews, then Offers to Hired. */
 const PIPELINE_STAGES = [
-  ["Applied", "applied"],
-  ["Screening", "screening"],
-  ["Interview", "interview"],
-  ["Offer", "offer"],
-  ["Hired", "hired"],
+  ["Applied", "applied", "/applicants"],
+  ["Screening", "screening", "/applicants"],
+  ["Interview", "interview", "/interviews"],
+  ["Offer", "offer", "/offers"],
+  ["Hired", "hired", "/offers"],
 ] as const;
 
 /**
- * The five pipeline bars with each one's percent of all Applications received, and a headline naming the odds of a
- * hire and the Stage where the most Applications stop (the largest loss to the next bar; the earliest wins a tie).
- * Null when no Application was received.
+ * The pipeline bars the Staff member may see, each line gated by its own Module, with each one's percent of all
+ * Applications received, and a headline naming the odds of a hire and the Stage where the most Applications stop
+ * (the largest loss to the next bar; the earliest wins a tie). With every line shown the percents are of Applications
+ * received. Without all of them the percents are of the first line shown, so no hidden figure can be worked out, and
+ * the headline says only that some stages are hidden. Null when the first line shown has nothing.
  */
-function hiringPipeline(summary: DashboardSummary, range: DashboardRange): HiringPipelineData | null {
+function hiringPipeline(summary: DashboardSummary, range: DashboardRange, permittedPages: readonly string[]): HiringPipelineData | null {
   const counts = summary.hiringPipeline;
-  if (!counts || counts.applied === 0) return null;
-  const bars = PIPELINE_STAGES.map(([stage, key]) => ({
+  const shown = PIPELINE_STAGES.filter(([, , page]) => permittedPages.includes(page));
+  if (!counts || shown.length === 0 || counts[shown[0][1]] === 0) return null;
+  const base = counts[shown[0][1]];
+  const bars = shown.map(([stage, key]) => ({
     stage,
     count: counts[key],
-    percent: Math.round((counts[key] / counts.applied) * 100),
+    percent: Math.round((counts[key] / base) * 100),
   }));
+  if (shown.length < PIPELINE_STAGES.length) return { headline: "Showing the stages you can access.", bars };
   if (counts.hired === 0) return { headline: `No one has been hired ${range.phrase} yet.`, bars };
   let dropOff = bars[0];
   let largest = -1;
@@ -743,11 +763,20 @@ function manilaDaysSince(from: string, now: Date): number {
   return Math.max(Math.floor((now.getTime() + OFFSET) / DAY) - Math.floor((Date.parse(from) + OFFSET) / DAY), 0);
 }
 
+/** The Module page that owns each Needs attention line. */
+const NEEDS_ATTENTION_PAGE: Record<NeedsAttentionRow["id"], Module["href"]> = {
+  review: "/applicants",
+  schedule: "/interviews",
+  results: "/interviews",
+  offers: "/offers",
+  documents: "/offers",
+};
+
 /**
- * The five things Staff should act on now, always in the same order, a zero count muted. The headline sums the counts.
- * Null only when the Module has not been read at all.
+ * The things Staff should act on now that they may see, each line gated by its own Module, always in the same order,
+ * a zero count muted. The headline sums the counts shown. Null only when nothing has been read at all.
  */
-function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionData | null {
+function needsAttention(summary: DashboardSummary, now: Date, permittedPages: readonly string[]): NeedsAttentionData | null {
   const data = summary.needsAttention;
   if (!data) return null;
   const { toReview, toSchedule, resultsToRecord, offersPastReply, missingDocuments } = data;
@@ -767,7 +796,8 @@ function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionDat
       title: "Interviews to schedule",
       detail: toSchedule.topJob ? `Most waiting: ${toSchedule.topJob.title}` : null,
       count: toSchedule.count,
-      href: applicantsHref({ stage: "Interview" }),
+      // The Applicants list is the place to book it, but only Applications holders may open it.
+      href: permittedPages.includes("/applicants") ? applicantsHref({ stage: "Interview" }) : "/interviews",
       muted: toSchedule.count === 0,
     },
     {
@@ -795,8 +825,9 @@ function needsAttention(summary: DashboardSummary, now: Date): NeedsAttentionDat
       muted: missingDocuments === 0,
     },
   ];
-  const total = rows.reduce((sum, row) => sum + row.count, 0);
-  return { headline: total === 0 ? "Nothing needs your attention." : `${plural(total, "thing")} to do today`, rows };
+  const shown = rows.filter((row) => permittedPages.includes(NEEDS_ATTENTION_PAGE[row.id]));
+  const total = shown.reduce((sum, row) => sum + row.count, 0);
+  return { headline: total === 0 ? "Nothing needs your attention." : `${plural(total, "thing")} to do today`, rows: shown };
 }
 
 /** The Sources in the order that breaks ties; "Unspecified" comes last and never wins a headline. */
@@ -869,13 +900,13 @@ function applicantsByJob(summary: DashboardSummary, range: DashboardRange): Appl
 }
 
 interface DetailWidgetSpec {
-  href: Module["href"];
+  audience: Audience;
   build: (summary: DashboardSummary, now: Date) => DetailWidget;
 }
 
 const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
   {
-    href: "/employee-information",
+    audience: ["/employee-information"],
     build: (s, now) => ({
       id: "headcount-trend",
       label: "Headcount Trend",
@@ -884,7 +915,7 @@ const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
     }),
   },
   {
-    href: "/employee-information",
+    audience: ["/employee-information"],
     build: (s) => ({
       id: "department-distribution",
       label: "Department Distribution",
@@ -893,7 +924,7 @@ const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
     }),
   },
   {
-    href: "/employee-information",
+    audience: ["/employee-information"],
     build: (s, now) => ({
       id: "recent-activity",
       label: "Recent Activity",
@@ -902,11 +933,11 @@ const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
     }),
   },
   {
-    href: "/attendance",
+    audience: "everyone",
     build: (s, now) => ({
       id: "upcoming-events",
       label: "Upcoming Events",
-      module: "Attendance",
+      module: null,
       data: upcomingEvents(s, now),
     }),
   },
@@ -919,7 +950,7 @@ const widgetFor = (
   now: Date,
 ): DetailWidget | null => {
   const spec = DETAIL_WIDGETS.find((w) => w.build({}, now).id === id)!;
-  return permittedPages.includes(spec.href) ? spec.build(summary, now) : null;
+  return sees(spec.audience, permittedPages) ? spec.build(summary, now) : null;
 };
 
 /** The left half of the People block: its cards side by side, Recent Activity below. */
@@ -935,11 +966,21 @@ export interface DashboardLayout {
   hiringCards: KeySummaryCard[];
   /** The People block: `left` and `trend` side by side (2 and 3 of five columns) from `xl`; whichever is alone takes the full width. Null when both are absent. */
   people: { left: PeopleLeft | null; trend: DetailWidget | null } | null;
-  /** Rows of hiring Detail Widgets under the People block; none when the Staff member lacks Recruitment and Hiring. */
+  /** Rows of hiring Detail Widgets under the People block; each Widget only for the Staff member's Modules, a row with none left out. */
   hiringRows: DetailWidget[][];
   /** Rows of Detail Widgets below: Department Distribution | Upcoming Events, half and half, a lone one full width. */
   rows: DetailWidget[][];
 }
+
+/** Whether anything drawn changes with the Dashboard Range: the selector shows exactly then. */
+export function showsRange(layout: DashboardLayout): boolean {
+  const widgets = [layout.people?.left?.activity, layout.people?.trend, ...layout.hiringRows.flat(), ...layout.rows.flat()];
+  return [...layout.hiringCards, ...(layout.people?.left?.cards ?? [])].some((c) => c.rangeDependent) || widgets.some((w) => w?.rangeDependent);
+}
+
+/** The hiring Key Summary Cards a Staff member may see, in order: what the Export writes. */
+export const hiringCardsFor = (permittedPages: readonly string[], summary: DashboardSummary, range: DashboardRange): KeySummaryCard[] =>
+  cardsInRow("hiring", permittedPages, summary, range);
 
 /**
  * The Dashboard layout from the Modules a Staff member holds: hiring cards, the People block, then the
@@ -960,19 +1001,23 @@ export function dashboardLayoutFor(
     widgetFor("upcoming-events", permittedPages, summary, now),
   ].filter((w): w is DetailWidget => w !== null);
 
-  const hiringRows: DetailWidget[][] = permittedPages.includes("/job-postings")
-    ? [
-        [
-          { id: "hiring-pipeline", label: "Hiring pipeline", module: "Recruitment and Hiring", rangeDependent: true, data: hiringPipeline(summary, range) },
-          { id: "needs-attention", label: "Needs attention", module: "Recruitment and Hiring", data: needsAttention(summary, now) },
-        ],
-        [
-          { id: "applicants-by-job", label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true, data: applicantsByJob(summary, range) },
-          { id: "applicant-sources", label: "Where applicants come from", module: "Recruitment and Hiring", rangeDependent: true, data: applicantSources(summary) },
-          { id: "upcoming-interviews", label: "Upcoming interviews", module: "Recruitment and Hiring", data: upcomingInterviews(summary, now) },
-        ],
-      ]
-    : [];
+  // Hiring pipeline and Needs attention are cross-cutting: any hiring Module shows them, line by line.
+  const crossCutting = sees(HIRING_PAGES, permittedPages);
+  const hiringRows = (
+    [
+      [
+        crossCutting && { id: "hiring-pipeline", label: "Hiring pipeline", module: null, rangeDependent: true, data: hiringPipeline(summary, range, permittedPages) },
+        crossCutting && { id: "needs-attention", label: "Needs attention", module: null, data: needsAttention(summary, now, permittedPages) },
+      ],
+      [
+        permittedPages.includes("/applicants") && { id: "applicants-by-job", label: "Applicants by job", module: "Applications", rangeDependent: true, data: applicantsByJob(summary, range) },
+        permittedPages.includes("/applicants") && { id: "applicant-sources", label: "Where applicants come from", module: "Applications", rangeDependent: true, data: applicantSources(summary) },
+        permittedPages.includes("/interviews") && { id: "upcoming-interviews", label: "Upcoming interviews", module: "Interviews", data: upcomingInterviews(summary, now) },
+      ],
+    ] as (DetailWidget | false)[][]
+  )
+    .map((row) => row.filter((w): w is DetailWidget => w !== false))
+    .filter((row) => row.length > 0);
 
   return {
     hiringCards: cardsInRow("hiring", permittedPages, summary, range),

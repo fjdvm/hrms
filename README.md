@@ -40,7 +40,7 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 Run `npm run db:migrate` (migration 0019). Triggers queue a Staff Notification in the
 same transaction as each new application (Careers or HR-added) and each posting
 published or closed. Delivery asks the Portal's `/api/integrations/recipients` for
-Staff holding the Recruitment and Hiring Module, then posts one gateway
+Staff holding the Module for the notification's area (Job Postings, Applications or Offers), then posts one gateway
 notification to them (stable idempotency key, retried with backoff). Queued rows
 are flushed when any signed-in tab opens the bell (page load) and by the cron route;
 a Careers application can wait for one of those. The browser holds no key: it asks

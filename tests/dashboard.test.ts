@@ -3,7 +3,7 @@ import { cardRowsFor, compare, dashboardRange, dashboardLayoutFor, parseRangeId,
 
 const RANGE = dashboardRange(undefined, new Date("2026-10-28T12:05:00Z"));
 
-const ALL = ["/dashboard", "/attendance", "/employee-information", "/job-postings"];
+const ALL = ["/dashboard", "/job-postings", "/applicants", "/interviews", "/offers", "/employee-information"];
 
 const cardRows = (pages: string[], summary: DashboardSummary = {}) => cardRowsFor(pages, summary, RANGE);
 const cards = (pages: string[], summary: DashboardSummary = {}) => cardRows(pages, summary).flat();
@@ -23,14 +23,40 @@ describe("Key Summary Cards", () => {
   });
 
   it("only include rows and cards whose Module is held", () => {
-    expect(rowLabels(["/attendance"])).toEqual([["Attendance Rate"]]);
     expect(rowLabels(["/employee-information"])).toEqual([["Total Employee"]]);
-    expect(rowLabels(["/attendance", "/employee-information"])).toEqual([["Total Employee", "Attendance Rate"]]);
-    expect(rowLabels(["/job-postings"])).toEqual([["Open jobs", "Applicants", "Interviews this week", "Offer acceptance", "Average time to hire"]]);
+    expect(rowLabels(["/dashboard", "/employee-information"])).toEqual([["Total Employee", "Attendance Rate"]]);
+    expect(rowLabels(["/job-postings"])).toEqual([["Open jobs"]]);
+    expect(rowLabels(["/applicants"])).toEqual([["Applicants", "Average time to hire"]]);
+    expect(rowLabels(["/interviews"])).toEqual([["Interviews this week"]]);
+    expect(rowLabels(["/offers"])).toEqual([["Offer acceptance", "Average time to hire"]]);
+  });
+
+  it("gate each hiring card by its own Module", () => {
+    const owners = Object.fromEntries(cards(ALL).map((c) => [c.label, c.module]));
+    expect(owners).toEqual({
+      "Open jobs": "Job Postings",
+      Applicants: "Applications",
+      "Interviews this week": "Interviews",
+      "Offer acceptance": "Offers",
+      "Average time to hire": null,
+      "Total Employee": "Employee Information",
+      "Attendance Rate": null,
+    });
+  });
+
+  it("show Average time to hire to a holder of Applications or Offers, and to no one else", () => {
+    for (const page of ["/applicants", "/offers"]) expect(labels([page])).toContain("Average time to hire");
+    for (const page of ["/job-postings", "/interviews", "/employee-information"]) expect(labels([page])).not.toContain("Average time to hire");
+  });
+
+  it("show Attendance Rate, which has no owning Module, to every Dashboard holder and to no one else", () => {
+    expect(labels(["/dashboard"])).toEqual(["Attendance Rate"]);
+    expect(cards(["/dashboard"])[0]).toMatchObject({ figure: null, caption: null, comparison: null });
+    expect(labels(["/job-postings", "/applicants"])).not.toContain("Attendance Rate");
   });
 
   it("are empty when none of the owning Modules is held, ignoring unknown addresses", () => {
-    expect(cardRowsFor(["/dashboard", "/payroll-ess", "/not-a-module"], {}, RANGE)).toEqual([]);
+    expect(cardRowsFor(["/performance", "/training", "/not-a-module"], {}, RANGE)).toEqual([]);
   });
 
   it("have no figure or caption when their data is missing", () => {
@@ -117,8 +143,8 @@ describe("Dashboard layout", () => {
     });
   });
 
-  it("leaves a lone Attendance Rate card as the left block, with no Headcount Trend, with only Attendance", () => {
-    expect(shape(["/attendance"])).toEqual({
+  it("leaves a lone Attendance Rate card as the left block, with no Headcount Trend, with only the Dashboard", () => {
+    expect(shape(["/dashboard"])).toEqual({
       hiring: [],
       leftCards: ["Attendance Rate"],
       activity: null,
@@ -127,15 +153,15 @@ describe("Dashboard layout", () => {
     });
   });
 
-  it("has no People block and no rows with only Recruitment and Hiring", () => {
+  it("has no People block and no rows with only Job Postings", () => {
     const l = layout(["/job-postings"]);
-    expect(l.hiringCards).toHaveLength(5);
+    expect(l.hiringCards).toHaveLength(1);
     expect(l.people).toBeNull();
     expect(l.rows).toEqual([]);
   });
 
   it("is empty for Staff holding none of the owning Modules", () => {
-    const l = layout(["/dashboard", "/payroll-ess", "/nope"]);
+    const l = layout(["/performance", "/training", "/nope"]);
     expect(l).toEqual({ hiringCards: [], hiringRows: [], people: null, rows: [] });
   });
 
@@ -272,7 +298,7 @@ describe("Upcoming Events", () => {
       ? { id, kind, status: "approved", title: id, date, description: "" }
       : { id, kind, title: id, date, description: "" };
   const items = (summary: DashboardSummary) =>
-    widgetData(["/attendance"], "upcoming-events", summary) as { id: string }[] | null;
+    widgetData(["/dashboard"], "upcoming-events", summary) as { id: string }[] | null;
 
   it("keeps events in the next 30 days, soonest first", () => {
     const got = items({
@@ -405,10 +431,10 @@ describe("comparison", () => {
 
 describe("Applicants card", () => {
   const range = dashboardRange("this-month", new Date("2026-10-28T12:05:00Z"));
-  const applicants = (summary: DashboardSummary) => cardRowsFor(["/job-postings"], summary, range)[0].find((c) => c.label === "Applicants")!;
+  const applicants = (summary: DashboardSummary) => cardRowsFor(["/applicants"], summary, range)[0].find((c) => c.label === "Applicants")!;
 
   it("sits after Open jobs in the hiring row", () => {
-    expect(cardRowsFor(["/job-postings"], {}, range)[0].slice(0, 2).map((c) => c.label)).toEqual(["Open jobs", "Applicants"]);
+    expect(cardRowsFor(["/job-postings", "/applicants"], {}, range)[0].slice(0, 2).map((c) => c.label)).toEqual(["Open jobs", "Applicants"]);
   });
 
   it("shows the count of Applications in the range with the comparison under it", () => {

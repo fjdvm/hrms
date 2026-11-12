@@ -1,8 +1,11 @@
 import { database, type Database } from "./database";
 import { listModuleHolders } from "./portal/client";
 
-/** Who is told: Staff holding the Recruitment and Hiring Module when delivery runs. */
-const AUDIENCE_MODULE = "Recruitment and Hiring";
+/** Who is told: Staff holding the Module for the notification's area when delivery runs. */
+const AUDIENCE_MODULES: Record<string, string> = { application: "Applications", "job-posting": "Job Postings", offer: "Offers" };
+
+const audienceModule = (payload: Record<string, unknown>) =>
+  typeof payload.type === "string" ? AUDIENCE_MODULES[payload.type.split(".")[0]] : undefined;
 
 export const notificationsApp = () => process.env.NOTIFICATIONS_APP ?? "HRMS";
 
@@ -18,9 +21,13 @@ export async function deliverStaffNotifications(db: Database = database): Promis
       WHERE delivered_at IS NULL AND next_attempt_at <= clock_timestamp()
       ORDER BY next_attempt_at, id LIMIT 50`);
     if (rows.length === 0) return;
-    const audience = await listModuleHolders(AUDIENCE_MODULE);
+    const audiences = new Map<string, Promise<string[] | null>>();
     for (const row of rows) {
       try {
+        const audienceOf = audienceModule(row.payload);
+        if (!audienceOf) throw new Error("Unknown notification type");
+        if (!audiences.has(audienceOf)) audiences.set(audienceOf, listModuleHolders(audienceOf));
+        const audience = await audiences.get(audienceOf);
         if (!audience) throw new Error("Recipients unavailable");
         if (audience.length > 0) {
           const url = process.env.API_GATEWAY_URL;

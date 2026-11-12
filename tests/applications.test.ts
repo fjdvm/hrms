@@ -22,8 +22,8 @@ beforeEach(async () => {
   }
   await db.exec(`CREATE SCHEMA neon_auth; CREATE TABLE neon_auth."user" (id text PRIMARY KEY);`);
   portal = new FakePortal();
-  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
-  handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
+  handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);
@@ -87,7 +87,7 @@ it("returns an empty first page when no Applications exist", async () => {
 
 it.each(["denied", "invalid", "unavailable"] as const)("fails closed on %s without touching the database", async (reason) => {
   await seed(1);
-  const restrictedHandle = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restrictedHandle = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   // No database is reachable: an access decision must take precedence over a query failure.
   await db.close();
@@ -229,7 +229,7 @@ it("quotes CSV commas, quotes and line breaks and returns headers for an empty v
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("CSV export fails closed on %s before reading data", async (reason) => {
-  const restrictedHandle = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restrictedHandle = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restrictedHandle, db).exportCsv()).rejects.toMatchObject({ reason });
@@ -276,7 +276,7 @@ it("returns not-found for an unknown Application", async () => {
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("profile read fails closed on %s before querying", async (reason) => {
-  const restrictedHandle = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restrictedHandle = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restrictedHandle, db).readProfile(1)).rejects.toMatchObject({ reason });
@@ -348,7 +348,7 @@ it("rejects Document download for an HR-added Application, which has no submitte
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("document download fails closed on %s", async (reason) => {
-  const restricted = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restricted = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restricted, db).downloadDocument(1, 7)).rejects.toMatchObject({ reason });
@@ -380,7 +380,7 @@ it("advances one Stage at a time through Hired, preserving dates and newest-firs
   const screening = (await applications.readProfile(id)).stageDates.Screening;
   await applications.moveStage(id, "Screening", "Interview");
   await applications.moveStage(id, "Interview", "Offer");
-  const otherHandle = portal.signIn({ ...staff, name: "Grace Santos" }, ["Recruitment and Hiring"]);
+  const otherHandle = portal.signIn({ ...staff, name: "Grace Santos" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
   await applicationsFor(otherHandle, db).moveStage(id, "Offer", "Hired");
   const profile = await applications.readProfile(id);
   expect(profile.stage).toBe("Hired");
@@ -452,7 +452,7 @@ it("freezes the submitted snapshot against Careers' Received-only profile refres
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("Stage write fails closed on %s before touching data", async (reason) => {
-  const restricted = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restricted = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restricted, db).moveStage(1, "New", "Screening")).rejects.toMatchObject({ reason });
@@ -584,7 +584,7 @@ it("returns notes newest first with stable ties and each acting author's name", 
   const id = await seed(1);
   const applications = applicationsFor(handle, db);
   await applications.addNote(id, "First");
-  const secondHandle = portal.signIn({ ...staff, name: "Ben Santos", username: "ben" }, ["Recruitment and Hiring"]);
+  const secondHandle = portal.signIn({ ...staff, name: "Ben Santos", username: "ben" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
   await applicationsFor(secondHandle, db).addNote(id, "Second");
   expect((await applications.readProfile(id)).notes.map(({ text, authorName }) => [text, authorName])).toEqual([
     ["Second", "Ben Santos"], ["First", "Ada Okafor"],
@@ -610,7 +610,7 @@ it("refuses notes for an unknown Application", async () => {
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("note writes fail closed on %s before querying", async (reason) => {
-  const restricted = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restricted = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restricted, db).addNote(1, "Note")).rejects.toMatchObject({ reason });
@@ -746,7 +746,7 @@ it("rolls back an interview result if its activity cannot be recorded", async ()
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("interview results fail closed on %s before querying", async (reason) => {
-  const restricted = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restricted = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restricted, db).recordInterviewResult(1, 1, { score: 4, result: "Passed" })).rejects.toMatchObject({ reason });
@@ -867,7 +867,7 @@ it("the database refuses a Source outside the four names or a referrer on a non-
 });
 
 it.each(["denied", "invalid", "unavailable"] as const)("adding an applicant fails closed on %s", async (reason) => {
-  const restricted = reason === "denied" ? portal.signIn(staff, ["Attendance"]) : reason === "invalid" ? undefined : handle;
+  const restricted = reason === "denied" ? portal.signIn(staff, ["Training"]) : reason === "invalid" ? undefined : handle;
   portal.unavailable = reason === "unavailable";
   await db.close();
   await expect(applicationsFor(restricted, db).addApplicant(manual)).rejects.toMatchObject({ reason });
@@ -992,22 +992,22 @@ it("keeps the Interview Stage date tied to a move rather than a booking", async 
 });
 
 
-it("lists only Recruitment and Hiring Interviewers with Portal display names and stable colours", async () => {
+it("lists only Interviews holders as Interviewers with Portal display names and stable colours", async () => {
   portal.directory = [
-    { id: "staff-1", username: "ada", name: "Ada Okafor", modules: ["Recruitment and Hiring"] },
-    { id: "staff-2", username: "pay", name: "Payroll Staff", modules: ["Payroll & ESS"] },
+    { id: "staff-1", username: "ada", name: "Ada Okafor", modules: ["Job Postings", "Applications", "Interviews", "Offers"] },
+    { id: "staff-2", username: "pay", name: "Payroll Staff", modules: ["Performance"] },
   ];
   const applications = applicationsFor(handle, db);
   const first = await applications.interviewers();
   expect(first).toEqual([{ id: "staff-1", name: "Ada Okafor", colour: expect.stringMatching(/^#[0-9a-f]{6}$/i) }]);
-  portal.directory.unshift({ id: "staff-0", username: "ben", name: "Ben Santos", modules: ["Recruitment and Hiring"] });
+  portal.directory.unshift({ id: "staff-0", username: "ben", name: "Ben Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] });
   portal.directory.reverse();
   expect((await applications.interviewers()).find(member => member.id === "staff-1")).toEqual(first[0]);
 });
 
 
 it("repeats the fixed palette for a large directory and keeps colours across reads", async () => {
-  portal.directory = Array.from({ length: 30 }, (_, index) => ({ id: `staff-${index}`, username: `staff${index}`, name: `Staff ${index}`, modules: ["Recruitment and Hiring"] }));
+  portal.directory = Array.from({ length: 30 }, (_, index) => ({ id: `staff-${index}`, username: `staff${index}`, name: `Staff ${index}`, modules: ["Job Postings", "Applications", "Interviews", "Offers"] }));
   const applications = applicationsFor(handle, db);
   const first = await applications.interviewers();
   expect(first).toHaveLength(30);
@@ -1028,16 +1028,16 @@ it("reports a directory outage and recovers on the next read without caching it"
   vi.stubGlobal("fetch", boundary);
   portal.directory = [];
   expect(await applications.interviewers()).toEqual([]);
-  portal.directory = [{ id: "ada", username: "ada", name: "Ada Okafor", modules: ["Recruitment and Hiring"] }];
+  portal.directory = [{ id: "ada", username: "ada", name: "Ada Okafor", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
   expect(await applications.interviewers()).toMatchObject([{ id: "ada", name: "Ada Okafor" }]);
 });
 
 it.each([
-  { staff: [{ id: "ada", username: "ada", modules: ["Recruitment and Hiring"] }] },
+  { staff: [{ id: "ada", username: "ada", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }] },
   { staff: [null] },
-  { staff: [{ id: "ada", name: "Ada", modules: "Recruitment and Hiring" }] },
-  { staff: [{ id: "", name: "Ada", modules: ["Recruitment and Hiring"] }] },
-  { staff: [{ id: "ada", name: " ", modules: ["Recruitment and Hiring"] }] },
+  { staff: [{ id: "ada", name: "Ada", modules: "Interviews" }] },
+  { staff: [{ id: "", name: "Ada", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }] },
+  { staff: [{ id: "ada", name: " ", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }] },
   { staff: null },
 ])("reports malformed directory data as unavailable: %j", async body => {
   const boundary = portalFetch(portal);
@@ -1046,14 +1046,14 @@ it.each([
   await expect(applicationsFor(handle, db).interviewers()).rejects.toMatchObject({ reason: "unavailable" });
 });
 
-it("requires Recruitment and Hiring before reading the Interviewer directory", async () => {
+it("requires Interviews before reading the Interviewer directory", async () => {
   const denied = portal.signIn(staff, ["Dashboard"]);
   await expect(applicationsFor(denied, db).interviewers()).rejects.toMatchObject({ reason: "denied" });
   await expect(applicationsFor(undefined, db).interviewers()).rejects.toMatchObject({ reason: "invalid" });
 });
 
 it("keeps persisted colours when Staff leave or change display names", async () => {
-  portal.directory = Array.from({ length: 6 }, (_, index) => ({ id: `staff-${index}`, username: `staff${index}`, name: `Staff ${index}`, modules: ["Recruitment and Hiring"] }));
+  portal.directory = Array.from({ length: 6 }, (_, index) => ({ id: `staff-${index}`, username: `staff${index}`, name: `Staff ${index}`, modules: ["Job Postings", "Applications", "Interviews", "Offers"] }));
   const first = await applicationsFor(handle, db).interviewers();
   expect(new Set(first.map(member => member.colour)).size).toBe(6);
   portal.directory = portal.directory.slice(1).map(member => ({ ...member, name: `Renamed ${member.name}` }));
@@ -1066,7 +1066,7 @@ it("keeps persisted colours when Staff leave or change display names", async () 
 
 it("books only in Interview Stage and rejects a past start with a specific reason", async () => {
   const id = await seed(1, "Interview");
-  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Recruitment and Hiring"] }];
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] }];
   await expect(applicationsFor(handle, db).scheduleInterview(id, "Interview", {
     ...interview, interviewerId: "bea", meetingLink: "https://meet.google.com/test",
     startsAt: "2020-01-06T09:00:00+08:00", endsAt: "2020-01-06T10:00:00+08:00",
@@ -1088,9 +1088,9 @@ it("enforces Manila weekdays, hours, type-specific locations and Interviewer eli
     [{ meetingLink: "javascript:alert(1)" }, "Online Interviews need a valid meeting link."],
     [{ type: "In person", province: "Cebu", city: "Baguio", address: "Street" }, "In person Interviews need a listed Philippine province and city or municipality, and an address."],
     [{ type: "In person", province: "Cebu", city: "Argao", address: " " }, "In person Interviews need a listed Philippine province and city or municipality, and an address."],
-    [{ interviewerId: "payroll" }, "Interviewer must hold Recruitment and Hiring."],
+    [{ interviewerId: "payroll" }, "Interviewer must hold Interviews."],
   ] as const;
-  portal.directory.push({ id: "payroll", username: "pay", name: "Payroll Staff", modules: ["Payroll & ESS"] });
+  portal.directory.push({ id: "payroll", username: "pay", name: "Payroll Staff", modules: ["Performance"] });
   for (const [change, detail] of cases) {
     await expect(applications.scheduleInterview(id, "Interview", { ...interview, ...change })).rejects.toMatchObject({ reason: "validation", detail });
   }
@@ -1152,7 +1152,7 @@ it.each(["Rejected", "Withdrawn", "Offer"])("ignores a dropped Interview after %
 
 it("allows simultaneous times for different Interviewers and fails closed when the Portal directory is unavailable", async () => {
   const first = await seed(1, "Interview"), second = await seed(2, "Interview");
-  portal.directory.push({ id: "ben", username: "ben", name: "Ben Santos", modules: ["Recruitment and Hiring"] });
+  portal.directory.push({ id: "ben", username: "ben", name: "Ben Santos", modules: ["Job Postings", "Applications", "Interviews", "Offers"] });
   const applications = applicationsFor(handle, db);
   await applications.scheduleInterview(first, "Interview", interview);
   await applications.scheduleInterview(second, "Interview", { ...interview, interviewerId: "ben" });
@@ -1162,4 +1162,61 @@ it("allows simultaneous times for different Interviewers and fails closed when t
     String(input).endsWith("/recipients") ? Promise.resolve(Response.json({}, { status: 503 })) : boundary(input, init));
   await expect(applications.rescheduleInterview(first, booked.id, interview)).rejects.toMatchObject({ reason: "unavailable" });
   expect((await applications.readProfile(first)).interviews[0]).toEqual(booked);
+});
+
+// Each operation is gated by the Module for its area, not by one shared hiring Module.
+const only = (...modules: string[]) => applicationsFor(portal.signIn(staff, modules), db);
+const input = { startsAt: "2031-01-02T02:00:00Z", endsAt: "2031-01-02T03:00:00Z", type: "Online" as const, interviewerName: "Bea Santos", interviewerId: "bea", meetingLink: "https://meet.test/x" };
+
+it("opens the Applicants list, profile, notes and documents to Applications only", async () => {
+  const id = await seed(1);
+  for (const other of ["Job Postings", "Interviews", "Offers"]) {
+    const denied = only(other);
+    await expect(denied.list()).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.readProfile(id)).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.addNote(id, "note")).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.downloadDocument(id, 1)).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.moveStage(id, "New", "Screening")).rejects.toMatchObject({ reason: "denied" });
+  }
+  const allowed = only("Applications");
+  expect((await allowed.list()).total).toBe(1);
+  await allowed.addNote(id, "note");
+  await allowed.moveStage(id, "New", "Screening");
+});
+
+it("opens scheduling, results, the calendar and the Interviews lists to Interviews only", async () => {
+  const id = await seed(1, "Received");
+  await applicationsFor(handle, db).moveStage(id, "New", "Screening");
+  await applicationsFor(handle, db).moveStage(id, "Screening", "Interview");
+  for (const other of ["Applications", "Offers", "Job Postings"]) {
+    const denied = only(other);
+    await expect(denied.interviewers()).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.scheduleInterview(id, "Interview", input)).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.recordInterviewResult(id, 1, { score: 3, result: "Passed" })).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.interviewJobs()).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.interviewJob("posting-1")).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.calendar({ from: "2031-01-01", to: "2031-01-31" })).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.readLegacyInterviews(id)).rejects.toMatchObject({ reason: "denied" });
+  }
+  const allowed = only("Interviews");
+  expect(await allowed.interviewers()).toHaveLength(1);
+  await allowed.scheduleInterview(id, "Interview", input);
+  expect((await allowed.interviewJobs()).jobs).toHaveLength(1);
+});
+
+it("treats moving an Application to Hired as an Offers action", async () => {
+  const id = await seed(1);
+  await applicationsFor(handle, db).moveStage(id, "New", "Screening");
+  await applicationsFor(handle, db).moveStage(id, "Screening", "Interview");
+  await applicationsFor(handle, db).moveStage(id, "Interview", "Offer");
+  await expect(only("Applications").moveStage(id, "Offer", "Hired")).rejects.toMatchObject({ reason: "denied" });
+  await only("Offers").moveStage(id, "Offer", "Hired");
+});
+
+it("only accepts a Interviewer who holds Interviews", async () => {
+  const id = await seed(1);
+  await applicationsFor(handle, db).moveStage(id, "New", "Screening");
+  await applicationsFor(handle, db).moveStage(id, "Screening", "Interview");
+  portal.directory = [{ id: "bea", username: "bea", name: "Bea Santos", modules: ["Applications"] }];
+  await expect(applicationsFor(handle, db).scheduleInterview(id, "Interview", input)).rejects.toMatchObject({ reason: "validation", detail: "Interviewer must hold Interviews." });
 });

@@ -56,7 +56,7 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 export default async function Page({ params }: PageProps<"/offers/[id]">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Offers");
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
 

@@ -29,7 +29,7 @@ beforeEach(async () => {
     INSERT INTO applicant_documents VALUES (7,'person','file-7'),(8,'person','file-8'),(9,'other','file-9'),(10,'person',NULL)`);
   vi.spyOn(database, "query").mockImplementation((sql, values) => db.query(sql, values));
   portal = new FakePortal();
-  state.handle = portal.signIn({ name: "Ada", username: "ada", email: "ada@example.test", role: "HR Officer" }, ["Recruitment and Hiring"]);
+  state.handle = portal.signIn({ name: "Ada", username: "ada", email: "ada@example.test", role: "HR Officer" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
   vi.stubGlobal("fetch", portalFetch(portal));
   vi.stubEnv("PORTAL_URL", FAKE_PORTAL_URL);
   vi.stubEnv("PORTAL_SYSTEM_NAME", FAKE_SYSTEM);

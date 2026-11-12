@@ -13,7 +13,7 @@ const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Man
 type Loaded = { chosen: OfferCandidate; staff: string[] } | { candidates: OfferCandidate[] };
 
 export default async function Page({ searchParams }: PageProps<"/offers/new">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Offers");
   const { application } = await searchParams;
   const param = Array.isArray(application) ? application[0] : application;
   if (param !== undefined && !/^-?\d+$/.test(param)) notFound();

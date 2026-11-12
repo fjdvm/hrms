@@ -53,7 +53,7 @@ function JobCard({ job, now }: { job: InterviewJobSummary; now: Date }) {
 }
 
 export default async function Page({ searchParams }: PageProps<"/interviews">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Interviews");
   const params = await searchParams;
   const applications = await applicationsForRequest();
   const { jobs, totals } = await applications.interviewJobs();

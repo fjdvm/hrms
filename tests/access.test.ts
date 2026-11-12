@@ -30,23 +30,23 @@ const access = (handle: string | undefined) => accessFor(handle, { bypass: false
 
 describe("access to a Module", () => {
   it("is allowed with the Module, and says who the Staff member is", async () => {
-    const handle = portal.signIn(ada, ["Attendance"]);
+    const handle = portal.signIn(ada, ["Training"]);
 
-    expect(await access(handle).check("Attendance")).toEqual({ decision: "allowed", staff: ada });
+    expect(await access(handle).check("Training")).toEqual({ decision: "allowed", staff: ada });
   });
 
   it("carries the Portal user id through Module access and the permitted-page overview", async () => {
     const staff = { ...ada, id: "portal-user-105" };
-    const handle = portal.signIn(staff, ["Attendance"]);
+    const handle = portal.signIn(staff, ["Training"]);
     const load = access(handle);
 
-    expect(await load.check("Attendance")).toEqual({ decision: "allowed", staff });
-    expect(await load.overview()).toEqual({ decision: "allowed", staff, pages: ["/attendance"] });
+    expect(await load.check("Training")).toEqual({ decision: "allowed", staff });
+    expect(await load.overview()).toEqual({ decision: "allowed", staff, pages: ["/training"] });
   });
 
   it("keeps the username identity when an older Portal omits the user id", async () => {
-    const handle = portal.signIn(ada, ["Attendance"]);
-    const result = await access(handle).check("Attendance");
+    const handle = portal.signIn(ada, ["Training"]);
+    const result = await access(handle).check("Training");
 
     expect(result).toEqual({ decision: "allowed", staff: ada });
     if (result.decision === "allowed") {
@@ -55,20 +55,20 @@ describe("access to a Module", () => {
   });
 
   it("does not grant access based on the presence of a Portal user id", async () => {
-    const handle = portal.signIn({ ...ada, id: "portal-user-105" }, ["Attendance"]);
+    const handle = portal.signIn({ ...ada, id: "portal-user-105" }, ["Training"]);
 
-    expect(await access(handle).check("Payroll & ESS")).toEqual({ decision: "denied" });
+    expect(await access(handle).check("Performance")).toEqual({ decision: "denied" });
     portal.unavailable = true;
-    expect(await access(handle).check("Attendance")).toEqual({ decision: "unavailable" });
+    expect(await access(handle).check("Training")).toEqual({ decision: "unavailable" });
     portal.unavailable = false;
     portal.endSession(handle);
-    expect(await access(handle).check("Attendance")).toEqual({ decision: "invalid" });
+    expect(await access(handle).check("Training")).toEqual({ decision: "invalid" });
   });
 
   it("is denied without the Module, even holding a different one", async () => {
-    const handle = portal.signIn(ada, ["Attendance"]);
+    const handle = portal.signIn(ada, ["Training"]);
 
-    expect((await access(handle).check("Payroll & ESS")).decision).toBe("denied");
+    expect((await access(handle).check("Performance")).decision).toBe("denied");
   });
 
   it("is invalid with no session, an unknown handle, or an ended session", async () => {
@@ -101,7 +101,7 @@ describe("access to a Module", () => {
     const load = access(handle);
 
     await load.overview();
-    await load.check("Attendance");
+    await load.check("Training");
     await load.check("Dashboard");
 
     expect(fetchSpy).toHaveBeenCalledTimes(MODULES.length);
@@ -110,12 +110,12 @@ describe("access to a Module", () => {
 
 describe("the overview of permitted pages", () => {
   it("lists only the granted Modules' pages, in Module order", async () => {
-    const handle = portal.signIn(ada, ["User Management", "Attendance"]);
+    const handle = portal.signIn(ada, ["Performance", "Training"]);
 
     expect(await access(handle).overview()).toEqual({
       decision: "allowed",
       staff: ada,
-      pages: ["/attendance", "/user-management"],
+      pages: ["/training", "/performance"],
     });
   });
 

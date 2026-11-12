@@ -208,25 +208,31 @@ export async function timeToHireSummary(range: DashboardRange, db: Database = da
   };
 }
 
-/** The summary data for the Modules a Staff member holds; a Module they do not hold is never read. */
+/**
+ * The summary data for the Modules a Staff member holds; a Module they do not hold is never read. Hiring pipeline and
+ * Needs attention are read for a holder of any hiring Module (the layout shows each line only to its own Module), and
+ * Average time to hire for a holder of Applications or Offers.
+ */
 export async function dashboardSummaryFor(
   permittedPages: readonly string[],
   range: DashboardRange,
   now: Date = new Date(),
   db: Database = database,
 ): Promise<DashboardSummary> {
-  if (!permittedPages.includes("/job-postings")) return {};
+  const holds = (...pages: string[]) => pages.some((page) => permittedPages.includes(page));
+  const when = <T>(allowed: boolean, read: () => Promise<T>): Promise<T | undefined> => (allowed ? read() : Promise.resolve(undefined));
   const [openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
-    openJobsSummary(db),
-    applicantsSummary(range, db),
-    hiringPipelineSummary(range, db),
-    needsAttentionSummary(now, db),
-    applicantSourcesSummary(range, db),
-    applicantsByJobSummary(range, db),
-    interviewsSummary(now, db),
-    upcomingInterviewsSummary(now, db),
-    offersSummary(range, db),
-    timeToHireSummary(range, db),
+    when(holds("/job-postings"), () => openJobsSummary(db)),
+    when(holds("/applicants"), () => applicantsSummary(range, db)),
+    when(holds("/applicants", "/interviews", "/offers"), () => hiringPipelineSummary(range, db)),
+    when(holds("/applicants", "/interviews", "/offers"), () => needsAttentionSummary(now, db)),
+    when(holds("/applicants"), () => applicantSourcesSummary(range, db)),
+    when(holds("/applicants"), () => applicantsByJobSummary(range, db)),
+    when(holds("/interviews"), () => interviewsSummary(now, db)),
+    when(holds("/interviews"), () => upcomingInterviewsSummary(now, db)),
+    when(holds("/offers"), () => offersSummary(range, db)),
+    when(holds("/applicants", "/offers"), () => timeToHireSummary(range, db)),
   ]);
-  return { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
+  const read = { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
+  return Object.fromEntries(Object.entries(read).filter(([, value]) => value !== undefined)) as DashboardSummary;
 }

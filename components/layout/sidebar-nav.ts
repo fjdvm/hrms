@@ -1,6 +1,5 @@
 import {
   Building2,
-  CalendarCheck,
   CreditCard,
   BadgeCheck,
   Briefcase,
@@ -10,10 +9,9 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Truck,
-  UserCog,
   Users,
+  UserCheck,
   Users2,
-  WalletCards,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MODULES, type Module } from "@/lib/modules";
@@ -42,7 +40,7 @@ export interface NavSection {
   items: NavItem[];
 }
 
-/** The sidebar, top to bottom. */
+/** The sidebar, top to bottom. Training and Performance have Modules but no HRMS pages to list yet. */
 export const sidebarSections: NavSection[] = [
   {
     items: [
@@ -52,24 +50,23 @@ export const sidebarSections: NavSection[] = [
   {
     label: "RECRUITMENT",
     items: [
-      { name: "Job Postings", href: "/job-postings", icon: Briefcase, module: "Recruitment and Hiring" },
-      { name: "Applicants", href: "/applicants", icon: UserSearch, module: "Recruitment and Hiring" },
+      { name: "Job Postings", href: "/job-postings", icon: Briefcase, module: "Job Postings" },
+      { name: "Applicants", href: "/applicants", icon: UserSearch, module: "Applications" },
     ],
   },
   {
     label: "HIRING",
     items: [
-      { name: "Interviews", href: "/interviews", icon: CalendarClock, module: "Recruitment and Hiring" },
-      { name: "Offers", href: "/offers", icon: FileText, module: "Recruitment and Hiring" },
-      { name: "Hired", href: "/hired", icon: BadgeCheck, module: "Recruitment and Hiring" },
+      { name: "Interviews", href: "/interviews", icon: CalendarClock, module: "Interviews" },
+      { name: "Offers", href: "/offers", icon: FileText, module: "Offers" },
+      { name: "Hired", href: "/hired", icon: BadgeCheck, module: "Offers" },
     ],
   },
   {
+    label: "EMPLOYEE",
     items: [
-      { name: "Attendance", href: "/attendance", icon: CalendarCheck, module: "Attendance" },
-      { name: "Employee Information", href: "/employee-information", icon: Users, module: "Employee Information" },
-      { name: "Payroll & ESS", href: "/payroll-ess", icon: WalletCards, module: "Payroll & ESS" },
-      { name: "User Management", href: "/user-management", icon: UserCog, module: "User Management" },
+      { name: "Information", href: "/employee-information", icon: Users, module: "Employee Information" },
+      { name: "Onboarding", href: "/employee-onboarding", icon: UserCheck, module: "Employee Onboarding" },
     ],
   },
 ];

@@ -28,7 +28,7 @@ const INTRO = {
 export default async function Page({
   params,
 }: PageProps<"/job-postings/[id]">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Job Postings");
   const { id } = await params;
   const posting = await (await postingsForRequest()).read(id);
 

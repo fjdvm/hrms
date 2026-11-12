@@ -59,7 +59,7 @@ describe("dev bypass", () => {
   it("opens every Module as a fully-permitted Staff member, with no session and no Portal", async () => {
     const access = accessFor(undefined, { bypass: true });
 
-    expect(await access.check("Attendance")).toEqual({ decision: "allowed", staff: DEV_STAFF });
+    expect(await access.check("Training")).toEqual({ decision: "allowed", staff: DEV_STAFF });
     expect(await access.overview()).toEqual({
       decision: "allowed",
       staff: DEV_STAFF,

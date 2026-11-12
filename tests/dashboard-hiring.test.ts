@@ -8,6 +8,8 @@ import {
   hiringCardsCsv,
   manilaWeek,
   rangeSearch,
+  hiringCardsFor,
+  showsRange,
   type DashboardSummary,
   type ApplicantsByJobData,
   type HiringPipelineData,
@@ -18,9 +20,10 @@ import {
 
 const NOW = new Date("2026-10-28T12:05:00Z"); // Wednesday 28 Oct 2026, Manila
 const RANGE = dashboardRange(undefined, NOW);
+const HIRING = ["/job-postings", "/applicants", "/interviews", "/offers"];
 
 const hiringCard = (label: string, summary: DashboardSummary, range = RANGE) =>
-  cardRowsFor(["/job-postings"], summary, range)[0].find((c) => c.label === label)!;
+  cardRowsFor(HIRING, summary, range)[0].find((c) => c.label === label)!;
 
 describe("Interviews this week card", () => {
   const interviews = (summary: DashboardSummary) => hiringCard("Interviews this week", summary);
@@ -200,7 +203,7 @@ describe("Export", () => {
       offers: { current: { accepted: 10, decided: 11 }, previous: { accepted: 3, decided: 4 } },
       timeToHire: { current: { hires: 0, averageDays: null }, previous: { hires: 2, averageDays: 20 } },
     };
-    const csv = hiringCardsCsv(cardRowsFor(["/job-postings"], summary, RANGE)[0]);
+    const csv = hiringCardsCsv(cardRowsFor(HIRING, summary, RANGE)[0]);
     expect(csv.split("\r\n")).toEqual([
       "Card,Value,Detail,Comparison",
       "Open jobs,5,18 openings · 3 locations,",
@@ -213,7 +216,7 @@ describe("Export", () => {
   });
 
   it("quotes cells that hold commas or quotes", () => {
-    const card = { label: 'A "b", c', figure: "1", caption: null, comparison: null, module: "Recruitment and Hiring" as const, rangeDependent: false };
+    const card = { label: 'A "b", c', figure: "1", caption: null, comparison: null, module: "Job Postings" as const, rangeDependent: false };
     expect(hiringCardsCsv([card])).toBe('Card,Value,Detail,Comparison\r\n"A ""b"", c",1,,\r\n');
   });
 
@@ -227,11 +230,11 @@ describe("Upcoming interviews widget", () => {
   const widget = (pages: string[], upcomingInterviews: DashboardSummary["upcomingInterviews"], now = NOW) =>
     dashboardLayoutFor(pages, { upcomingInterviews }, RANGE, now).hiringRows.flat().find((w) => w.id === "upcoming-interviews");
   const at = (id: number, startsAt: string, name = `Applicant ${id}`) => ({ id, applicantName: name, jobPostingTitle: "Cashier", type: "Online" as const, startsAt });
-  const data = (list: DashboardSummary["upcomingInterviews"], now = NOW) => widget(["/job-postings"], list, now)!.data as UpcomingInterviewsData | null;
+  const data = (list: DashboardSummary["upcomingInterviews"], now = NOW) => widget(HIRING, list, now)!.data as UpcomingInterviewsData | null;
 
-  it("is shown only to Staff holding Recruitment and Hiring", () => {
-    expect(widget(["/dashboard", "/attendance"], [at(1, "2026-10-28T13:00:00Z")])).toBeUndefined();
-    expect(widget(["/job-postings"], [])).toMatchObject({ label: "Upcoming interviews", module: "Recruitment and Hiring" });
+  it("is shown only to Staff holding the Module it reads", () => {
+    expect(widget(["/dashboard", "/training"], [at(1, "2026-10-28T13:00:00Z")])).toBeUndefined();
+    expect(widget(HIRING, [])).toMatchObject({ label: "Upcoming interviews", module: "Interviews" });
   });
 
   it("lists the next five soonest first and counts all of them in the headline", () => {
@@ -278,8 +281,8 @@ describe("Upcoming interviews widget", () => {
   it("ignores the Dashboard Range", () => {
     const list = [at(1, "2026-10-28T13:00:00Z")];
     const other = dashboardRange("last-month", NOW);
-    expect(dashboardLayoutFor(["/job-postings"], { upcomingInterviews: list }, other, NOW).hiringRows).toEqual(
-      dashboardLayoutFor(["/job-postings"], { upcomingInterviews: list }, RANGE, NOW).hiringRows,
+    expect(dashboardLayoutFor(HIRING, { upcomingInterviews: list }, other, NOW).hiringRows).toEqual(
+      dashboardLayoutFor(HIRING, { upcomingInterviews: list }, RANGE, NOW).hiringRows,
     );
   });
 });
@@ -288,12 +291,12 @@ describe("Applicants by job widget", () => {
   const widget = (pages: string[], applicantsByJob: DashboardSummary["applicantsByJob"], range = RANGE) =>
     dashboardLayoutFor(pages, { applicantsByJob }, range, NOW).hiringRows.flat().find((w) => w.id === "applicants-by-job");
   const data = (applicantsByJob: DashboardSummary["applicantsByJob"], range = RANGE) =>
-    widget(["/job-postings"], applicantsByJob, range)!.data as ApplicantsByJobData | null;
+    widget(HIRING, applicantsByJob, range)!.data as ApplicantsByJobData | null;
   const job = (id: string, count: number, title = id) => ({ id, title, count });
 
-  it("is shown only to Staff holding Recruitment and Hiring, and follows the range", () => {
-    expect(widget(["/dashboard", "/attendance"], { total: 1, jobs: [job("a", 1)] })).toBeUndefined();
-    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Applicants by job", module: "Recruitment and Hiring", rangeDependent: true });
+  it("is shown only to Staff holding the Module it reads, and follows the range", () => {
+    expect(widget(["/dashboard", "/training"], { total: 1, jobs: [job("a", 1)] })).toBeUndefined();
+    expect(widget(HIRING, undefined)).toMatchObject({ label: "Applicants by job", module: "Applications", rangeDependent: true });
   });
 
   it("takes percent of all Applications in the range, not of the top five, and scales bars to the largest", () => {
@@ -329,12 +332,12 @@ describe("Hiring pipeline widget", () => {
   const widget = (pages: string[], hiringPipeline: DashboardSummary["hiringPipeline"], range = RANGE) =>
     dashboardLayoutFor(pages, { hiringPipeline }, range, NOW).hiringRows.flat().find((w) => w.id === "hiring-pipeline");
   const data = (counts: [number, number, number, number, number], range = RANGE) =>
-    widget(["/job-postings"], { applied: counts[0], screening: counts[1], interview: counts[2], offer: counts[3], hired: counts[4] }, range)!
+    widget(HIRING, { applied: counts[0], screening: counts[1], interview: counts[2], offer: counts[3], hired: counts[4] }, range)!
       .data as HiringPipelineData | null;
 
-  it("is shown only to Staff holding Recruitment and Hiring, and follows the range", () => {
-    expect(widget(["/dashboard", "/attendance"], { applied: 1, screening: 0, interview: 0, offer: 0, hired: 0 })).toBeUndefined();
-    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Hiring pipeline", module: "Recruitment and Hiring", rangeDependent: true });
+  it("is shown only to Staff holding the Module it reads, and follows the range", () => {
+    expect(widget(["/dashboard", "/training"], { applied: 1, screening: 0, interview: 0, offer: 0, hired: 0 })).toBeUndefined();
+    expect(widget(HIRING, undefined)).toMatchObject({ label: "Hiring pipeline", module: null, rangeDependent: true });
   });
 
   it("shows five bars, each a whole percent of all Applications received", () => {
@@ -369,7 +372,7 @@ describe("Hiring pipeline widget", () => {
 
   it("has no data, so shows its empty state, with no Applications", () => {
     expect(data([0, 0, 0, 0, 0])).toBeNull();
-    expect(widget(["/job-postings"], undefined)!.data).toBeNull();
+    expect(widget(HIRING, undefined)!.data).toBeNull();
   });
 });
 
@@ -385,12 +388,12 @@ describe("Needs attention widget", () => {
   const widget = (pages: string[], needsAttention: DashboardSummary["needsAttention"], range = RANGE) =>
     dashboardLayoutFor(pages, { needsAttention }, range, NOW).hiringRows.flat().find((w) => w.id === "needs-attention");
   const data = (needsAttention: DashboardSummary["needsAttention"], range = RANGE) =>
-    widget(["/job-postings"], needsAttention, range)!.data as NeedsAttentionData | null;
+    widget(HIRING, needsAttention, range)!.data as NeedsAttentionData | null;
 
-  it("is shown only to Staff holding Recruitment and Hiring, and ignores the range", () => {
-    expect(widget(["/dashboard", "/attendance"], counts(1, 1, 1))).toBeUndefined();
-    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Needs attention", module: "Recruitment and Hiring" });
-    expect(widget(["/job-postings"], undefined)!.rangeDependent).toBeUndefined();
+  it("is shown only to Staff holding the Module it reads, and ignores the range", () => {
+    expect(widget(["/dashboard", "/training"], counts(1, 1, 1))).toBeUndefined();
+    expect(widget(HIRING, undefined)).toMatchObject({ label: "Needs attention", module: null });
+    expect(widget(HIRING, undefined)!.rangeDependent).toBeUndefined();
     expect(data(counts(1, 2, 3), dashboardRange("last-30-days", NOW))).toEqual(data(counts(1, 2, 3)));
   });
 
@@ -439,7 +442,7 @@ describe("Needs attention widget", () => {
     const d = data(counts(0, 0, 0))!;
     expect(d.headline).toBe("Nothing needs your attention.");
     expect(d.rows.every((r) => r.muted)).toBe(true);
-    expect(widget(["/job-postings"], undefined)!.data).toBeNull();
+    expect(widget(HIRING, undefined)!.data).toBeNull();
   });
 });
 
@@ -448,12 +451,12 @@ describe("Where applicants come from widget", () => {
   const row = (source: Row["source"], count: number, hired = 0): Row => ({ source, count, hired });
   const widget = (pages: string[], applicantSources: DashboardSummary["applicantSources"], range = RANGE) =>
     dashboardLayoutFor(pages, { applicantSources }, range, NOW).hiringRows.flat().find((w) => w.id === "applicant-sources");
-  const data = (applicantSources: Row[], range = RANGE) => widget(["/job-postings"], applicantSources, range)!.data as ApplicantSourcesData;
+  const data = (applicantSources: Row[], range = RANGE) => widget(HIRING, applicantSources, range)!.data as ApplicantSourcesData;
 
-  it("is shown only to Staff holding Recruitment and Hiring, and follows the range", () => {
-    expect(widget(["/dashboard", "/attendance"], [row("Facebook", 1)])).toBeUndefined();
-    expect(widget(["/job-postings"], undefined)).toMatchObject({ label: "Where applicants come from", module: "Recruitment and Hiring", rangeDependent: true });
-    expect(widget(["/job-postings"], undefined)!.data).toBeNull();
+  it("is shown only to Staff holding the Module it reads, and follows the range", () => {
+    expect(widget(["/dashboard", "/training"], [row("Facebook", 1)])).toBeUndefined();
+    expect(widget(HIRING, undefined)).toMatchObject({ label: "Where applicants come from", module: "Applications", rangeDependent: true });
+    expect(widget(HIRING, undefined)!.data).toBeNull();
   });
 
   it("shows the five Sources, largest share first, ties in Source order", () => {
@@ -511,5 +514,81 @@ describe("Where applicants come from widget", () => {
     expect(d.headline).toBe("Facebook brings the most applicants. Facebook applicants are hired most often.");
     expect(d.rows[0].source).toBe("Unspecified");
     expect(data([row("Unspecified", 5, 1)]).headline).toBe("Careers page brings the most applicants.");
+  });
+});
+
+describe("Module access to Dashboard Widgets", () => {
+  const lines = (pages: string[], widgetId: "hiring-pipeline" | "needs-attention", summary: DashboardSummary) => {
+    const w = dashboardLayoutFor(pages, summary, RANGE, NOW).hiringRows.flat().find((x) => x.id === widgetId);
+    return w?.data ?? null;
+  };
+  const pipeline: DashboardSummary = { hiringPipeline: { applied: 40, screening: 20, interview: 10, offer: 4, hired: 2 } };
+  const attention: DashboardSummary = {
+    needsAttention: { toReview: { count: 3, oldestAppliedAt: null }, toSchedule: { count: 2, topJob: null }, resultsToRecord: 1, offersPastReply: { count: 4, oldestReplyBy: null }, missingDocuments: 5 },
+  };
+  const ids = (pages: string[]) => dashboardLayoutFor(pages, {}, RANGE, NOW).hiringRows.map((row) => row.map((w) => w.id));
+
+  it("puts each Widget with its owning Module and shows no row to a holder of none", () => {
+    expect(ids(["/job-postings"])).toEqual([]);
+    expect(ids(["/applicants"])).toEqual([["hiring-pipeline", "needs-attention"], ["applicants-by-job", "applicant-sources"]]);
+    expect(ids(["/interviews"])).toEqual([["hiring-pipeline", "needs-attention"], ["upcoming-interviews"]]);
+    expect(ids(["/offers"])).toEqual([["hiring-pipeline", "needs-attention"]]);
+    expect(ids(HIRING)).toEqual([["hiring-pipeline", "needs-attention"], ["applicants-by-job", "applicant-sources", "upcoming-interviews"]]);
+  });
+
+  it("shows the Hiring pipeline lines each holder's Modules own, and nothing hidden can be worked out", () => {
+    const stages = (pages: string[]) => (lines(pages, "hiring-pipeline", pipeline) as HiringPipelineData).bars.map((b) => [b.stage, b.count, b.percent]);
+    expect(stages(HIRING)).toEqual([["Applied", 40, 100], ["Screening", 20, 50], ["Interview", 10, 25], ["Offer", 4, 10], ["Hired", 2, 5]]);
+    expect(stages(["/applicants"])).toEqual([["Applied", 40, 100], ["Screening", 20, 50]]);
+    expect(stages(["/interviews"])).toEqual([["Interview", 10, 100]]);
+    expect(stages(["/offers"])).toEqual([["Offer", 4, 100], ["Hired", 2, 50]]);
+    expect((lines(["/offers"], "hiring-pipeline", pipeline) as HiringPipelineData).headline).not.toMatch(/d/);
+  });
+
+  it("shows the Needs attention rows each holder's Modules own, and counts only those", () => {
+    const rows = (pages: string[]) => {
+      const data = lines(pages, "needs-attention", attention) as NeedsAttentionData;
+      return [data.rows.map((r) => r.id), data.headline];
+    };
+    expect(rows(HIRING)).toEqual([["review", "schedule", "results", "offers", "documents"], "15 things to do today"]);
+    expect(rows(["/applicants"])).toEqual([["review"], "3 things to do today"]);
+    expect(rows(["/interviews"])).toEqual([["schedule", "results"], "3 things to do today"]);
+    expect(rows(["/offers"])).toEqual([["offers", "documents"], "9 things to do today"]);
+  });
+
+  it("sends Interviews to schedule to the Interviews page when the holder cannot open Applicants", () => {
+    const link = (pages: string[]) => (lines(pages, "needs-attention", attention) as NeedsAttentionData).rows.find((r) => r.id === "schedule")!.href;
+    expect(link(["/interviews"])).toBe("/interviews");
+    expect(link(["/interviews", "/applicants"])).toContain("/applicants");
+  });
+
+  it("shows Upcoming Events, which has no owning Module, to every Dashboard holder", () => {
+    const events = (pages: string[]) => dashboardLayoutFor(pages, {}, RANGE, NOW).rows.flat().map((w) => [w.id, w.module]);
+    expect(events(["/dashboard"])).toEqual([["upcoming-events", null]]);
+    expect(events(["/training"])).toEqual([]);
+  });
+});
+
+describe("the Dashboard Range selector", () => {
+  const range = (pages: string[]) => showsRange(dashboardLayoutFor(pages, {}, RANGE, NOW));
+
+  it("shows whenever any range-dependent card or Widget is drawn", () => {
+    expect(range(["/applicants"])).toBe(true); // Applicants card
+    expect(range(["/offers"])).toBe(true); // Offer acceptance card
+    expect(range(["/interviews"])).toBe(true); // Hiring pipeline Widget
+  });
+
+  it("stays away when everything drawn ignores the range", () => {
+    expect(range(["/job-postings"])).toBe(false); // Open jobs only
+    expect(range(["/dashboard"])).toBe(false); // Attendance Rate and Upcoming Events
+    expect(range(["/dashboard", "/employee-information"])).toBe(false);
+    expect(range([])).toBe(false);
+  });
+});
+
+describe("the Export", () => {
+  it("writes only the hiring cards the Staff member may see", () => {
+    expect(hiringCardsFor(["/job-postings", "/offers"], {}, RANGE).map((c) => c.label)).toEqual(["Open jobs", "Offer acceptance", "Average time to hire"]);
+    expect(hiringCardsFor(["/dashboard", "/employee-information"], {}, RANGE)).toEqual([]);
   });
 });

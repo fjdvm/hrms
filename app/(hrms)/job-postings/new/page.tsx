@@ -7,7 +7,7 @@ import { templatesForRequest } from "@/lib/portal/templates";
 import { createDraft } from "../actions";
 
 export default async function Page() {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Job Postings");
   // A failed lookup just leaves the picker empty; the form still works freehand.
   const templates = await (await templatesForRequest()).list().catch((error) => {
     if (!(error instanceof JobTemplateError)) throw error;

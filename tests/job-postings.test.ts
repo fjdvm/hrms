@@ -28,7 +28,7 @@ beforeEach(async () => {
   await db.exec(await readFile(new URL("./fixtures/careers-applications.sql", import.meta.url), "utf8"));
   vi.stubEnv("CAREERS_URL", "https://careers.test");
   portal = new FakePortal();
-  handle = portal.signIn(ada, ["Recruitment and Hiring"]);
+  handle = portal.signIn(ada, ["Job Postings", "Applications", "Interviews", "Offers"]);
   auditRequests = [];
   const portalBoundary = portalFetch(portal);
   vi.stubEnv("API_GATEWAY_URL", "https://gateway.test");
@@ -133,7 +133,7 @@ it.each(["open", "closed", "filled"] as const)("preserves an existing %s Job Pos
 it("refuses every operation without the Module, then allows them when granted", async () => {
   const allowed = jobPostingsFor(handle, db);
   const draft = await allowed.saveDraft({ title: "Original" });
-  const denied = jobPostingsFor(portal.signIn(ada, ["Attendance"]), db);
+  const denied = jobPostingsFor(portal.signIn(ada, ["Training"]), db);
   for (const operation of [
     () => denied.saveDraft({}), () => denied.read(draft.id), () => denied.list(),
     () => denied.editDraft(draft.id, { title: "Forbidden" }), () => denied.deleteDraft(draft.id),
@@ -293,7 +293,7 @@ it("refuses missing postings and rechecks access on every lifecycle operation", 
   }
   for (const state of ["denied", "unavailable", "invalid"] as const) {
     portal.unavailable = state === "unavailable";
-    const restricted = jobPostingsFor(state === "denied" ? portal.signIn(ada, ["Attendance"]) : state === "invalid" ? undefined : handle, db);
+    const restricted = jobPostingsFor(state === "denied" ? portal.signIn(ada, ["Training"]) : state === "invalid" ? undefined : handle, db);
     for (const action of [() => restricted.publish(draft.id), () => restricted.editOpen(draft.id, {}),
       () => restricted.close(draft.id), () => restricted.markFilled(draft.id), () => restricted.closeExpired()]) {
       await expect(action()).rejects.toMatchObject({ reason: state });
@@ -360,7 +360,7 @@ it("patches only reusable template fields and refuses missing templates", async 
 it("rechecks Portal access on every template operation and fails closed", async () => {
   const templates = jobTemplatesFor(handle, db);
   const saved = await templates.create({ title: "Original" });
-  const denied = jobTemplatesFor(portal.signIn(ada, ["Attendance"]), db);
+  const denied = jobTemplatesFor(portal.signIn(ada, ["Training"]), db);
   for (const state of ["denied", "unavailable", "invalid"] as const) {
     portal.unavailable = state === "unavailable";
     if (state === "invalid") portal.endSession(handle);
@@ -372,7 +372,7 @@ it("rechecks Portal access on every template operation and fails closed", async 
     }
   }
   portal.unavailable = false;
-  const freshHandle = portal.signIn(ada, ["Recruitment and Hiring"]);
+  const freshHandle = portal.signIn(ada, ["Job Postings", "Applications", "Interviews", "Offers"]);
   expect(await jobTemplatesFor(freshHandle, db).list()).toEqual([saved]);
   expect(await jobPostingsFor(freshHandle, db).list()).toEqual([]);
   await expect(jobTemplatesFor(undefined, db).list()).rejects.toMatchObject({ reason: "invalid" });
@@ -409,7 +409,7 @@ it("adopts the existing Careers template table without losing templates", async 
 
 
 it("delivers a publish with the Portal user id and Staff name", async () => {
-  const publisher = portal.signIn({ ...ada, id: "portal-user-42" }, ["Recruitment and Hiring"]);
+  const publisher = portal.signIn({ ...ada, id: "portal-user-42" }, ["Job Postings", "Applications", "Interviews", "Offers"]);
   const postings = jobPostingsFor(publisher, db);
   const draft = await postings.saveDraft(publishable);
   await postings.publish(draft.id);
@@ -446,7 +446,7 @@ it("delivers Audit Events with the username fallback for each successful Staff a
     "job_template.created", "job_template.updated", "job_posting.created", "job_template.deleted",
   ]);
   for (const event of auditRequests) {
-    expect(event).toMatchObject({ source: "HRMS", module: "Recruitment and Hiring", outcome: "success",
+    expect(event).toMatchObject({ source: "HRMS", module: "Job Postings", outcome: "success",
       actor: { type: "user", id: "ada", display_name: "Ada Okafor" }, customer_description: null,
       occurred_at: expect.any(String), idempotency_key: expect.any(String) });
   }
@@ -730,7 +730,7 @@ it("rolls direct publication back when announcement queuing fails", async () => 
 it("rechecks Portal access before direct publication", async () => {
   for (const state of ["denied", "invalid", "unavailable"] as const) {
     portal.unavailable = state === "unavailable";
-    const restricted = jobPostingsFor(state === "denied" ? portal.signIn(ada, ["Attendance"]) : state === "invalid" ? undefined : handle, db);
+    const restricted = jobPostingsFor(state === "denied" ? portal.signIn(ada, ["Training"]) : state === "invalid" ? undefined : handle, db);
     await expect(restricted.createAndPublish(publishable)).rejects.toMatchObject({ reason: state });
   }
   portal.unavailable = false;
@@ -870,7 +870,7 @@ it("adds empty lists to existing Templates and can reapply the migration", async
 it("recovers legacy Audit Events with their original time, key and username only once", async () => {
   const { retryJobPostingAuditDelivery } = await import("@/lib/job-postings");
   const legacy = {
-    source: "HRMS", module: "Recruitment and Hiring", action: "job_template.created", outcome: "success",
+    source: "HRMS", module: "Job Postings", action: "job_template.created", outcome: "success",
     actor: { type: "staff", id: "ada", display_name: "Ada Okafor" },
     occurred_at: "2026-10-28T06:53:53.006Z", idempotency_key: "legacy-template-created",
     description: "Ada Okafor performed job_template.created.", customer_description: null,
@@ -915,4 +915,15 @@ it("retains a recovered Audit Event after rejection without resetting its retry 
   } finally {
     log.mockRestore();
   }
+});
+
+it("opens Job Postings and templates to the Job Postings Module alone", async () => {
+  for (const holder of ["Applications", "Interviews", "Offers"]) {
+    const handle = portal.signIn(ada, [holder]);
+    await expect(jobPostingsFor(handle, db).list()).rejects.toMatchObject({ reason: "denied" });
+    await expect(jobTemplatesFor(handle, db).list()).rejects.toMatchObject({ reason: "denied" });
+  }
+  const allowed = portal.signIn(ada, ["Job Postings"]);
+  await expect(jobPostingsFor(allowed, db).list()).resolves.toBeDefined();
+  await expect(jobTemplatesFor(allowed, db).list()).resolves.toBeDefined();
 });

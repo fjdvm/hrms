@@ -210,7 +210,7 @@ export async function readChecklist(db: Database, id: number): Promise<OfferChec
 /** Server-side boundary. Recheck the Portal on every operation, including repeated reads. */
 export function offersFor(sessionHandle: string | undefined, db: Database = database, staffNames: () => Promise<string[] | null> = listStaffNames) {
   async function authorise() {
-    const access = await accessFor(sessionHandle).check("Recruitment and Hiring");
+    const access = await accessFor(sessionHandle).check("Offers");
     if (access.decision !== "allowed") throw new OfferError(access.decision);
     return access.staff;
   }
@@ -435,7 +435,7 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
       const payload = { to: offer.applicantEmail, app: "careers", title: email.title, body: email.body };
       const auditId = randomUUID();
       const event = {
-        source: "HRMS", module: "Recruitment and Hiring", action: "job_posting.filled", outcome: "success",
+        source: "HRMS", module: "Offers", action: "job_posting.filled", outcome: "success",
         actor: { type: "user", id: staff.id ?? staff.username, display_name: staff.name },
         customer_description: null, occurred_at: new Date().toISOString(), idempotency_key: auditId,
         description: `${staff.name} performed job_posting.filled.`,

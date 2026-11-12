@@ -56,7 +56,7 @@ async function seed(index: number) {
 }
 /** A Sent Offer for `person-<index>`. */
 async function sentOffer(index = 1) {
-  const handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  const handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   const applicationId = await seed(index);
   const id = await offersFor(handle, db, async () => ["Paolo Garcia"]).create(applicationId, terms);
   await offersFor(handle, db, async () => ["Paolo Garcia"]).send(id, "2099-10-29");
@@ -94,7 +94,7 @@ it("keeps replies final and refuses Draft and Withdrawn Offers with a reason", a
   const second = await sentOffer(2);
   await db.query(`UPDATE applications SET status = 'Withdrawn' WHERE applicant_id = 'person-2'`);
   await expect(careers().reply(second.id, second.applicantId, "Accepted")).rejects.toMatchObject({ reason: "conflict", detail: "withdrawn" });
-  const handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  const handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   const draft = await offersFor(handle, db, async () => ["Paolo Garcia"]).create(await seed(3), terms);
   await expect(careers().reply(draft, "person-3", "Accepted")).rejects.toMatchObject({ reason: "conflict", detail: "draft" });
   expect((await db.query(`SELECT 1 FROM hrms_offer_emails WHERE id LIKE 'offer.accepted:%' OR id LIKE 'offer.declined:%'`)).rows).toHaveLength(1);
@@ -116,7 +116,7 @@ it("never lets one Applicant answer or upload for another's Offer, and rejects b
 
 it("records an upload as Submitted, replaces the earlier file and tells Staff", async () => {
   const { id, applicantId } = await sentOffer();
-  const handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  const handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   await offersFor(handle, db).requestDocuments(id, { types: ["nbi", "sss"], dueDate: "2099-11-30" });
   expect(await careers().uploadDocument(id, applicantId, upload("nbi", "file-1"))).toEqual({ submitted: 1, total: 7 });
   await careers().uploadDocument(id, applicantId, upload("nbi", "file-2"));
@@ -160,7 +160,7 @@ it("refuses uploads on a Declined, Withdrawn or Draft Offer", async () => {
   const withdrawn = await sentOffer(2);
   await db.query(`UPDATE applications SET status = 'Withdrawn' WHERE applicant_id = 'person-2'`);
   await expect(careers().uploadDocument(withdrawn.id, withdrawn.applicantId, upload())).rejects.toMatchObject({ reason: "conflict", detail: "withdrawn" });
-  const handle = portal.signIn(staff, ["Recruitment and Hiring"]);
+  const handle = portal.signIn(staff, ["Job Postings", "Applications", "Interviews", "Offers"]);
   const draft = await offersFor(handle, db, async () => ["Paolo Garcia"]).create(await seed(3), terms);
   await expect(careers().uploadDocument(draft, "person-3", upload())).rejects.toMatchObject({ reason: "conflict", detail: "draft" });
   expect((await db.query(`SELECT 1 FROM hrms_offer_documents`)).rows).toHaveLength(0);

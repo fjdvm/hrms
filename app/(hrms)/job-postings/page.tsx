@@ -203,7 +203,7 @@ async function Listing({
 export default async function Page({
   searchParams,
 }: PageProps<"/job-postings">) {
-  await requireModule("Recruitment and Hiring");
+  await requireModule("Job Postings");
   const { status, q } = await searchParams;
   const one = (value: string | string[] | undefined) =>
     Array.isArray(value) ? value[0] : value;
