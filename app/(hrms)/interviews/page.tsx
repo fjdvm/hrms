@@ -2,7 +2,10 @@ import Link from "next/link";
 import { Briefcase, Calendar, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PAGE, PageHeader, InfoNote } from "@/components/hiring/parts";
+import { InterviewsCalendar } from "@/components/hiring/interviews-calendar";
+import { InterviewsViewSwitch } from "@/components/hiring/interviews-view-switch";
 import { interviewsSubtitle, nextInterviewLabel } from "@/lib/application-view";
+import { calendarFilters, calendarState, calendarSubtitle, calendarTitle, viewFromParam } from "@/lib/calendar-view";
 import type { InterviewJobSummary } from "@/lib/applications";
 import { applicationsForRequest } from "@/lib/portal/applications";
 import { requireModule } from "@/lib/portal/staff";
@@ -49,14 +52,34 @@ function JobCard({ job, now }: { job: InterviewJobSummary; now: Date }) {
   );
 }
 
-export default async function Page() {
+export default async function Page({ searchParams }: PageProps<"/interviews">) {
   await requireModule("Recruitment and Hiring");
-  const { jobs, totals } = await (await applicationsForRequest()).interviewJobs();
-  const now = new Date();
+  const params = await searchParams;
+  const applications = await applicationsForRequest();
+  const { jobs, totals } = await applications.interviewJobs();
 
+  if (viewFromParam(params.view) === "calendar") {
+    const state = calendarState(params);
+    const [{ interviews, conflicts }, interviewers] = await Promise.all([applications.calendar(calendarFilters(state)), applications.interviewers()]);
+    return (
+      <div className={PAGE}>
+        <PageHeader title="Interviews" subtitle={calendarSubtitle(state, interviews.length, conflicts.length)}>
+          <InterviewsViewSwitch current="calendar" />
+        </PageHeader>
+        <InterviewsCalendar
+          state={state} title={calendarTitle(state)} interviews={interviews} conflicts={conflicts} interviewers={interviewers}
+          jobs={jobs.map((job) => ({ id: job.jobPostingId, title: job.title }))}
+        />
+      </div>
+    );
+  }
+
+  const now = new Date();
   return (
     <div className={PAGE}>
-      <PageHeader title="Interviews" subtitle={interviewsSubtitle(totals)} />
+      <PageHeader title="Interviews" subtitle={interviewsSubtitle(totals)}>
+        <InterviewsViewSwitch current="by-job" />
+      </PageHeader>
       {jobs.length === 0 ? (
         <p className="rounded-xl border bg-card px-[20px] py-[28px] text-sm text-zinc-500">
           No applicants are in the interview stage yet. Move an applicant to Interview from Applicants to see their job here.

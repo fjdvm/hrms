@@ -77,6 +77,8 @@ export type CalendarInterview = {
   id: number; applicationId: number; applicantName: string; jobPostingId: string; jobPostingTitle: string;
   interviewerId: string | null; interviewerName: string; colour: string; type: InterviewInput["type"];
   startsAt: Date; endsAt: Date; meetingLink: string | null; mapLink: string | null; place: string;
+  /** What the Reschedule dialog needs to open pre-filled without another request. */
+  applicantEmail: string; jobLocation: string; province: string | null; city: string | null; address: string | null; location: string;
   status: "Scheduled" | "Passed" | "Not passed";
 };
 export type CalendarConflict = { interviewerId: string; interviewerName: string; first: CalendarConflictSide; second: CalendarConflictSide };
@@ -530,6 +532,7 @@ export function applicationsFor(sessionHandle: string | undefined, db: Database 
         SELECT i.id::integer AS id, a.id AS "applicationId", a.applicant_name AS "applicantName", a.job_posting_id AS "jobPostingId",
           a.job_posting_title AS "jobPostingTitle", i.interviewer_id AS "interviewerId", i.interviewer_name AS "interviewerName",
           i.type, i.starts_at AS "startsAt", i.ends_at AS "endsAt", i.meeting_link AS "meetingLink", i.map_link AS "mapLink",
+          a.applicant_email AS "applicantEmail", a.location AS "jobLocation", i.province, i.city, i.address, i.location,
           COALESCE(NULLIF(concat_ws(', ', NULLIF(i.address, ''), NULLIF(i.city, ''), NULLIF(i.province, '')), ''), i.location) AS place,
           CASE WHEN i.result IS NULL THEN 'Scheduled' ELSE i.result END AS status
         FROM public.hrms_application_interviews i JOIN public.hrms_all_applications a ON a.id = i.application_id

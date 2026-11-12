@@ -235,19 +235,22 @@ type Props = {
   today?: string;
   /** The filled button with a calendar icon the Interviews list uses, instead of the outlined profile one. */
   compact?: boolean;
+  /** Controlled by the caller (the Calendar opens it from a pop-up or banner): no trigger button is rendered. */
+  controlled?: { open: boolean; onOpenChange: (open: boolean) => void };
 };
 
 /** The one Schedule interview dialog: books an Interview, or reschedules `interview`. Used on the Application profile and the Interviews tab. */
-export function ScheduleInterview({ label, today, compact, ...props }: Props) {
-  const [open, setOpen] = useState(false);
+export function ScheduleInterview({ label, today, compact, controlled, ...props }: Props) {
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlled?.open ?? ownOpen, setOpen = controlled?.onOpenChange ?? setOwnOpen;
   const router = useRouter();
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
+      {!controlled && <DialogTrigger asChild>
         {compact
           ? <Button className="h-auto gap-[6px] rounded-lg px-[12px] py-[6px] text-[13px] font-medium shadow-none [&_svg]:size-[14px]"><CalendarIcon /> {label}</Button>
           : <Button variant="outline" className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] text-sm font-medium shadow-none">{label}</Button>}
-      </DialogTrigger>
+      </DialogTrigger>}
       <DialogContent
         showClose={false}
         overlayClassName="bg-[rgba(18,13,26,0.45)]"
