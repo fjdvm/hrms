@@ -22,7 +22,7 @@ export function validateApplicantDetails(input: unknown): ApplicantDetails {
   const body = object(input);
   const birthday = optionalText(body.birthday, 10);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
-  if (birthday && (!/^\d{4}-\d{2}-\d{2}$/.test(birthday) || !Number.isFinite(Date.parse(birthday))
+  if (birthday && (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(birthday) || !Number.isFinite(Date.parse(birthday))
     || new Date(birthday).toISOString().slice(0, 10) !== birthday || birthday > today)) throw new OfferError("validation");
   const ids = body.governmentIds == null ? {} : object(body.governmentIds);
   const contact = body.emergencyContact == null ? {} : object(body.emergencyContact);

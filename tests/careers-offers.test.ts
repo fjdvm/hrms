@@ -252,7 +252,7 @@ it("refuses Your details for a wrong Applicant, bad key and unavailable Offer st
 it("validates optional answers, clears earlier answers and still hires with only seven documents", async () => {
   const { id, applicantId } = await sentOffer();
   for (const body of ["not json", [], null, { applicantId, birthday: "2025-02-30" },
-    { applicantId, birthday: "2999-01-01" }, { applicantId, sex: 1 },
+    { applicantId, birthday: "0000-01-01" }, { applicantId, birthday: "2999-01-01" }, { applicantId, sex: 1 },
     { applicantId, governmentIds: [] }, { applicantId, emergencyContact: { name: "x".repeat(201) } }]) {
     expect((await call(details, id, body)).status).toBe(400);
   }
