@@ -33,7 +33,7 @@ export function EmployeeProfile({ employee }: { employee: EmployeeDetail }) {
         documentCount={submittedCount(documents)}
         details={
           <ProfileColumns
-            main={<><PersonalInformation personal={personal} /><Employment employment={employment} /><GovernmentIdsSection ids={employee.governmentIds} /><EmergencyContact contact={employee.emergencyContact} /></>}
+            main={<><PersonalInformation personal={personal} /><Employment employment={employment} employmentType={employee.contract.contractType} /><GovernmentIdsSection ids={employee.governmentIds} /><EmergencyContact contact={employee.emergencyContact} /></>}
             aside={<><DocumentsCard documents={documents} /><Contract contract={employee.contract} /></>}
           />
         }

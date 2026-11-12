@@ -26,10 +26,12 @@ export type EmployeeDocument = EmployeeDetail["documents"][number];
 export const isSubmitted = (document: EmployeeDocument) => document.status === "Submitted";
 export const submittedCount = (documents: EmployeeDocument[]) => documents.filter(isSubmitted).length;
 
+export const validUntilLabel = (date: string) => `Valid until ${formatEmployeeDate(date)}`;
+
 /** "Valid until 28 Apr 2027", else the upload date, else a gap. */
 export function documentSummary(document: EmployeeDocument) {
   if (!isSubmitted(document)) return NOT_PROVIDED;
-  if (document.validUntil) return `Valid until ${formatEmployeeDate(document.validUntil)}`;
+  if (document.validUntil) return validUntilLabel(document.validUntil);
   return document.uploadedAt ? formatEmployeeDate(document.uploadedAt) : "Submitted";
 }
 

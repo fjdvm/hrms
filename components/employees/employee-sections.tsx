@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { CardTitle } from "@/components/hiring/parts";
 import { EMPTY_EMPLOYEE_SECTION, type EmployeeDetail, type GovernmentIds } from "@/lib/employees";
 import {
-  documentSummary, formatBirthday, formatEmployeeDate, formatMonthlyPay, isSubmitted, orNotProvided, submittedCount,
+  NOT_PROVIDED, documentSummary, validUntilLabel, formatBirthday, formatEmployeeDate, formatMonthlyPay, isSubmitted, orNotProvided, submittedCount,
   type EmployeeDocument,
 } from "@/lib/employee-view";
 
@@ -48,13 +48,14 @@ export function PersonalInformation({ personal }: { personal: EmployeeDetail["pe
   );
 }
 
-export function Employment({ employment }: { employment: EmployeeDetail["employment"] }) {
+export function Employment({ employment, employmentType }: { employment: EmployeeDetail["employment"]; employmentType: string }) {
   const { hiredFrom } = employment;
   return (
     <Section title="Employment">
       {text("Position", employment.position)}
       {text("Department", employment.department)}
       {text("Branch", employment.branch)}
+      {text("Employment type", employmentType)}
       {text("Start date", formatEmployeeDate(employment.startDate))}
       <Field label="Probation ends" missing={!employment.probationEndDate}>{formatEmployeeDate(employment.probationEndDate)}</Field>
       {text("Reports to", employment.reportsTo)}
@@ -134,8 +135,8 @@ export function DocumentsTable({ documents }: { documents: EmployeeDocument[] })
               <span className="text-sm font-medium text-zinc-900">{document.label}</span>
               <span className="truncate text-xs text-zinc-500">{document.fileName ?? document.hint}</span>
             </div>
-            <span className="w-[140px] text-sm text-[#1f1a2e]">{isSubmitted(document) ? `Uploaded ${formatEmployeeDate(document.uploadedAt)}` : ""}</span>
-            <span className="w-[170px] text-sm text-zinc-500">{document.validUntil ? `Valid until ${formatEmployeeDate(document.validUntil)}` : ""}</span>
+            <span className="w-[140px] text-sm text-[#1f1a2e]">{isSubmitted(document) ? `Uploaded ${formatEmployeeDate(document.uploadedAt)}` : NOT_PROVIDED}</span>
+            <span className="w-[170px] text-sm text-zinc-500">{document.validUntil ? validUntilLabel(document.validUntil) : ""}</span>
             {isSubmitted(document) ? <Badge variant="success">Submitted</Badge> : <Badge variant="warning">Missing</Badge>}
             {document.viewUrl ? (
               <a href={document.viewUrl} target="_blank" rel="noopener noreferrer" aria-label={`View ${document.label}`}
@@ -154,7 +155,7 @@ export function Contract({ contract }: { contract: EmployeeDetail["contract"] })
   return (
     <Section title="Contract" cols="grid-cols-1">
       <Field label="Offer letter">{contract.offerLetterSigned ? "Signed" : "Not signed"}</Field>
-      {text("Contract", contract.contractType)}
+      {text("Contract type", contract.contractType)}
       {"monthlyPay" in contract && typeof contract.monthlyPay === "number" && <Field label="Monthly pay">{formatMonthlyPay(contract.monthlyPay)}</Field>}
     </Section>
   );
