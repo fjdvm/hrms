@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { deliverOfferEmails } from "@/lib/offer-emails";
+import { employeesFor } from "@/lib/employees";
 import { OfferError, offersFor, type OfferTerms } from "@/lib/offers";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
@@ -530,6 +531,16 @@ it("lists the Hired employees as Onboarding, newest first", async () => {
     ["Applicant 2", "BR-EMP-0002", "Onboarding", "2099-11-03"], ["Applicant 1", "BR-EMP-0001", "Onboarding", "2099-11-03"],
   ]);
   expect(list.rows[0]).toMatchObject({ position: "Cashier", department: "Retail", branch: "Cainta branch" });
+});
+
+it("a hire appears once in the Employee list as Onboarding, and a repeat hire adds nothing", async () => {
+  const { id } = await acceptedOffer();
+  await offers().hire(id);
+  await expect(offers().hire(id)).rejects.toMatchObject({ reason: "conflict" });
+  const viewer = portal.signIn(staff, ["Employee Information"]);
+  const list = await employeesFor(viewer, db).list();
+  expect(list.rows.map((r) => [r.name, r.employeeNumber, r.status])).toEqual([["Applicant 1", "BR-EMP-0001", "Onboarding"]]);
+  expect(list.counts).toEqual({ all: 1, active: 0, onboarding: 1 });
 });
 
 it("stays locked until the offer is Accepted and all seven documents are Submitted", async () => {

@@ -1,12 +1,26 @@
 import { encryptEmployeeId, decryptEmployeeId } from "./employee-encryption";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
-import { PRE_EMPLOYMENT_DOCUMENTS } from "./offer-documents";
+import { DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS } from "./offer-documents";
 import { gatewayDocumentFiles, type DocumentFiles } from "./document-files";
 
 export const EMPTY_EMPLOYEE_SECTION = "Not provided yet";
 export const SENSITIVE_EMPLOYEE_ROLES = ["Super Admin", "HRMS Manager"] as const;
 export const canSeeEmployeeSensitiveFields = (role: string) => SENSITIVE_EMPLOYEE_ROLES.some(r => r === role);
+export type EmployeeStatus = "Onboarding" | "Active";
+export type EmployeeListFilters = { status?: EmployeeStatus; branch?: string; search?: string };
+export type EmployeeListRow = {
+  id: number; employeeNumber: string; name: string; initials: string; email: string; position: string; department: string | null;
+  branch: string; startDate: string; documentsSubmitted: number; documentsTotal: number; documentsMissing: number;
+  documentsLabel: string; status: EmployeeStatus;
+};
+const initialsOf = (name: string) => name.split(/\s+/u).filter(Boolean).slice(0, 2).map(w => Array.from(w)[0].toUpperCase()).join("");
+const documentsLabel = (submitted: number, total: number) => submitted >= total ? `${total}/${total} complete` : `${submitted}/${total} · ${total - submitted} missing`;
+// Spreadsheet apps run a cell that starts with these as a formula; prefix it so exported names and positions stay text.
+const csvCell = (value: string) => {
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+};
 export class EmployeeError extends Error {
   constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found") {
     super(`Employee: ${reason}`);
@@ -33,7 +47,44 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     if (access.decision !== "allowed") throw new EmployeeError(access.decision);
     return access.staff;
   }
+  async function readList({ status, branch, search }: EmployeeListFilters) {
+    await authorise();
+    if ((status !== undefined && status !== "Onboarding" && status !== "Active") ||
+      (branch !== undefined && (typeof branch !== "string" || branch.length > 100)) ||
+      (search !== undefined && (typeof search !== "string" || search.length > 100))) throw new EmployeeError("validation");
+    const term = search?.trim().replace(/[\\%_]/g, "\\$&");
+    // Counts and summary describe the Branch and search narrowing, so the tabs always add up to All.
+    const { rows } = await db.query<Omit<EmployeeListRow, "initials" | "documentsTotal" | "documentsMissing" | "documentsLabel">>(`
+      SELECT e.id, e.employee_number AS "employeeNumber", e.full_name AS name, e.email, e.position, e.department, e.branch,
+        e.start_date::text AS "startDate", e.status,
+        (SELECT count(*)::int FROM public.hrms_employee_documents d WHERE d.employee_id = e.id
+          AND (d.file_id IS NOT NULL OR (d.file_name IS NOT NULL AND d.uploaded_at IS NOT NULL))) AS "documentsSubmitted"
+      FROM public.hrms_employees e
+      WHERE ($1::text IS NULL OR e.branch = $1)
+        AND ($2::text IS NULL OR e.full_name ILIKE '%' || $2 || '%' OR e.employee_number ILIKE '%' || $2 || '%')
+      ORDER BY e.employee_number`, [branch || null, term || null]);
+    const all = rows.map(r => ({ ...r, initials: initialsOf(r.name), documentsTotal: DOCUMENT_COUNT,
+      documentsMissing: DOCUMENT_COUNT - r.documentsSubmitted, documentsLabel: documentsLabel(r.documentsSubmitted, DOCUMENT_COUNT) }));
+    const { rows: branches } = await db.query<{ branch: string }>(`SELECT DISTINCT branch FROM public.hrms_employees ORDER BY branch`);
+    return {
+      rows: status ? all.filter(r => r.status === status) : all,
+      counts: { all: all.length, active: all.filter(r => r.status === "Active").length, onboarding: all.filter(r => r.status === "Onboarding").length },
+      summary: { employees: all.length, onboarding: all.filter(r => r.status === "Onboarding").length, missingDocuments: all.filter(r => r.documentsMissing > 0).length },
+      branches: branches.map(b => b.branch),
+    };
+  }
   return {
+    /** The Employee list: rows, tab counts, summary and Branch options. Never includes government IDs or pay. */
+    list: (filters: EmployeeListFilters = {}) => readList(filters),
+    /** CSV of the current list. Columns are fixed and exclude government IDs and pay for every role. */
+    async exportCsv(filters: EmployeeListFilters = {}): Promise<string> {
+      const { rows } = await readList(filters);
+      const records = [
+        ["Employee ID", "Name", "Email", "Position", "Department", "Branch", "Start date", "Documents", "Status"],
+        ...rows.map(r => [r.employeeNumber, r.name, r.email, r.position, r.department ?? "", r.branch, r.startDate, r.documentsLabel, r.status]),
+      ];
+      return records.map(record => record.map(csvCell).join(",")).join("\r\n") + "\r\n";
+    },
     /** Internal write seam for Employee editors; encryption and edit auditing are inseparable. Replaces all four fields. */
     async replaceGovernmentIds(id: number, input: Partial<GovernmentIds>) {
       const staff = await authorise();

@@ -130,3 +130,40 @@ it("masks full-width government ID digits for an unauthorised role", async () =>
   await employees(manager).replaceGovernmentIds(1, { sss: '１２３４５６７８９' });
   expect((await employees().read(1)).governmentIds).toMatchObject({ sss: '１２••••••９' });
 });
+
+it("lists every Employee record with counts, summary, Branch filter and search, and an unauthorised Staff member is refused", async () => {
+  await db.exec(`DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  const seeded = await seedEmployees(db);
+  const all = await employees().list();
+  expect(all.counts).toEqual({ all: 7, active: 3, onboarding: 4 });
+  expect(all.summary).toEqual({ employees: 7, onboarding: 4, missingDocuments: all.rows.filter(r => r.documentsMissing > 0).length });
+  expect(all.rows).toHaveLength(7);
+  expect(all.rows[0]).toMatchObject({ employeeNumber: expect.stringMatching(/^BR-EMP-\d{4}$/), initials: expect.stringMatching(/^[A-Z]{1,2}$/), status: expect.stringMatching(/Onboarding|Active/) });
+  const missing = all.rows.find(r => r.id === seeded.find(e => e.missing)!.employeeId)!;
+  expect(missing.documentsLabel).toBe(`${missing.documentsSubmitted}/7 · ${7 - missing.documentsSubmitted} missing`);
+  expect(all.rows.some(r => r.documentsLabel === "7/7 complete")).toBe(true);
+  expect((await employees().list({ status: "Active" })).rows).toHaveLength(3);
+  const branch = all.branches[0];
+  const byBranch = await employees().list({ branch });
+  expect(byBranch.rows.every(r => r.branch === branch)).toBe(true);
+  expect(byBranch.counts.all).toBe(all.rows.filter(r => r.branch === branch).length);
+  expect((await employees().list({ search: all.rows[0].employeeNumber })).rows.map(r => r.id)).toEqual([all.rows[0].id]);
+  expect((await employees().list({ search: all.rows[1].name.toLowerCase() })).rows.map(r => r.id)).toContain(all.rows[1].id);
+  expect((await employees().list({ search: "%" })).rows).toHaveLength(0);
+  const noModule = portal.signIn(staff, ["Offers"]);
+  await expect(employees(noModule).list()).rejects.toMatchObject({ reason: "denied" });
+  await expect(employees(noModule).exportCsv()).rejects.toMatchObject({ reason: "denied" });
+  await expect(employees("unknown").list()).rejects.toMatchObject({ reason: "invalid" });
+  await expect(employees().list({ status: "Bogus" as never })).rejects.toMatchObject({ reason: "validation" });
+});
+
+it("exports the current list as CSV without government IDs or pay, even for a manager", async () => {
+  const manager = portal.signIn({ ...staff, role: "HRMS Manager" }, ["Employee Information"]);
+  await employees(manager).replaceGovernmentIds(1, { sss: "34-1234567-8" });
+  await db.exec(`UPDATE hrms_employees SET full_name = '=HYPERLINK("x")', position = 'Cashier, Senior'`);
+  const csv = await employees(manager).exportCsv();
+  expect(csv.split("\r\n")[0]).toBe("Employee ID,Name,Email,Position,Department,Branch,Start date,Documents,Status");
+  expect(csv).toContain(`BR-EMP-0001,"'=HYPERLINK(""x"")",maria@example.test,"Cashier, Senior",,Cainta,2026-01-01,0/7 · 7 missing,Onboarding`);
+  expect(csv).not.toMatch(/1234567|19000|sss|salary|pay/i);
+  expect((await employees(manager).exportCsv({ status: "Active" })).trim().split("\r\n")).toHaveLength(1);
+});
