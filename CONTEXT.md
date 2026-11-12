@@ -13,7 +13,7 @@ The central sign-in site that Staff sign in through and are sent into HRMS from.
 _Avoid_: Auth app, login site
 
 **Module**:
-A feature area of HRMS that the Portal grants or revokes per Staff member, shown as one tab in the sidebar. Each HRMS page belongs to exactly one Module. The Modules are Dashboard, Attendance, Employee Information, Payroll & ESS, Recruitment and Hiring, and User Management. The Portal and HRMS use the same Module names.
+A feature area of HRMS that the Portal grants or revokes per Staff member, shown as one tab in the sidebar. Each HRMS page belongs to exactly one Module. The Modules are Dashboard, Attendance, Employee Information, Payroll & ESS, Recruitment and Hiring, Training and Development, and User Management. Training and Development is shown in the sidebar under the short group label "TRAINING". The Portal and HRMS use the same Module names.
 _Avoid_: Permission, feature, section, page
 
 **HR-ATS**:
@@ -45,7 +45,7 @@ One of the seven documents an Offer's checklist tracks before Staff may mark the
 _Avoid_: Requirement, onboarding document
 
 **Employee record**:
-The record of a person who works for Bren Raphael's, created when Staff mark an Offer's Application as Hired. It carries over the Applicant's details, the Offer's terms and the Pre-employment Documents (their Digital 201 folder), and starts as Onboarding. It is created together with the move to Hired, never separately. Unrelated to Staff, even for the same person.
+The record of a person who works for Bren Raphael's, created when Staff mark an Offer's Application as Hired. It carries over the Applicant's details, the Offer's terms and the Pre-employment Documents (their Digital 201 folder), and starts as Onboarding. It is created together with the move to Hired, never separately. Unrelated to Staff, even for the same person. The person behind an Employee record is the **Employee** that Staff assign to trainings; Employees never sign in, and Staff are never assigned to a training.
 _Avoid_: Employee (for the record), Staff
 
 **Source**:
@@ -69,7 +69,7 @@ The Module for employee attendance. Biometrics is not a separate Module and is n
 _Avoid_: Attendance Biometrics, Biometrics
 
 **Widget**:
-A summary block on the Dashboard that belongs to exactly one Module and is shown only to Staff who hold that Module. Until its Module has data, a Widget shows "Nothing to show yet". The Dashboard has no Widget of its own.
+A summary block on the Dashboard that belongs to exactly one Module (Upcoming Events is the one exception) and is shown only to Staff who hold that Module. Until its Module has data, a Widget shows "Nothing to show yet". The Dashboard has no Widget of its own.
 _Avoid_: Tile, panel
 
 **Key Summary Card**:
@@ -115,7 +115,7 @@ A kind of Widget, owned by Employee Information, that shows how the company's em
 A kind of Widget, owned by Employee Information, that lists the latest employee-record events such as hires, transfers and status changes. It does not draw on other Modules.
 
 **Upcoming Events**:
-A kind of Widget, owned by Attendance, that lists what is coming up such as approved leave and holidays. It does not draw on other Modules.
+A kind of Widget that lists what is coming up. It is the one Widget fed by more than one Module: approved leave and holidays come from Attendance, and Upcoming Trainings (title, date and time, a "Training" tag, linked to the Training; Cancelled ones left out) come from Training and Development. Each Staff member sees only the items of the Modules they hold, and the Widget appears if they hold at least one of them.
 
 **Hiring pipeline**:
 A Detail Widget, owned by Recruitment and Hiring, that shows how many Applications received in the Dashboard Range have ever reached each Stage (Applied, Screening, Interview, Offer, Hired), each as a percent of all Applications received. Rejected and Withdrawn are not bars. Its headline names how many applicants it takes to get one hire and the Stage where most drop off.
@@ -131,6 +131,21 @@ A Detail Widget, owned by Recruitment and Hiring, that lists the next five Inter
 
 **Where applicants come from**:
 A Detail Widget, owned by Recruitment and Hiring, that shows each Source's share of the Applications received in the Dashboard Range and its hire rate, the Applications from that Source that have reached Hired as a percent of those from it. "Unspecified" appears as a row only when it has Applications and never wins a headline. Its headline names the Source with the most Applications and the Source with the highest hire rate, falling back to "Careers page brings the most applicants" when no Application was received.
+
+**Training**:
+One dated session that Staff create in Training and Development, with a title, description, objectives, one date and time, and either a venue or an online meeting link. A course that runs on several days or repeats is entered as separate Trainings. Its status is derived, not chosen: Upcoming until its date passes, Completed once its date has passed, Cancelled when Staff cancel it with a reason. Rescheduling is not a status; a rescheduled Training stays Upcoming and shows "Rescheduled from" its old date. Once any Employee has a recorded result its date can no longer be edited.
+_Avoid_: Training program (in the UI), course, class, session (for the record)
+
+**Assigned employee**:
+An Employee assigned to one Training, with their own status that Staff set after the session from the paper sign-in sheet: Assigned, Completed (with a completion date), Did not attend, or Cancelled (set automatically when the Training is cancelled). Not the same as the Training's status.
+_Avoid_: Attendee, trainee
+
+**Training notice**:
+An email to an Assigned employee about a Training: Assignment (sent when Staff assign), Schedule changed, Cancelled (both on by default, and Staff may turn them off), or Reminder (sent automatically 1 day before at 8:00 AM Manila time, and by Staff on demand). Each is Sent, Failed or Retrying; a failed one is retried 3 times about 15 minutes apart and then the Employee is listed as Not reached, with a Retry action. An Employee with no email is never sent one and is never counted as Not reached; they are flagged "Needs printed schedule" and Staff print the schedule for them.
+_Avoid_: Notification (alone), alert
+
+**Training completion**:
+A summary card at the top of the Trainings page, not on the Dashboard and not affected by the Dashboard Range. It shows the Assigned employees marked Completed as a whole percent of the results due for Trainings held this month (Manila time), with "X of Y completed" beneath. Cancelled Assigned employees are not counted. It shows "Nothing to show yet", never 0%, when no Training was held this month.
 
 ## UI design reference
 
