@@ -1,3 +1,4 @@
+import { encryptApplicantDetails, readApplicantDetails, validateApplicantDetails } from "./offer-applicant-details";
 import { database, type Database } from "./database";
 import { DOCUMENT_TYPES, documentLabel, type DocumentType } from "./offer-documents";
 import { OFFER_ANSWERS, type OfferAnswer } from "./offer-reply";
@@ -24,6 +25,23 @@ export function careersOffersFor(db: Database = database) {
     return rows[0];
   }
   return {
+    /** Optional answers, editable until hire; revision guards serialize saves with hiring. */
+    async saveDetails(id: number, applicantId: string, input: unknown): Promise<void> {
+      const details = validateApplicantDetails(input);
+      const offer = await ownOffer(id, applicantId);
+      if (offer.status === "Withdrawn") throw new OfferError("conflict", "withdrawn");
+      if (offer.status === "Draft") throw new OfferError("conflict", "draft");
+      if (offer.status === "Declined") throw new OfferError("conflict", "declined");
+      const snapshot = await readApplicantDetails(db, id);
+      const encrypted = encryptApplicantDetails(details, id);
+      const { rows } = await db.query(`UPDATE public.hrms_offers o
+        SET applicant_details=$3::jsonb, details_revision=details_revision+1
+        WHERE o.id=$1 AND o.details_revision=$4 AND o.status IN ('Sent','Accepted')
+          AND EXISTS (SELECT 1 FROM public.applications a WHERE a.id=o.application_id AND a.applicant_id=$2 AND a.status='Offer')
+          AND NOT EXISTS (SELECT 1 FROM public.hrms_employees e WHERE e.offer_id=o.id)
+        RETURNING o.id`, [id, applicantId, JSON.stringify(encrypted), snapshot.revision]);
+      if (!rows.length) throw new OfferError("conflict");
+    },
     /** Same rules as Staff recording a reply, with the reply time now and the email queued to go out at once. Staff are told. */
     async reply(id: number, applicantId: string, answer: string): Promise<void> {
       if (!OFFER_ANSWERS.includes(answer as OfferAnswer)) throw new OfferError("validation");

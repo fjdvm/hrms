@@ -1,6 +1,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { POST as details } from "@/app/api/careers/offers/[id]/details/route";
+import { employeesFor } from "@/lib/employees";
 import { POST as documents } from "@/app/api/careers/offers/[id]/documents/route";
 import { POST as reply } from "@/app/api/careers/offers/[id]/reply/route";
 import { database } from "@/lib/database";
@@ -205,4 +207,64 @@ it("answers 503 when the database is unavailable", async () => {
   vi.spyOn(database, "query").mockRejectedValue(new Error("down"));
   vi.spyOn(console, "error").mockImplementation(() => {});
   expect((await call(reply, id, { applicantId, answer: "Accepted" })).status).toBe(503);
+});
+
+const personalDetails = { birthday: "1995-06-15", sex: "Female", civilStatus: "Single",
+  governmentIds: { sss: "34-1234567-8", philhealth: "123456789012", pagibigMid: "987654321012", tin: "123-456-789" },
+  emergencyContact: { name: "Maria Santos", relationship: "Mother", mobile: "09171234567" } };
+
+it("saves Your details through the Careers route and copies the latest answers at hire", async () => {
+  vi.stubEnv("HRMS_EMPLOYEE_ENCRYPTION_KEY", Buffer.alloc(32, 7).toString("base64"));
+  const { id, applicantId } = await sentOffer();
+  expect((await call(details, id, { applicantId, ...personalDetails })).status).toBe(200);
+  await careers().reply(id, applicantId, "Accepted");
+  expect((await call(details, id, { applicantId, ...personalDetails, civilStatus: "Married" })).status).toBe(200);
+  const stored = JSON.stringify((await db.query("SELECT applicant_details FROM hrms_offers WHERE id=$1", [id])).rows);
+  expect(stored).not.toContain("34-1234567-8");
+  for (const type of DOCUMENT_TYPES) await careers().uploadDocument(id, applicantId, upload(type));
+  const manager = portal.signIn({ ...staff, role: "HRMS Manager" }, ["Offers", "Employee Information"]);
+  const { employeeId } = await offersFor(manager, db).hire(id);
+  const employee = employeesFor(manager, db, { viewUrl: async () => "https://files.test/view" });
+  expect((await employee.read(employeeId)).personal).toMatchObject({ birthday: "1995-06-15", sex: "Female", civilStatus: "Married" });
+  expect((await employee.read(employeeId)).emergencyContact).toEqual(personalDetails.emergencyContact);
+  expect(await employee.revealGovernmentIds(employeeId)).toEqual(personalDetails.governmentIds);
+  expect((await call(details, id, { applicantId, ...personalDetails })).status).toBe(409);
+});
+
+it("refuses Your details for a wrong Applicant, bad key and unavailable Offer states", async () => {
+  const sent = await sentOffer();
+  const body = { applicantId: sent.applicantId, sex: "Female" };
+  for (const key of [null, "Bearer wrong", "Basic abc"]) expect((await call(details, sent.id, body, key)).status).toBe(401);
+  expect((await call(details, sent.id, { ...body, applicantId: "someone-else" })).status).toBe(404);
+  expect((await call(details, 9999, body)).status).toBe(404);
+  await careers().reply(sent.id, sent.applicantId, "Declined");
+  expect((await call(details, sent.id, body)).status).toBe(409);
+  const withdrawn = await sentOffer(2);
+  await db.query("UPDATE applications SET status='Withdrawn' WHERE id=$1", [withdrawn.applicationId]);
+  expect((await call(details, withdrawn.id, { applicantId: withdrawn.applicantId })).status).toBe(409);
+  const handle = portal.signIn(staff, ["Offers"]);
+  const draft = await offersFor(handle, db, async () => ["Paolo Garcia"]).create(await seed(3), terms);
+  expect((await call(details, draft, { applicantId: "person-3" })).status).toBe(409);
+  vi.stubEnv("CAREERS_CALLER_KEY", "");
+  expect((await call(details, withdrawn.id, body)).status).toBe(401);
+});
+
+it("validates optional answers, clears earlier answers and still hires with only seven documents", async () => {
+  const { id, applicantId } = await sentOffer();
+  for (const body of ["not json", [], null, { applicantId, birthday: "2025-02-30" },
+    { applicantId, birthday: "0000-01-01" }, { applicantId, birthday: "2999-01-01" }, { applicantId, sex: 1 },
+    { applicantId, governmentIds: [] }, { applicantId, emergencyContact: { name: "x".repeat(201) } }]) {
+    expect((await call(details, id, body)).status).toBe(400);
+  }
+  expect((await call(details, id, { applicantId, sex: "Female", emergencyContact: { name: "Maria" } })).status).toBe(200);
+  expect((await call(details, id, { applicantId, birthday: "", sex: null })).status).toBe(200);
+  await careers().reply(id, applicantId, "Accepted");
+  const manager = portal.signIn({ ...staff, role: "HRMS Manager" }, ["Offers", "Employee Information"]);
+  await expect(offersFor(manager, db).hire(id)).rejects.toMatchObject({ reason: "conflict" });
+  for (const type of DOCUMENT_TYPES) await careers().uploadDocument(id, applicantId, upload(type));
+  const { employeeId } = await offersFor(manager, db).hire(id);
+  const record = await employeesFor(manager, db, { viewUrl: async () => "https://files.test/view" }).read(employeeId);
+  expect(record.personal).toMatchObject({ birthday: null, sex: null, civilStatus: null });
+  expect(record.emergencyContact).toBe("Not provided yet");
+  expect(record.governmentIds).toBe("Not provided yet");
 });
