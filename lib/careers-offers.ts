@@ -1,4 +1,4 @@
-import { encryptApplicantDetails, readApplicantDetails, validateApplicantDetails } from "./offer-applicant-details";
+import { decryptApplicantDetails, encryptApplicantDetails, readApplicantDetails, validateApplicantDetails } from "./offer-applicant-details";
 import { database, type Database } from "./database";
 import { DOCUMENT_TYPES, documentLabel, type DocumentType } from "./offer-documents";
 import { OFFER_ANSWERS, type OfferAnswer } from "./offer-reply";
@@ -25,6 +25,14 @@ export function careersOffersFor(db: Database = database) {
     return rows[0];
   }
   return {
+    /** The saved answers with the IDs decrypted, for the signed-in Applicant to see again. Same availability rules as saving. */
+    async readDetails(id: number, applicantId: string) {
+      const offer = await ownOffer(id, applicantId);
+      if (offer.status === "Withdrawn") throw new OfferError("conflict", "withdrawn");
+      if (offer.status === "Draft") throw new OfferError("conflict", "draft");
+      if (offer.status === "Declined") throw new OfferError("conflict", "declined");
+      return decryptApplicantDetails((await readApplicantDetails(db, id)).details, id);
+    },
     /** Optional answers, editable until hire; revision guards serialize saves with hiring. */
     async saveDetails(id: number, applicantId: string, input: unknown): Promise<void> {
       const details = validateApplicantDetails(input);

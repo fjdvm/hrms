@@ -38,6 +38,15 @@ export function encryptApplicantDetails(details: ApplicantDetails, offerId: numb
   return { ...details, governmentIds: { ...details.governmentIds,
     ...Object.fromEntries(ID_FIELDS.map(field => [field, details.governmentIds[field] ? encryptEmployeeId(details.governmentIds[field], -offerId, field) : null])) } };
 }
+/** The stored answers, complete with nulls for anything unanswered, and the IDs decrypted for their owner. */
+export function decryptApplicantDetails(stored: Partial<ApplicantDetails> | null, offerId: number): ApplicantDetails {
+  const ids = stored?.governmentIds, contact = stored?.emergencyContact;
+  return {
+    birthday: stored?.birthday ?? null, sex: stored?.sex ?? null, civilStatus: stored?.civilStatus ?? null,
+    governmentIds: Object.fromEntries(ID_FIELDS.map(field => [field, ids?.[field] ? decryptEmployeeId(ids[field], -offerId, field) : null])) as ApplicantDetails["governmentIds"],
+    emergencyContact: { name: contact?.name ?? null, relationship: contact?.relationship ?? null, mobile: contact?.mobile ?? null },
+  };
+}
 export async function readApplicantDetails(db: Database, offerId: number) {
   const { rows } = await db.query<{ details: Partial<ApplicantDetails>; revision: number }>(
     `SELECT applicant_details AS details, details_revision AS revision FROM public.hrms_offers WHERE id=$1`, [offerId]);
