@@ -61,6 +61,23 @@ const validId = (id: number) => Number.isInteger(id) && id > 0 && id <= 21474836
 const maskId = (value: string) => value.length > 3 ? value.slice(0, 2) + value.slice(2, -1).replace(/[^ -]/gu, "•") + value.slice(-1) : "•".repeat(value.length);
 type StoredDocument = { type: string; source: string; fileId: string | null; fileName: string | null; uploadedAt: string | null; validUntil: string | null };
 
+const SECTION_FIELDS: Record<string, Record<string,string>> = {
+  personal: { name: 'full_name',email: 'email',birthday: 'birthday',sex: 'sex',civilStatus: 'civil_status',mobile: 'mobile',homeAddress: 'home_address' },
+  employment: { position: 'position',department: 'department',branch: 'branch',employmentType: 'employment_type',startDate: 'start_date',probationEndDate: 'probation_end_date',reportsTo: 'reports_to',schedule: 'schedule' },
+  emergencyContact: { name: 'name',relationship: 'relationship',mobile: 'mobile' },
+  contract: { monthlyPay: 'monthly_salary' },
+};
+export type EmployeeSection = 'personal' | 'employment' | 'emergencyContact' | 'contract';
+export type EmployeeAudit = { id: string; actorId: string; actorName: string; kind: string; field: string; oldValue: unknown; newValue: unknown; occurredAt: string };
+export type EmployeeHistory = Omit<EmployeeAudit,'actorId'> & { effectiveDate: string };
+function validDate(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
+}
+async function requireEmployee(id: number, db: Database) {
+  if (!validId(id)) throw new EmployeeError('validation');
+  if (!(await db.query('SELECT id FROM public.hrms_employees WHERE id=$1',[id])).rows.length) throw new EmployeeError('not-found');
+}
+
 /** Session-scoped Employee Information boundary. Every operation validates the Module with the Portal. */
 export function employeesFor(sessionHandle: string | undefined, db: Database = database,
   files: DocumentFiles = gatewayDocumentFiles(), now: () => Date = () => new Date()) {
@@ -152,19 +169,75 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     async replaceGovernmentIds(id: number, input: Partial<GovernmentIds>) {
       const staff = await authorise();
       if (!canSeeEmployeeSensitiveFields(staff.role)) throw new EmployeeError("denied");
-      if (!validId(id) || !input || typeof input !== "object" || Object.keys(input).some(f => !ID_FIELDS.includes(f as typeof ID_FIELDS[number])) ||
+      if (!validId(id) || !input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(f => !ID_FIELDS.includes(f as typeof ID_FIELDS[number])) ||
         ID_FIELDS.some(f => input[f] != null && (typeof input[f] !== "string" || !input[f]!.trim() || input[f]!.length > 100))) throw new EmployeeError("validation");
       const values = ID_FIELDS.map(f => input[f] == null ? null : encryptEmployeeId(input[f]!.trim(), id, f));
-      const { rows } = await db.query<{ employee_id: number }>(`WITH saved AS (
-        INSERT INTO public.hrms_employee_government_ids (employee_id,sss,philhealth,pagibig_mid,tin)
-        SELECT id,$2,$3,$4,$5 FROM public.hrms_employees WHERE id = $1
+      const { rows } = await db.query<{ employee_id: number }>(`WITH actor AS MATERIALIZED (
+        SELECT set_config('hrms.actor_id',$6,true),set_config('hrms.actor_name',$7,true)
+      ) INSERT INTO public.hrms_employee_government_ids (employee_id,sss,philhealth,pagibig_mid,tin)
+        SELECT e.id,$2,$3,$4,$5 FROM public.hrms_employees e CROSS JOIN actor WHERE e.id = $1
         ON CONFLICT (employee_id) DO UPDATE SET sss = EXCLUDED.sss, philhealth = EXCLUDED.philhealth,
-          pagibig_mid = EXCLUDED.pagibig_mid, tin = EXCLUDED.tin RETURNING employee_id
-      ), audited AS (
-        INSERT INTO public.hrms_employee_audit (employee_id,actor_id,actor_name,kind,field)
-        SELECT employee_id,$6,$7,'edit',field FROM saved CROSS JOIN unnest($8::text[]) AS field
-      ) SELECT employee_id FROM saved`, [id,...values,staff.id ?? staff.username,staff.name,ID_FIELDS]);
+          pagibig_mid = EXCLUDED.pagibig_mid, tin = EXCLUDED.tin RETURNING employee_id`,
+        [id,...values,staff.id ?? staff.username,staff.name]);
       if (!rows[0]) throw new EmployeeError("not-found");
+    },
+    async editSection(id: number, section: EmployeeSection, input: Record<string, unknown>, effectiveDate?: string) {
+      const staff = await authorise();
+      if (!validId(id) || !Object.hasOwn(SECTION_FIELDS, section) || !input || typeof input !== 'object' || Array.isArray(input)) throw new EmployeeError('validation');
+      if (section === 'contract' && !canSeeEmployeeSensitiveFields(staff.role)) throw new EmployeeError('denied');
+      const fields = SECTION_FIELDS[section];
+      const entries = Object.entries(input);
+      if (!entries.length || entries.some(([key]) => !Object.hasOwn(fields,key))) throw new EmployeeError('validation');
+      const today = now().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      if (effectiveDate !== undefined && !validDate(effectiveDate)) throw new EmployeeError('validation');
+      for (const [key,value] of entries) {
+        if (key === 'monthlyPay') {
+          if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 2147483647) throw new EmployeeError('validation');
+        } else if (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 1000)) throw new EmployeeError('validation');
+        if (['name','email','position','branch','startDate','employmentType','schedule','reportsTo'].includes(key) && (typeof value !== 'string' || !value.trim())) throw new EmployeeError('validation');
+        if (['birthday','startDate','probationEndDate'].includes(key) && value !== null && (!validDate(value) || (key === 'birthday' && (value as string) > today))) throw new EmployeeError('validation');
+        if (key === 'mobile' && value !== null && !/^(09|\+639)\d{9}$/.test(String(value))) throw new EmployeeError('validation');
+        if (key === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value))) throw new EmployeeError('validation');
+      }
+      const values: unknown[] = [id,staff.id ?? staff.username,staff.name,effectiveDate ?? today];
+      const columns = entries.map(([key,value]) => {
+        values.push(typeof value === 'string' ? value.trim() : value);
+        return { column: fields[key], parameter: `$${values.length}` };
+      });
+      const actor = `WITH actor AS MATERIALIZED (SELECT set_config('hrms.actor_id',$2,true),set_config('hrms.actor_name',$3,true),set_config('hrms.effective_date',$4,true))`;
+      const sql = section === 'emergencyContact'
+        ? `${actor} INSERT INTO public.hrms_employee_emergency_contacts(employee_id,${columns.map(c => c.column).join(',')})
+           SELECT e.id,${columns.map(c => c.parameter).join(',')} FROM public.hrms_employees e CROSS JOIN actor WHERE e.id=$1
+           ON CONFLICT(employee_id) DO UPDATE SET ${columns.map(c => `${c.column}=EXCLUDED.${c.column}`).join(',')} RETURNING employee_id`
+        : `${actor} UPDATE public.hrms_employees SET ${columns.map(c => `${c.column}=${c.parameter}`).join(',')} FROM actor WHERE id=$1 RETURNING id`;
+      try {
+        if (!(await db.query(sql,values)).rows.length) throw new EmployeeError('not-found');
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === '23514') throw new EmployeeError('validation');
+        throw error;
+      }
+    },
+    async activity(id: number) {
+      await authorise();
+      await requireEmployee(id, db);
+      const { rows } = await db.query<EmployeeAudit>(`SELECT id::text,actor_id AS "actorId",actor_name AS "actorName",kind,field,
+        CASE WHEN field IN ('sss','philhealth','pagibigMid','tin','monthlyPay') THEN to_jsonb('[redacted]'::text) ELSE old_value END AS "oldValue",
+        CASE WHEN field IN ('sss','philhealth','pagibigMid','tin','monthlyPay') THEN to_jsonb('[redacted]'::text) ELSE new_value END AS "newValue",
+        occurred_at::text AS "occurredAt" FROM public.hrms_employee_audit WHERE employee_id=$1 ORDER BY occurred_at DESC,id DESC`,[id]);
+      return rows;
+    },
+    async history(id: number) {
+      const staff = await authorise();
+      await requireEmployee(id, db);
+      const { rows } = await db.query<EmployeeHistory>(`SELECT id::text,actor_name AS "actorName",kind,field,old_value AS "oldValue",new_value AS "newValue",
+        effective_date::text AS "effectiveDate",occurred_at::text AS "occurredAt" FROM public.hrms_employee_history WHERE employee_id=$1 ORDER BY occurred_at DESC,id DESC`,[id]);
+      if (canSeeEmployeeSensitiveFields(staff.role) && rows.length) {
+        await db.query(`INSERT INTO public.hrms_employee_audit(employee_id,actor_id,actor_name,kind,field)
+          VALUES($1,$2,$3,'reveal','monthlyPay')`,[id,staff.id ?? staff.username,staff.name]);
+      }
+      return rows.map(row => canSeeEmployeeSensitiveFields(staff.role) ? row : { ...row,
+        oldValue: row.field === 'monthlyPay' ? '[redacted]' : row.oldValue,
+        newValue: row.field === 'monthlyPay' ? '[redacted]' : row.kind === 'Hired' ? Object.fromEntries(Object.entries(row.newValue as Record<string,unknown>).filter(([key]) => key !== 'monthlyPay')) : row.newValue });
     },
     async read(id: number) {
       const staff = await authorise();

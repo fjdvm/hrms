@@ -208,6 +208,20 @@ export async function timeToHireSummary(range: DashboardRange, db: Database = da
   };
 }
 
+/** Employee events only; government IDs and pay never enter the Dashboard feed. */
+export async function employeeRecentActivity(db: Database = database): Promise<NonNullable<DashboardSummary["recentActivity"]>> {
+  const { rows } = await db.query<NonNullable<DashboardSummary["recentActivity"]>[number]>(`
+    SELECT 'hire:' || e.id AS id,'hire' AS kind,e.full_name AS "employeeName",'Hired' AS title,
+      e.position || ' · ' || e.branch AS description,e.created_at::text AS at FROM public.hrms_employees e
+    UNION ALL
+    SELECT 'status:' || a.id,'status-change',e.full_name,'Status changed',
+      COALESCE(a.old_value #>> '{}','') || ' → ' || COALESCE(a.new_value #>> '{}',''),a.occurred_at::text
+      FROM public.hrms_employee_audit a JOIN public.hrms_employees e ON e.id=a.employee_id
+      WHERE a.kind='status' AND a.field='status'
+    ORDER BY at DESC,id DESC LIMIT 20`);
+  return rows;
+}
+
 /**
  * The summary data for the Modules a Staff member holds; a Module they do not hold is never read. Hiring pipeline and
  * Needs attention are read for a holder of any hiring Module (the layout shows each line only to its own Module), and
@@ -221,7 +235,7 @@ export async function dashboardSummaryFor(
 ): Promise<DashboardSummary> {
   const holds = (...pages: string[]) => pages.some((page) => permittedPages.includes(page));
   const when = <T>(allowed: boolean, read: () => Promise<T>): Promise<T | undefined> => (allowed ? read() : Promise.resolve(undefined));
-  const [openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire] = await Promise.all([
+  const [openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire, recentActivity] = await Promise.all([
     when(holds("/job-postings"), () => openJobsSummary(db)),
     when(holds("/applicants"), () => applicantsSummary(range, db)),
     when(holds("/applicants", "/interviews", "/offers"), () => hiringPipelineSummary(range, db)),
@@ -232,7 +246,8 @@ export async function dashboardSummaryFor(
     when(holds("/interviews"), () => upcomingInterviewsSummary(now, db)),
     when(holds("/offers"), () => offersSummary(range, db)),
     when(holds("/applicants", "/offers"), () => timeToHireSummary(range, db)),
+    when(holds("/employee-information"), () => employeeRecentActivity(db)),
   ]);
-  const read = { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire };
+  const read = { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire, recentActivity };
   return Object.fromEntries(Object.entries(read).filter(([, value]) => value !== undefined)) as DashboardSummary;
 }

@@ -68,9 +68,9 @@ it("fills the summary with every hiring figure for Staff who hold every hiring M
   });
 });
 
-it("does not read the database for Staff who hold none of the hiring Modules", async () => {
+it("does not read the database for Staff who hold no Modules with Dashboard data", async () => {
   const unreachable = { query: () => Promise.reject(new Error("must not be queried")) };
-  expect(await dashboardSummaryFor(["/dashboard", "/employee-information", "/training"], RANGE, NOW, unreachable)).toEqual({});
+  expect(await dashboardSummaryFor(["/dashboard", "/employee-onboarding", "/training"], RANGE, NOW, unreachable)).toEqual({});
 });
 
 it("reads only what each Module owns: a Job Postings holder gets Open jobs and nothing else", async () => {
