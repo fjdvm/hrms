@@ -3,6 +3,8 @@ import { encryptEmployeeId, decryptEmployeeId } from "./employee-encryption";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 import { DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS } from "./offer-documents";
+import { AccountRequestError, validateAccountRequest } from "./account-requests";
+import { fetchAccountRequestOptions, sendAccountRequest } from "./portal/account-requests";
 import { gatewayDocumentFiles, type DocumentFiles } from "./document-files";
 
 export const EMPTY_EMPLOYEE_SECTION = "Not provided yet";
@@ -174,7 +176,81 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       canAct: acting,
     };
   }
+  /** Only Super Admin and HRMS Manager act in Onboarding; everyone else holding the Module reads. */
+  async function authoriseActor() {
+    let staff;
+    try { staff = await authorise("Employee Onboarding"); }
+    catch (error) { throw error instanceof EmployeeError ? new AccountRequestError(error.reason === "validation" || error.reason === "not-found" ? "unavailable" : error.reason) : error; }
+    if (!canActInOnboarding(staff.role)) throw new AccountRequestError("denied");
+    return staff;
+  }
   return {
+    /** The Portal's Roles (with access-template Modules) and Modules per system, fetched on demand for the Request dialog. */
+    async accountRequestOptions() {
+      await authoriseActor();
+      const options = await fetchAccountRequestOptions();
+      if (!options) throw new AccountRequestError("unavailable");
+      return options;
+    },
+    /**
+     * Sends an Account request for an Onboarding Employee record. The row is created first, so the database settles a double click
+     * or a concurrent request (one active request per Employee record and per work email); if the Portal then refuses or cannot be
+     * reached, the row is removed again and the caller is told, so nothing is left claiming a request that was never sent.
+     */
+    async requestAccount(employeeId: number, rawInput: unknown) {
+      const staff = await authoriseActor();
+      if (!validId(employeeId)) throw new AccountRequestError("validation");
+      const input = validateAccountRequest(rawInput);
+      const { rows: found } = await db.query<{ name: string; email: string; mobile: string | null; position: string; branch: string; startDate: string; status: string }>(
+        `SELECT full_name AS name, email, mobile, position, branch, start_date::text AS "startDate", status FROM public.hrms_employees WHERE id = $1`, [employeeId]);
+      const employee = found[0];
+      if (!employee) throw new AccountRequestError("not-found");
+      if (employee.status !== "Onboarding") throw new AccountRequestError("conflict");
+      const neededFrom = input.neededFrom ?? employee.startDate;
+      // Refuse the common cases before a reference is drawn, so a refusal does not use up an RQ number. The unique indexes
+      // still settle a race between two sends.
+      const { rows: active } = await db.query<{ forEmployee: boolean; forEmail: boolean }>(`SELECT
+        EXISTS (SELECT 1 FROM public.hrms_account_requests WHERE employee_id = $1 AND status IN ('requested','seen','account_created','login_sent')) AS "forEmployee",
+        EXISTS (SELECT 1 FROM public.hrms_account_requests WHERE lower(work_email) = $2 AND status IN ('requested','seen','account_created','login_sent')) AS "forEmail"`,
+        [employeeId, input.workEmail]);
+      if (active[0].forEmployee) throw new AccountRequestError("conflict");
+      if (active[0].forEmail) throw new AccountRequestError("email-taken", { workEmail: "That work email is already used by another request." });
+      const options = await fetchAccountRequestOptions();
+      if (!options) throw new AccountRequestError("unavailable");
+      const role = options.roles.find(r => String(r.id) === String(input.roleId));
+      if (!role) throw new AccountRequestError("validation", { roleId: "Choose a Role from the Portal's list." });
+      const modules = options.systems.flatMap(system => system.modules.map(module => ({ ...module, system: system.name })));
+      const chosen = input.moduleIds.map(id => modules.find(module => String(module.id) === String(id)));
+      if (chosen.some(module => !module)) throw new AccountRequestError("validation", { moduleIds: "Choose Modules from the Portal's list." });
+      let created: { id: number; reference: string };
+      try {
+        const { rows } = await db.query<{ id: number; reference: string }>(`INSERT INTO public.hrms_account_requests
+          (employee_id,status,work_email,portal_role,requested_modules,access_needed_from,note,personal_email,requester_id,requester_name)
+          VALUES ($1,'requested',$2,$3,$4::jsonb,$5,$6,$7,$8,$9) RETURNING id, reference`,
+          [employeeId, input.workEmail, role.name, JSON.stringify(chosen.map(module => ({ id: module!.id, name: module!.name, system: module!.system }))),
+            neededFrom, input.note, employee.email, staff.id ?? staff.username, staff.name]);
+        created = rows[0];
+      } catch (error) {
+        const { code, constraint, message } = error as { code?: string; constraint?: string; message?: string };
+        if (code === "23505" && `${constraint} ${message}`.includes("work_email")) throw new AccountRequestError("email-taken", { workEmail: "That work email is already used by another request." });
+        if (code === "23505") throw new AccountRequestError("conflict");
+        throw error;
+      }
+      const sent = await sendAccountRequest({
+        reference: created.reference,
+        employee: { name: employee.name, workEmail: input.workEmail, personalEmail: employee.email, mobile: employee.mobile,
+          position: employee.position, branch: employee.branch, startDate: employee.startDate },
+        roleId: role.id, moduleIds: chosen.map(module => module!.id), neededFrom, note: input.note, requestedBy: { name: staff.name },
+      }).catch(() => ({ ok: false as const, reason: "unavailable" as const }));
+      if (!sent.ok) {
+        await db.query(`DELETE FROM public.hrms_account_requests WHERE id = $1`, [created.id]);
+        throw sent.reason === "email-taken"
+          ? new AccountRequestError("email-taken", { workEmail: "A Portal user already has that work email." })
+          : new AccountRequestError("unavailable");
+      }
+      await db.query(`INSERT INTO public.hrms_account_request_events (request_id,status,actor_name) VALUES ($1,'requested',$2)`, [created.id, staff.name]);
+      return { reference: created.reference, status: "requested" as const };
+    },
     /** Onboarding: every Onboarding Employee record with its account state. Active records never appear. Read-only unless the role may act. */
     onboarding: (filters: OnboardingFilters = {}) => readOnboarding(filters),
     /** The Employee list: rows, tab counts, summary and Branch options. Never includes government IDs or pay. */

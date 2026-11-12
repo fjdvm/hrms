@@ -26,6 +26,24 @@ export class FakePortal {
   /** The Portal cannot decide: it answers 503 until restored. */
   unavailable = false;
 
+  /** Roles (with access templates) and Modules per system, as the Account request contract serves them. */
+  accountRequestOptions: { roles: { id: string; name: string; moduleIds: string[] }[]; systems: { id: string; name: string; modules: { id: string; name: string }[] }[] } = {
+    roles: [
+      { id: "role-officer", name: "HR Officer", moduleIds: ["m-applications", "m-offers"] },
+      { id: "role-cashier", name: "Cashier", moduleIds: ["m-pos"] },
+    ],
+    systems: [
+      { id: "sys-hrms", name: "HRMS", modules: [{ id: "m-applications", name: "Applications" }, { id: "m-offers", name: "Offers" }] },
+      { id: "sys-pos", name: "POS", modules: [{ id: "m-pos", name: "Point of sale" }] },
+    ],
+  };
+  /** Work emails already used by a Portal User. */
+  portalUserEmails: string[] = [];
+  /** Account requests the Portal accepted, one per reference. */
+  receivedRequests: Record<string, unknown>[] = [];
+  /** Answers every Account request with this non-2xx status instead of accepting it. */
+  accountRequestStatus: number | null = null;
+
   /** Signs a Staff member in and returns their opaque session handle. */
   signIn(staff: Staff, modules: string[]): string {
     const handle = `handle-${this.nextHandle++}`;
@@ -81,6 +99,24 @@ export class FakePortal {
     if (this.unavailable) return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
 
     return Response.json({ staff: this.directory });
+  }
+
+  private accountRequests(request: Request, path: string): Promise<Response> | Response {
+    const expected = `Basic ${Buffer.from(`${FAKE_SYSTEM}:${FAKE_SECRET}`).toString("base64")}`;
+    if (request.headers.get("authorization") !== expected) return Response.json({ error: "invalid_client" }, { status: 401 });
+    if (this.unavailable) return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
+    if (path.endsWith("/options")) return request.method === "GET" ? Response.json(this.accountRequestOptions) : new Response("method not allowed", { status: 405 });
+    if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+    return request.json().then((body: { reference: string; employee: { workEmail: string } }) => {
+      if (this.accountRequestStatus) return Response.json({ error: "failed" }, { status: this.accountRequestStatus });
+      // Idempotent on reference: a repeat is accepted and not stored twice.
+      if (this.receivedRequests.some((r) => r.reference === body.reference)) return Response.json({ reference: body.reference });
+      if (this.portalUserEmails.some((email) => email.toLowerCase() === body.employee.workEmail.toLowerCase())) {
+        return Response.json({ error: "email-taken" }, { status: 409 });
+      }
+      this.receivedRequests.push(body);
+      return Response.json({ reference: body.reference });
+    });
   }
 
   private authorize(url: URL): Response {
@@ -163,6 +199,7 @@ export class FakePortal {
     if (url.pathname === "/api/integrations/exchange") return this.exchange(request);
     if (url.pathname === "/api/integrations/recipients") return this.recipients(request);
     if (url.pathname === "/api/integrations/validate") return this.validate(request);
+    if (url.pathname.startsWith("/api/integrations/account-requests")) return this.accountRequests(request, url.pathname);
 
     return new Response("not found", { status: 404 });
   };
