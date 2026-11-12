@@ -171,3 +171,5 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     },
   };
 }
+
+export type EmployeeDetail = Awaited<ReturnType<ReturnType<typeof employeesFor>["read"]>>;
