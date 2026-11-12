@@ -378,6 +378,8 @@ describe("Needs attention widget", () => {
     toReview: { count: toReview, oldestAppliedAt: toReview ? "2026-10-25T08:00:00Z" : null },
     toSchedule: { count: toSchedule, topJob: toSchedule ? { title: "Cashier", count: toSchedule } : null },
     resultsToRecord,
+    offersPastReply: { count: 0, oldestReplyBy: null },
+    missingDocuments: 0,
     ...extra,
   });
   const widget = (pages: string[], needsAttention: DashboardSummary["needsAttention"], range = RANGE) =>
@@ -392,12 +394,23 @@ describe("Needs attention widget", () => {
     expect(data(counts(1, 2, 3), dashboardRange("last-30-days", NOW))).toEqual(data(counts(1, 2, 3)));
   });
 
-  it("lists the three rows in order, each with its count and where Staff act", () => {
-    expect(data(counts(4, 2, 1))!.rows.map((r) => [r.id, r.title, r.count, r.href])).toEqual([
+  it("lists the five rows in order, each with its count and where Staff act", () => {
+    const extra = { offersPastReply: { count: 3, oldestReplyBy: "2026-10-20" }, missingDocuments: 5 };
+    expect(data(counts(4, 2, 1, extra))!.rows.map((r) => [r.id, r.title, r.count, r.href])).toEqual([
       ["review", "Applications to review", 4, "/applicants?stage=New"],
       ["schedule", "Interviews to schedule", 2, "/applicants?stage=Interview"],
       ["results", "Results to record", 1, "/interviews"],
+      ["offers", "Offers past reply date", 3, "/offers?tab=Sent"],
+      ["documents", "Missing documents", 5, "/offers"],
     ]);
+  });
+
+  it("says how long ago the oldest overdue Offer was due, and what a Missing documents row means", () => {
+    const rows = (oldestReplyBy: string) => data(counts(0, 0, 0, { offersPastReply: { count: 1, oldestReplyBy }, missingDocuments: 2 }))!.rows;
+    expect(rows("2026-10-20")[3].detail).toBe("Oldest was due 8 days ago");
+    expect(rows("2026-10-27")[3].detail).toBe("Oldest was due 1 day ago");
+    expect(rows("2026-10-27")[4].detail).toBe("Requested, not yet submitted");
+    expect(data(counts(0, 0, 0))!.rows.slice(3).map((r) => r.detail)).toEqual([null, null]);
   });
 
   it("says how long ago the oldest Application to review applied, and which Job Posting has most waiting", () => {
@@ -411,11 +424,13 @@ describe("Needs attention widget", () => {
   it("sums the counts in the headline", () => {
     expect(data(counts(4, 2, 1))!.headline).toBe("7 things to do today");
     expect(data(counts(0, 0, 1))!.headline).toBe("1 thing to do today");
+    expect(data(counts(4, 2, 1, { offersPastReply: { count: 2, oldestReplyBy: "2026-10-20" }, missingDocuments: 3 }))!.headline).toBe("12 things to do today");
   });
 
   it("keeps a zero row, muted, and sums only what is above zero", () => {
     const d = data(counts(3, 0, 0))!;
-    expect(d.rows.map((r) => r.muted)).toEqual([false, true, true]);
+    expect(d.rows.map((r) => r.muted)).toEqual([false, true, true, true, true]);
+    expect(data(counts(0, 0, 0, { missingDocuments: 1 }))!.rows.map((r) => r.muted)).toEqual([true, true, true, true, false]);
     expect(d.headline).toBe("3 things to do today");
     expect(d.rows[1].detail).toBeNull();
   });

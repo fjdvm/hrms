@@ -1,6 +1,6 @@
 import { database, type Database } from "./database";
 import { TAKES_PLACE } from "./interview-booking";
-import { manilaWeek, type DashboardRange, type DashboardSummary } from "./dashboard";
+import { manilaToday, manilaWeek, type DashboardRange, type DashboardSummary } from "./dashboard";
 
 /** Open Job Postings, read from the shared database: how many, their openings in total and their distinct locations. */
 export async function openJobsSummary(db: Database = database): Promise<NonNullable<DashboardSummary["openJobs"]>> {
@@ -76,10 +76,12 @@ export async function applicantSourcesSummary(range: DashboardRange, db: Databas
 
 /**
  * What Staff should act on now: Applications at New (with the oldest one's date), Applications at Interview with no
- * Interview booked (with the Job Posting holding the most), and Interviews that ended with no result recorded.
+ * Interview booked (with the Job Posting holding the most), Interviews that ended with no result recorded, Sent Offers
+ * past their reply-by date (Manila), and Sent or Accepted Offers with a requested document not yet submitted. A Withdrawn
+ * Application's Offer, and any Draft or Declined Offer, is never counted. None of it depends on the Dashboard Range.
  */
 export async function needsAttentionSummary(now: Date, db: Database = database): Promise<NonNullable<DashboardSummary["needsAttention"]>> {
-  const [review, schedule, results] = await Promise.all([
+  const [review, schedule, results, pastReply, missing] = await Promise.all([
     db.query<{ count: number; oldest: string | null }>(
       `SELECT count(*)::int AS count, min(applied_at) AS oldest FROM public.hrms_all_applications WHERE stage = 'New'`,
     ),
@@ -98,6 +100,18 @@ export async function needsAttentionSummary(now: Date, db: Database = database):
        WHERE i.ends_at <= $1 AND i.result IS NULL`,
       [now.toISOString()],
     ),
+    db.query<{ count: number; oldest: string | null }>(
+      `SELECT count(*)::int AS count, min(o.reply_by)::text AS oldest
+       FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id
+       WHERE o.status = 'Sent' AND a.stage <> 'Withdrawn' AND o.reply_by < $1::date`,
+      [manilaToday(now)],
+    ),
+    db.query<{ count: number }>(
+      `SELECT count(*)::int AS count
+       FROM public.hrms_offers o JOIN public.hrms_all_applications a ON a.id = o.application_id
+       WHERE o.status IN ('Sent', 'Accepted') AND a.stage <> 'Withdrawn'
+         AND EXISTS (SELECT 1 FROM public.hrms_offer_documents d WHERE d.offer_id = o.id AND d.status = 'Requested')`,
+    ),
   ]);
   return {
     toReview: { count: review.rows[0].count, oldestAppliedAt: review.rows[0].oldest === null ? null : new Date(review.rows[0].oldest).toISOString() },
@@ -106,6 +120,8 @@ export async function needsAttentionSummary(now: Date, db: Database = database):
       topJob: schedule.rows[0] ?? null,
     },
     resultsToRecord: results.rows[0].count,
+    offersPastReply: { count: pastReply.rows[0].count, oldestReplyBy: pastReply.rows[0].oldest },
+    missingDocuments: missing.rows[0].count,
   };
 }
 
