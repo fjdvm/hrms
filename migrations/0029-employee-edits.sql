@@ -27,7 +27,7 @@ BEGIN
   employee := (current_row->>CASE WHEN TG_TABLE_NAME = 'hrms_employees' THEN 'id' ELSE 'employee_id' END)::integer;
   IF TG_TABLE_NAME = 'hrms_employees' AND TG_OP = 'INSERT' THEN
     INSERT INTO public.hrms_employee_history(employee_id,actor_name,kind,field,new_value,effective_date,occurred_at)
-    VALUES(employee,NEW.hired_by_name,'Hired','terms',jsonb_build_object('position',NEW.position,'department',NEW.department,'branch',NEW.branch,'employmentType',NEW.employment_type,'reportsTo',NEW.reports_to,'monthlyPay',NEW.monthly_salary),NEW.start_date,NEW.created_at);
+    VALUES(employee,NEW.hired_by_name,'Hired','terms',jsonb_build_object('position',NEW.position,'department',NEW.department,'branch',NEW.branch,'employmentType',NEW.employment_type,'reportsTo',NEW.reports_to,'monthlyPay',NEW.monthly_salary,'schedule',NEW.schedule,'probation',NEW.probation,'startDate',NEW.start_date),NEW.start_date,NEW.created_at);
     RETURN NEW;
   END IF;
   effective := COALESCE(NULLIF(current_setting('hrms.effective_date',true),'')::date,(clock_timestamp() AT TIME ZONE 'Asia/Manila')::date);
@@ -50,7 +50,7 @@ CREATE TRIGGER hrms_employee_changes AFTER INSERT OR UPDATE ON public.hrms_emplo
 CREATE TRIGGER hrms_employee_id_changes AFTER INSERT OR UPDATE ON public.hrms_employee_government_ids FOR EACH ROW EXECUTE FUNCTION public.hrms_employee_changes();
 CREATE TRIGGER hrms_employee_contact_changes AFTER INSERT OR UPDATE ON public.hrms_employee_emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.hrms_employee_changes();
 INSERT INTO public.hrms_employee_history(employee_id,actor_name,kind,field,new_value,effective_date,occurred_at)
-SELECT id,hired_by_name,'Hired','terms',jsonb_build_object('position',position,'department',department,'branch',branch,'employmentType',employment_type,'reportsTo',reports_to,'monthlyPay',monthly_salary),start_date,created_at FROM public.hrms_employees;
+SELECT id,hired_by_name,'Hired','terms',jsonb_build_object('position',position,'department',department,'branch',branch,'employmentType',employment_type,'reportsTo',reports_to,'monthlyPay',monthly_salary,'schedule',schedule,'probation',probation,'startDate',start_date),start_date,created_at FROM public.hrms_employees;
 -- NOT VALID leaves historical records untouched while validating all subsequent writes.
 ALTER TABLE public.hrms_employees ADD CONSTRAINT hrms_employee_probation_dates
   CHECK (probation_end_date IS NULL OR probation_end_date >= start_date) NOT VALID;

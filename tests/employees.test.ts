@@ -183,7 +183,7 @@ it('rejects invalid dates, mobiles, required fields, section injection and unaut
 });
 
 it('records the hire and every employment change with effective dates, hiding pay from other roles', async () => {
-  expect(await employees().history(1)).toContainEqual(expect.objectContaining({ kind: 'Hired', effectiveDate: '2026-01-01', newValue: expect.objectContaining({ position: 'Cashier' }) }));
+  expect(await employees().history(1)).toContainEqual(expect.objectContaining({ kind: 'Hired', effectiveDate: '2026-01-01', newValue: expect.objectContaining({ position: 'Cashier',schedule: 'Mon-Fri',probation: '6 months',startDate: '2026-01-01' }) }));
   await employees().editSection(1,'employment',{ position: 'Supervisor', department: 'Retail', branch: 'Taytay', employmentType: 'Regular', reportsTo: 'Ana' },'2026-12-01');
   const history = await employees().history(1);
   for (const [field,oldValue,newValue] of [['position','Cashier','Supervisor'],['department',null,'Retail'],['branch','Cainta','Taytay'],['employmentType','Full-time','Regular'],['reportsTo','Liza','Ana']]) {

@@ -106,7 +106,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     async replaceGovernmentIds(id: number, input: Partial<GovernmentIds>) {
       const staff = await authorise();
       if (!canSeeEmployeeSensitiveFields(staff.role)) throw new EmployeeError("denied");
-      if (!validId(id) || !input || typeof input !== "object" || Object.keys(input).some(f => !ID_FIELDS.includes(f as typeof ID_FIELDS[number])) ||
+      if (!validId(id) || !input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(f => !ID_FIELDS.includes(f as typeof ID_FIELDS[number])) ||
         ID_FIELDS.some(f => input[f] != null && (typeof input[f] !== "string" || !input[f]!.trim() || input[f]!.length > 100))) throw new EmployeeError("validation");
       const values = ID_FIELDS.map(f => input[f] == null ? null : encryptEmployeeId(input[f]!.trim(), id, f));
       const { rows } = await db.query<{ employee_id: number }>(`WITH actor AS MATERIALIZED (
