@@ -38,7 +38,6 @@ const PAGES: [path: string, module: string][] = [
   ["offers/new", "Offers"],
   ["offers/[id]", "Offers"],
   ["offers/[id]/edit", "Offers"],
-  ["hired", "Offers"],
   ["employee-information", "Employee Information"],
   ["employee-onboarding", "Employee Onboarding"],
   ["training", "Training"],

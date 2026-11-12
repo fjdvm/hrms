@@ -17,7 +17,7 @@ describe("sidebar", () => {
     expect(layout(ALL_PAGES)).toEqual([
       { label: undefined, items: ["Dashboard"] },
       { label: "RECRUITMENT", items: ["Job Postings", "Applicants"] },
-      { label: "HIRING", items: ["Interviews", "Offers", "Hired"] },
+      { label: "HIRING", items: ["Interviews", "Offers"] },
       { label: "EMPLOYEE", items: ["Information", "Onboarding"] },
     ]);
   });
@@ -26,7 +26,7 @@ describe("sidebar", () => {
     expect(layout(["/job-postings"])).toEqual([{ label: "RECRUITMENT", items: ["Job Postings"] }]);
     expect(layout(["/applicants"])).toEqual([{ label: "RECRUITMENT", items: ["Applicants"] }]);
     expect(layout(["/interviews"])).toEqual([{ label: "HIRING", items: ["Interviews"] }]);
-    expect(layout(["/offers"])).toEqual([{ label: "HIRING", items: ["Offers", "Hired"] }]);
+    expect(layout(["/offers"])).toEqual([{ label: "HIRING", items: ["Offers"] }]);
     expect(layout(["/employee-information"])).toEqual([{ label: "EMPLOYEE", items: ["Information"] }]);
     expect(layout(["/employee-onboarding"])).toEqual([{ label: "EMPLOYEE", items: ["Onboarding"] }]);
   });
@@ -38,6 +38,13 @@ describe("sidebar", () => {
     expect(layout(pages).map((s) => s.label)).not.toContain("RECRUITMENT");
     expect(layout(pages).map((s) => s.label)).not.toContain("HIRING");
     expect(layout(["/training", "/performance"])).toEqual([]);
+  });
+
+  it("retires the Hired page and redirects its URL to Employee Information", async () => {
+    expect(existsSync(join(process.cwd(), "app/(hrms)/hired"))).toBe(false);
+    expect(sidebarSections.flatMap((s) => s.items).map((i) => i.href)).not.toContain("/hired");
+    const config = (await import("@/next.config")).default;
+    expect(await config.redirects?.()).toContainEqual({ source: "/hired", destination: "/employee-information", permanent: true });
   });
 
   it("belongs every tab to a Module, with a page and a loading state", () => {

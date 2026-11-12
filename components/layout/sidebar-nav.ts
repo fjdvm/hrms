@@ -1,7 +1,6 @@
 import {
   Building2,
   CreditCard,
-  BadgeCheck,
   Briefcase,
   FileText,
   CalendarClock,
@@ -59,7 +58,6 @@ export const sidebarSections: NavSection[] = [
     items: [
       { name: "Interviews", href: "/interviews", icon: CalendarClock, module: "Interviews" },
       { name: "Offers", href: "/offers", icon: FileText, module: "Offers" },
-      { name: "Hired", href: "/hired", icon: BadgeCheck, module: "Offers" },
     ],
   },
   {
