@@ -38,10 +38,10 @@ export function EmployeeProfile({ employee, history, activity }: { employee: Emp
         details={
           <ProfileColumns
             main={<><PersonalInformation personal={personal} edit={edit("personal")} /><Employment employment={employment} employmentType={employee.contract.contractType} edit={edit("employment")} /><GovernmentIdsSection ids={employee.governmentIds} employeeId={employee.id} canReveal={canEdit.governmentIds} edit={edit("governmentIds", canEdit.governmentIds)} /><EmergencyContact contact={employee.emergencyContact} edit={edit("emergencyContact")} /></>}
-            aside={<><DocumentsCard documents={documents} /><Contract contract={employee.contract} edit={edit("contract", canEdit.contract)} /></>}
+            aside={<><DocumentsCard employeeId={employee.id} documents={documents} /><Contract contract={employee.contract} edit={edit("contract", canEdit.contract)} /></>}
           />
         }
-        documents={<DocumentsTable documents={documents} />}
+        documents={<DocumentsTable employeeId={employee.id} documents={documents} />}
         history={<EmploymentHistory history={history} />}
         activity={<EmployeeActivity activity={activity} />}
       />

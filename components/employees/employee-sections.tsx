@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { CardTitle } from "@/components/hiring/parts";
 import { EMPTY_EMPLOYEE_SECTION, type EmployeeDetail, type GovernmentIds } from "@/lib/employees";
 import { RevealableId } from "./edit-section";
+import { DownloadDocumentsButton } from "./download-documents-button";
 import {
   NOT_PROVIDED, documentSummary, validUntilLabel, formatBirthday, formatEmployeeDate, formatMonthlyPay, isSubmitted, orNotProvided, submittedCount,
   type EmployeeDocument,
@@ -107,7 +108,7 @@ function ViewLink({ document }: { document: EmployeeDocument }) {
 }
 
 /** The Details tab's compact Documents card. */
-export function DocumentsCard({ documents }: { documents: EmployeeDocument[] }) {
+export function DocumentsCard({ employeeId, documents }: { employeeId: number; documents: EmployeeDocument[] }) {
   const count = submittedCount(documents);
   return (
     <Card className="flex flex-col gap-[6px] rounded-xl px-[20px] py-[18px] shadow-none" aria-label="Documents">
@@ -124,12 +125,13 @@ export function DocumentsCard({ documents }: { documents: EmployeeDocument[] }) 
           </li>
         ))}
       </ul>
+      <div className="mt-[8px]"><DownloadDocumentsButton employeeId={employeeId} hasSubmitted={count > 0} /></div>
     </Card>
   );
 }
 
 /** The Documents tab: the same seven, with upload date and validity spelled out. */
-export function DocumentsTable({ documents }: { documents: EmployeeDocument[] }) {
+export function DocumentsTable({ employeeId, documents }: { employeeId: number; documents: EmployeeDocument[] }) {
   return (
     <Card className="flex flex-col gap-[6px] rounded-xl px-[20px] py-[18px] shadow-none" aria-label="Pre-employment documents">
       <CardTitle aside={<span className="text-[13px] font-semibold text-zinc-500">{submittedCount(documents)} of {documents.length}</span>}>Pre-employment documents</CardTitle>
@@ -153,6 +155,7 @@ export function DocumentsTable({ documents }: { documents: EmployeeDocument[] })
           </li>
         ))}
       </ul>
+      <div className="mt-[8px]"><DownloadDocumentsButton employeeId={employeeId} hasSubmitted={submittedCount(documents) > 0} /></div>
     </Card>
   );
 }
