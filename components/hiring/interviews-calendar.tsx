@@ -47,7 +47,7 @@ function EventBody({ arg }: { arg: EventContentArg }) {
   const month = arg.view.type === "dayGridMonth";
   return (
     <div
-      className={cn("flex h-full min-w-0 flex-col gap-[1px] overflow-hidden rounded-md border-l-[3px] px-[8px] py-[4px] text-left text-xs", conflicted && "outline-dashed outline-[1.5px] outline-red-600")}
+      className={cn("flex h-full min-w-0 flex-col gap-[1px] overflow-hidden rounded-md border-l-[3px] px-[8px] py-[4px] text-left text-xs", conflicted && "outline-dashed outline-[1.5px] -outline-offset-1 outline-red-600")}
       style={{ borderColor: colour, background: `color-mix(in srgb, ${colour} ${finished ? 10 : 16}%, white)`, color: finished ? "#52525b" : `color-mix(in srgb, ${colour} 70%, black)` }}
     >
       <span className="flex min-w-0 items-center gap-[4px] font-semibold">

@@ -8,6 +8,8 @@ export type InterviewsView = "by-job" | "calendar";
 
 const MODES: CalendarMode[] = ["day", "week", "month"];
 const DAY_MS = 86400000;
+/** The Manila wall-clock of an instant, read as UTC. */
+const manilaWall = (instant: Date) => new Date(instant.getTime() + 8 * 3600000);
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -85,17 +87,17 @@ export function calendarHref(state: CalendarState, now = Date.now()): string {
 }
 
 const time = (instant: Date) => {
-  const manila = new Date(instant.getTime() + 8 * 3600000);
+  const manila = manilaWall(instant);
   const hours = manila.getUTCHours(), minutes = manila.getUTCMinutes();
   return `${hours % 12 || 12}${minutes ? `:${String(minutes).padStart(2, "0")}` : ""} ${hours < 12 ? "AM" : "PM"}`;
 };
-export const interviewTime = (instant: Date) => time(instant);
+export { time as interviewTime };
 export const interviewRange = (start: Date, end: Date) => `${time(start)} – ${time(end)}`;
 
 /** "Liza Bautista is booked twice on Thu, 12 Nov at 2 PM (Ella Rivera and Ben Torres)." */
 export function conflictMessage({ interviewerName, first, second }: CalendarConflict): string {
   const start = first.startsAt < second.startsAt ? second.startsAt : first.startsAt;
-  const manila = new Date(start.getTime() + 8 * 3600000);
+  const manila = manilaWall(start);
   const day = `${WEEKDAYS[manila.getUTCDay()]}, ${Number(format(manila).slice(8))} ${MONTHS[manila.getUTCMonth()].slice(0, 3)}`;
   return `${interviewerName} is booked twice on ${day} at ${time(start)} (${first.applicantName} and ${second.applicantName}).`;
 }
@@ -108,7 +110,7 @@ export type CalendarEvent = { id: string; start: string; end: string; title: str
 /** FullCalendar runs in UTC, so Manila wall-clock times are shifted by +8h and read back as UTC: no time-zone plugin needed. */
 export function calendarEvents(interviews: CalendarInterview[], conflicts: CalendarConflict[]): CalendarEvent[] {
   const conflicted = conflictedIds(conflicts);
-  const wall = (instant: Date) => new Date(instant.getTime() + 8 * 3600000).toISOString();
+  const wall = (instant: Date) => manilaWall(instant).toISOString();
   return interviews.map((interview) => ({
     id: String(interview.id), start: wall(interview.startsAt), end: wall(interview.endsAt), title: interview.applicantName,
     extendedProps: { interview, conflicted: conflicted.has(interview.id) },
@@ -116,4 +118,4 @@ export function calendarEvents(interviews: CalendarInterview[], conflicts: Calen
 }
 
 /** Manila "now" as FullCalendar's UTC clock reads it. */
-export const calendarNow = (now = Date.now()) => new Date(now + 8 * 3600000);
+export const calendarNow = () => manilaWall(new Date());

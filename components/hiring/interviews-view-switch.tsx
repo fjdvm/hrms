@@ -3,8 +3,8 @@ import { Calendar, LayoutGrid } from "lucide-react";
 import type { InterviewsView } from "@/lib/calendar-view";
 import { cn } from "@/lib/utils";
 
-/** The By job | Calendar switch shared by both Interviews screens. `calendarHref` keeps the Calendar's filters when switching back. */
-export function InterviewsViewSwitch({ current, calendarHref = "/interviews?view=calendar" }: { current: InterviewsView; calendarHref?: string }) {
+/** The By job | Calendar switch shared by both Interviews screens. */
+export function InterviewsViewSwitch({ current }: { current: InterviewsView }) {
   const item = (view: InterviewsView, href: string, label: string, Icon: typeof Calendar) => (
     <Link
       href={href}
@@ -17,7 +17,7 @@ export function InterviewsViewSwitch({ current, calendarHref = "/interviews?view
   return (
     <nav aria-label="Interviews view" className="flex gap-[2px] rounded-lg bg-zinc-100 p-[3px]">
       {item("by-job", "/interviews", "By job", LayoutGrid)}
-      {item("calendar", calendarHref, "Calendar", Calendar)}
+      {item("calendar", "/interviews?view=calendar", "Calendar", Calendar)}
     </nav>
   );
 }
