@@ -1,0 +1,122 @@
+import { encryptEmployeeId, decryptEmployeeId } from "./employee-encryption";
+import { database, type Database } from "./database";
+import { accessFor } from "./portal/access";
+import { PRE_EMPLOYMENT_DOCUMENTS } from "./offer-documents";
+import { gatewayDocumentFiles, type DocumentFiles } from "./document-files";
+
+export const EMPTY_EMPLOYEE_SECTION = "Not provided yet";
+export const SENSITIVE_EMPLOYEE_ROLES = ["Super Admin", "HRMS Manager"] as const;
+export const canSeeEmployeeSensitiveFields = (role: string) => SENSITIVE_EMPLOYEE_ROLES.some(r => r === role);
+export class EmployeeError extends Error {
+  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found") {
+    super(`Employee: ${reason}`);
+  }
+}
+type EmployeeRow = {
+  id: number; employeeNumber: string; name: string; email: string; birthday: string | null; sex: string | null;
+  civilStatus: string | null; mobile: string | null; homeAddress: string | null;
+  position: string; department: string | null; branch: string; startDate: string; status: string;
+  probationEndDate: string | null; offerId: number; applicationId: number; employmentType: string;
+  schedule: string; reportsTo: string; monthlyPay: number; signed: boolean;
+};
+export type GovernmentIds = { sss: string | null; philhealth: string | null; pagibigMid: string | null; tin: string | null };
+const ID_FIELDS = ["sss", "philhealth", "pagibigMid", "tin"] as const;
+const validId = (id: number) => Number.isInteger(id) && id > 0 && id <= 2147483647;
+const maskId = (value: string) => value.length > 3 ? value.slice(0, 2) + value.slice(2, -1).replace(/[^ -]/gu, "•") + value.slice(-1) : "•".repeat(value.length);
+type StoredDocument = { type: string; source: string; fileId: string | null; fileName: string | null; uploadedAt: string | null; validUntil: string | null };
+
+/** Session-scoped Employee Information boundary. Every operation validates the Module with the Portal. */
+export function employeesFor(sessionHandle: string | undefined, db: Database = database,
+  files: DocumentFiles = gatewayDocumentFiles(), now: () => Date = () => new Date()) {
+  async function authorise() {
+    const access = await accessFor(sessionHandle).check("Employee Information");
+    if (access.decision !== "allowed") throw new EmployeeError(access.decision);
+    return access.staff;
+  }
+  return {
+    /** Internal write seam for Employee editors; encryption and edit auditing are inseparable. Replaces all four fields. */
+    async replaceGovernmentIds(id: number, input: Partial<GovernmentIds>) {
+      const staff = await authorise();
+      if (!canSeeEmployeeSensitiveFields(staff.role)) throw new EmployeeError("denied");
+      if (!validId(id) || !input || typeof input !== "object" || Object.keys(input).some(f => !ID_FIELDS.includes(f as typeof ID_FIELDS[number])) ||
+        ID_FIELDS.some(f => input[f] != null && (typeof input[f] !== "string" || !input[f]!.trim() || input[f]!.length > 100))) throw new EmployeeError("validation");
+      const values = ID_FIELDS.map(f => input[f] == null ? null : encryptEmployeeId(input[f]!.trim(), id, f));
+      const { rows } = await db.query<{ employee_id: number }>(`WITH saved AS (
+        INSERT INTO public.hrms_employee_government_ids (employee_id,sss,philhealth,pagibig_mid,tin)
+        SELECT id,$2,$3,$4,$5 FROM public.hrms_employees WHERE id = $1
+        ON CONFLICT (employee_id) DO UPDATE SET sss = EXCLUDED.sss, philhealth = EXCLUDED.philhealth,
+          pagibig_mid = EXCLUDED.pagibig_mid, tin = EXCLUDED.tin RETURNING employee_id
+      ), audited AS (
+        INSERT INTO public.hrms_employee_audit (employee_id,actor_id,actor_name,kind,field)
+        SELECT employee_id,$6,$7,'edit',field FROM saved CROSS JOIN unnest($8::text[]) AS field
+      ) SELECT employee_id FROM saved`, [id,...values,staff.id ?? staff.username,staff.name,ID_FIELDS]);
+      if (!rows[0]) throw new EmployeeError("not-found");
+    },
+    async read(id: number) {
+      const staff = await authorise();
+      if (!validId(id)) throw new EmployeeError("validation");
+      const { rows } = await db.query<EmployeeRow>(`SELECT e.id, e.employee_number AS "employeeNumber", e.full_name AS name,
+        e.email, e.birthday::text, e.sex, e.civil_status AS "civilStatus", e.mobile, e.home_address AS "homeAddress",
+        e.position, e.department, e.branch, e.start_date::text AS "startDate", e.status,
+        e.probation_end_date::text AS "probationEndDate", e.offer_id AS "offerId", e.application_id AS "applicationId",
+        e.employment_type AS "employmentType", e.schedule, e.reports_to AS "reportsTo", e.monthly_salary AS "monthlyPay",
+        o.status = 'Accepted' AS signed FROM public.hrms_employees e JOIN public.hrms_offers o ON o.id = e.offer_id WHERE e.id = $1`, [id]);
+      const e = rows[0];
+      if (!e) throw new EmployeeError("not-found");
+      const { rows: contacts } = await db.query<{ name: string | null; relationship: string | null; mobile: string | null }>(
+        `SELECT name, relationship, mobile FROM public.hrms_employee_emergency_contacts WHERE employee_id = $1`, [id]);
+      const { rows: documents } = await db.query<StoredDocument>(`SELECT document_type AS type, source, file_id AS "fileId", file_name AS "fileName",
+        COALESCE(uploaded_at, (SELECT od.submitted_at FROM public.hrms_offer_documents od
+          WHERE od.offer_id = $2 AND od.document_type = hrms_employee_documents.document_type
+            AND od.file_id = hrms_employee_documents.file_id AND hrms_employee_documents.source = 'upload'))::text AS "uploadedAt",
+        valid_until::text AS "validUntil" FROM public.hrms_employee_documents WHERE employee_id = $1`, [id,e.offerId]);
+      // At hire, Application-source links retain the applicant_documents id, while upload links retain the gateway file id.
+      // Resolve only files belonging to this Application's Applicant, without requiring the Applications Module.
+      if (documents.some(d => d.source === "application" && d.fileId)) {
+        const { rows: applicationFiles } = await db.query<{ id: string; fileId: string | null; uploadedAt: string | null }>(`
+          SELECT d.id::text, d.file_id AS "fileId", d.created_at::text AS "uploadedAt"
+          FROM public.applicant_documents d JOIN public.applications a ON a.applicant_id = d.applicant_id
+          WHERE a.id = $1 AND d.id::text = ANY($2::text[])`,
+          [e.applicationId, documents.filter(d => d.source === "application").map(d => d.fileId)]);
+        for (const document of documents.filter(d => d.source === "application")) {
+          const file = applicationFiles.find(f => f.id === document.fileId);
+          document.fileId = file?.fileId ?? null;
+          document.uploadedAt ??= file?.uploadedAt ?? null;
+        }
+      }
+      const { rows: storedIds } = await db.query<GovernmentIds>(`SELECT sss,philhealth,pagibig_mid AS "pagibigMid",tin
+        FROM public.hrms_employee_government_ids WHERE employee_id = $1`, [id]);
+      const ids = storedIds[0];
+      const sensitive = canSeeEmployeeSensitiveFields(staff.role);
+      const governmentIds: GovernmentIds | typeof EMPTY_EMPLOYEE_SECTION = ids && Object.values(ids).some(Boolean)
+        ? Object.fromEntries(ID_FIELDS.map(field => {
+          const value = ids[field] ? decryptEmployeeId(ids[field], id, field) : null;
+          return [field, value && !sensitive ? maskId(value) : value];
+        })) as GovernmentIds : EMPTY_EMPLOYEE_SECTION;
+      // Fail closed: no disclosed response is returned if the durable audit write fails.
+      if (sensitive) await db.query(`INSERT INTO public.hrms_employee_audit (employee_id,actor_id,actor_name,kind,field)
+        SELECT $1,$2,$3,'reveal',field FROM unnest($4::text[]) AS field`,
+        [id,staff.id ?? staff.username,staff.name,[...ID_FIELDS.filter(f => ids?.[f]),"monthlyPay"]]);
+      const today = now().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+      let age: number | null = null;
+      if (e.birthday) age = Number(today.slice(0, 4)) - Number(e.birthday.slice(0, 4)) - (today.slice(5) < e.birthday.slice(5) ? 1 : 0);
+      return {
+        id: e.id, employeeNumber: e.employeeNumber,
+        personal: { name: e.name, email: e.email, birthday: e.birthday, age, sex: e.sex, civilStatus: e.civilStatus, mobile: e.mobile, homeAddress: e.homeAddress },
+        employment: { position: e.position, department: e.department, branch: e.branch, startDate: e.startDate, status: e.status,
+          probationEndDate: e.probationEndDate, reportsTo: e.reportsTo, schedule: e.schedule,
+          hiredFrom: { offerId: e.offerId, applicationId: e.applicationId, offerUrl: `/offers/${e.offerId}`, applicationUrl: `/applicants/${e.applicationId}` } },
+        governmentIds,
+        emergencyContact: contacts[0] && Object.values(contacts[0]).some(Boolean) ? contacts[0] : EMPTY_EMPLOYEE_SECTION,
+        documents: await Promise.all(PRE_EMPLOYMENT_DOCUMENTS.map(async document => {
+          const stored = documents.find(d => d.type === document.type);
+          return { ...document, fileName: stored?.fileName ?? null, uploadedAt: stored?.uploadedAt ?? null,
+            validUntil: stored?.validUntil ?? null, viewUrl: stored?.fileId ? await files.viewUrl(stored.fileId) : null,
+            status: stored && (stored.fileId || (stored.fileName && stored.uploadedAt)) ? "Submitted" : EMPTY_EMPLOYEE_SECTION };
+        })),
+        contract: { offerLetterSigned: e.signed, contractType: e.employmentType,
+          ...(canSeeEmployeeSensitiveFields(staff.role) ? { monthlyPay: e.monthlyPay } : {}) },
+      };
+    },
+  };
+}

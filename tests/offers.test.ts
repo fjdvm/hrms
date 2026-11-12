@@ -500,10 +500,12 @@ const count = async (sql: string) => (await db.query(sql)).rows.length;
 
 it("hires in one step: Hired Stage, an Employee record with details, terms and the same document files, and a welcome email", async () => {
   const { id, applicationId } = await acceptedOffer();
+  await db.query(`UPDATE applications SET profile_snapshot = profile_snapshot || '{"phone":"09171234567","location":"Cainta home"}'::jsonb WHERE id = $1`, [applicationId]);
   const { employeeId } = await offers().hire(id);
   expect(await stageOf(applicationId)).toBe("Hired");
   const employee = (await db.query(`SELECT * FROM hrms_employees WHERE id = $1`, [employeeId])).rows[0] as Record<string, unknown>;
   expect(employee).toMatchObject({ full_name: "Applicant 1", email: "person1@example.test", position: "Cashier", branch: "Cainta branch",
+    mobile: "09171234567", home_address: "Cainta home", probation_end_date: expect.any(Date),
     monthly_salary: 19000, employment_type: "Full-time", probation: "6 months", reports_to: "Paolo Garcia", status: "Onboarding", employee_number: "BR-EMP-0001" });
   const documents = (await db.query<{ document_type: string; source: string; file_id: string | null }>(
     `SELECT document_type, source, file_id FROM hrms_employee_documents WHERE employee_id = $1 ORDER BY document_type`, [employeeId])).rows;
