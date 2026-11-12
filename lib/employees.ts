@@ -22,7 +22,10 @@ export type OnboardingRow = {
   /** The start date has passed (Manila) and there is still no account or "No account needed". */
   overdue: boolean; /** Set when the account exists but the start date has not arrived: the date it becomes Active. */
   becomesActiveOn: string | null; actions: OnboardingAction[];
+  /** When the active request was sent (ISO), and when and by whom the Portal account was created; null until known. */
+  requestedAt: string | null; accountCreatedAt: string | null; accountCreatedBy: string | null;
 };
+const toIso = (value: string | Date | null) => (value === null ? null : new Date(value).toISOString());
 const DOMAIN = "brenraphaels.ph";
 const emailPart = (word: string) => word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 /** firstname.lastname@brenraphaels.ph; a single name gives just that name. */
@@ -145,11 +148,13 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     const today = now().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
     // The active request (not cancelled or declined) decides the state; otherwise the "No account needed" decision; otherwise none.
     const { rows } = await db.query<{ id: number; employeeNumber: string; name: string; position: string; branch: string; startDate: string;
-      noAccountNeeded: boolean; requestStatus: string | null; requestReference: string | null; requestEmail: string | null }>(`
+      noAccountNeeded: boolean; requestStatus: string | null; requestReference: string | null; requestEmail: string | null;
+      requestedAt: string | Date | null; accountCreatedAt: string | Date | null; accountCreatedBy: string | null }>(`
       SELECT e.id, e.employee_number AS "employeeNumber", e.full_name AS name, e.position, e.branch, e.start_date::text AS "startDate",
-        e.no_account_needed_at IS NOT NULL AS "noAccountNeeded", r.status AS "requestStatus", r.reference AS "requestReference", r.work_email AS "requestEmail"
+        e.no_account_needed_at IS NOT NULL AS "noAccountNeeded", r.status AS "requestStatus", r.reference AS "requestReference", r.work_email AS "requestEmail",
+        r.created_at AS "requestedAt", r.account_created_at AS "accountCreatedAt", r.account_created_by AS "accountCreatedBy"
       FROM public.hrms_employees e
-      LEFT JOIN LATERAL (SELECT status, reference, work_email FROM public.hrms_account_requests q WHERE q.employee_id = e.id
+      LEFT JOIN LATERAL (SELECT status, reference, work_email, created_at, account_created_at, account_created_by FROM public.hrms_account_requests q WHERE q.employee_id = e.id
         ORDER BY (q.status IN ('requested','seen','account_created','login_sent')) DESC, q.id DESC LIMIT 1) r ON true
       WHERE e.status = 'Onboarding'
         AND ($1::text IS NULL OR e.full_name ILIKE '%' || $1 || '%' OR e.employee_number ILIKE '%' || $1 || '%')
@@ -164,6 +169,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       return { id: r.id, employeeNumber: r.employeeNumber, name: r.name, initials: initialsOf(r.name), position: r.position, branch: r.branch,
         startDate: r.startDate, workEmail: active ? r.requestEmail! : defaultWorkEmail(r.name), accountState,
         requestReference: r.requestReference, requestStatus: r.requestStatus,
+        requestedAt: active ? toIso(r.requestedAt) : null, accountCreatedAt: active ? toIso(r.accountCreatedAt) : null, accountCreatedBy: active ? r.accountCreatedBy : null,
         overdue: r.startDate < today && (accountState === "Not requested" || accountState === "Requested"),
         becomesActiveOn: accountState === "Account created" && r.startDate > today ? r.startDate : null, actions };
     });
