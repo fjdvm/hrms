@@ -374,3 +374,14 @@ it("fails a download when the file service fails instead of silently omitting a 
   const response = await employeesFor(handle, db, { viewUrl: async () => { throw new Error('offline'); } }).downloadDocuments(1);
   await expect(response.arrayBuffer()).rejects.toThrow('offline');
 });
+
+it("reports when the active request was sent and who created the account and when", async () => {
+  await db.exec(`DELETE FROM hrms_employee_history; DELETE FROM hrms_employees; DELETE FROM hrms_offers`);
+  await seedEmployees(db);
+  await db.exec(`UPDATE hrms_account_requests SET account_created_at = '2026-11-05T03:00:00Z', account_created_by = 'Admin'
+    WHERE status = 'account_created'`);
+  const page = await employees(onboardingViewer()).onboarding();
+  expect(page.rows.find(r => r.name === "Ana Cruz")).toMatchObject({ requestedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), accountCreatedAt: null });
+  expect(page.rows.find(r => r.name === "Paolo Garcia")).toMatchObject({ accountCreatedAt: "2026-11-05T03:00:00.000Z", accountCreatedBy: "Admin" });
+  expect(page.rows.find(r => r.name === "Maria Santos")).toMatchObject({ requestedAt: null, accountCreatedAt: null, accountCreatedBy: null });
+});
