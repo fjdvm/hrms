@@ -1,9 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { NextRequest } from "next/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { employeeActivationJob, activateDue } from "@/lib/employee-activation";
 import { accountRequestStatusFor } from "@/lib/account-request-status";
 import { employeesFor } from "@/lib/employees";
+import { proxy } from "@/proxy";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
 let db: PGlite;
@@ -151,6 +153,8 @@ it("undo: clears who and when until the person is Active, logs it, and then is r
 });
 
 it("the job's route handler refuses a missing or wrong secret and changes nothing", async () => {
+  // Schedulers have no browser session: the proxy must let the route enforce its own bearer authentication.
+  expect(proxy(new NextRequest("https://hrms.test/api/cron/employee-activation")).headers.get("location")).toBeNull();
   await setRequest("account_created");
   const job = employeeActivationJob(db, at(START_DAY), async () => {});
   for (const authorization of [undefined, "Bearer wrong", "cron-secret"]) {

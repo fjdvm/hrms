@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { accessFor } from "@/lib/portal/access";
 import { SESSION_COOKIE } from "@/lib/portal/config";
 import { createNotificationsClient } from "./notifications";
+import { notificationsApp } from "./config";
 
 /** The signed-in Staff member's Portal user id, from the session alone, never from the request. */
 async function resolveUser() {
@@ -16,6 +17,6 @@ export const notificationsDeps = {
   client: createNotificationsClient({
     baseUrl: process.env.API_GATEWAY_URL ?? "",
     callerKey: process.env.API_GATEWAY_KEY ?? "",
-    app: process.env.NOTIFICATIONS_APP ?? "HRMS",
+    app: notificationsApp(),
   }),
 };

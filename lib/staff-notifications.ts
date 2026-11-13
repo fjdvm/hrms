@@ -1,13 +1,12 @@
 import { database, type Database } from "./database";
 import { listModuleHolders } from "./portal/client";
+import { notificationsApp } from "./notifications/config";
 
 /** Who is told: Staff holding the Module for the notification's area when delivery runs. */
 const AUDIENCE_MODULES: Record<string, string> = { application: "Applications", "job-posting": "Job Postings", offer: "Offers" };
 
 const audienceModule = (payload: Record<string, unknown>) =>
   typeof payload.type === "string" ? AUDIENCE_MODULES[payload.type.split(".")[0]] : undefined;
-
-export const notificationsApp = () => process.env.NOTIFICATIONS_APP ?? "HRMS";
 
 /**
  * Sends queued Staff Notifications (applications received, postings published or closed) to
@@ -43,7 +42,10 @@ export async function deliverStaffNotifications(db: Database = database): Promis
           const response = await fetch(`${url.replace(/\/$/, "")}/notifications/notifications`, {
             method: "POST",
             headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "idempotency-key": row.id },
-            body: JSON.stringify({ ...message, sendingApp: notificationsApp(), targetApp: notificationsApp(), userIds: audience, idempotencyKey: row.id }),
+            // The notification service requires an absolute URL; SQL events store app-relative paths.
+            body: JSON.stringify({ ...message,
+              ...(typeof message.link === "string" ? { link: new URL(message.link, process.env.HRMS_APP_URL ?? "http://localhost:3001").href } : {}),
+              sendingApp: notificationsApp(), targetApp: notificationsApp(), userIds: audience, idempotencyKey: row.id }),
             cache: "no-store",
             signal: AbortSignal.timeout(5000),
           });

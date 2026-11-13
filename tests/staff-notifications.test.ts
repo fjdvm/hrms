@@ -41,6 +41,7 @@ beforeEach(async () => {
   vi.stubEnv("API_GATEWAY_URL", "https://gateway.test");
   vi.stubEnv("API_GATEWAY_KEY", "hrms-key");
   vi.stubEnv("NOTIFICATIONS_APP", "HRMS");
+  vi.stubEnv("HRMS_APP_URL", "https://hrms.test");
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     if (!String(input).startsWith("https://gateway.test")) return boundary(input, init);
     if (gatewayDown) return Response.json({}, { status: 503 });
@@ -68,7 +69,7 @@ it("notifies every Applications holder, and only them, when a Careers applicatio
   await deliverStaffNotifications(db);
   expect(sends).toHaveLength(1);
   expect(sends[0].body).toMatchObject({
-    sendingApp: "HRMS", targetApp: "HRMS", type: "application.received", link: `/applicants/${id}`,
+    sendingApp: "HRMS", targetApp: "HRMS", type: "application.received", link: `https://hrms.test/applicants/${id}`,
     title: "New application: Kristine Aquino", idempotencyKey: `application.received:${id}`,
   });
   expect([...sends[0].body.userIds].sort()).toEqual(["hr-1", "hr-2"]);

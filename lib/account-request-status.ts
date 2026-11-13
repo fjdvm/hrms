@@ -39,7 +39,7 @@ export function parseDelivery(body: unknown): StatusDelivery {
 // - the request only moves forward along requested → seen → account_created → login_sent;
 // - cancelled and declined apply only while nothing has built an account (requested or seen);
 // - an account that exists wins over a cancel or decline, whichever arrives first, so HRMS never pretends to undo a real account;
-// - the requester is notified once when the account is created, and once when the request is declined.
+// - notifications also push Seen and Login sent to the open status panel; every transition is sent once.
 const APPLY = `
 WITH req AS (
   SELECT id, status, employee_id, requester_id FROM public.hrms_account_requests WHERE reference = $1 FOR UPDATE
@@ -72,14 +72,22 @@ WITH req AS (
   INSERT INTO public.hrms_staff_notifications (id, payload)
   SELECT 'account-request.' || $2::text || ':' || $1::text, jsonb_build_object(
     'type', 'account-request.' || $2::text,
-    'title', CASE WHEN $2::text = 'declined' THEN 'Account request declined: ' ELSE 'Account created: ' END || e.full_name,
+    'title', CASE $2::text
+      WHEN 'declined' THEN 'Account request declined: '
+      WHEN 'seen' THEN 'Account request seen: '
+      WHEN 'login_sent' THEN 'Login details sent: '
+      ELSE 'Account created: ' END || e.full_name,
     'body', CASE WHEN $2::text = 'declined'
       THEN 'The Portal administrator declined ' || $1::text || COALESCE(': ' || $5::text, '') || '.'
+      WHEN $2::text = 'seen' THEN 'The Portal administrator has opened ' || $1::text || '.'
+      WHEN $2::text = 'login_sent' THEN 'Login details for ' || e.full_name || ' (' || $1::text || ') have been sent.'
       ELSE 'The Portal account for ' || e.full_name || ' (' || $1::text || ') has been created.' END,
     'link', '/employee-onboarding#employee-' || p.employee_id,
     'recipientIds', jsonb_build_array(p.requester_id))
   FROM plan p JOIN public.hrms_employees e ON e.id = p.employee_id
-  WHERE p.records AND ($2::text = 'account_created' OR ($2::text = 'declined' AND p.status IN ('requested','seen')))
+  WHERE p.records AND ($2::text = 'account_created'
+    OR ($2::text IN ('seen','login_sent') AND p.next_status = $2::text AND p.next_status <> p.status)
+    OR ($2::text = 'declined' AND p.status IN ('requested','seen')))
   ON CONFLICT (id) DO NOTHING
   RETURNING id
 )
