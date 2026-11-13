@@ -14,8 +14,8 @@ const row = (over: Record<string, unknown>) => ({ id: 1, employeeNumber: "BR-EMP
   becomesActiveOn: null, actions: ["request", "no-account-needed"], requestedAt: null, accountCreatedAt: null, accountCreatedBy: null, ...over });
 const rows = [
   row({}),
-  row({ id: 3, employeeNumber: "BR-EMP-0057", name: "Rafael Santiago", accountState: "Requested", requestedAt: "2026-11-12T03:00:00Z", workEmail: "rafael.santiago@brenraphaels.ph", actions: ["remind", "cancel"] }),
-  row({ id: 4, employeeNumber: "BR-EMP-0056", name: "Angelica Ramos", accountState: "Account created", accountCreatedAt: "2026-11-05T03:00:00Z", accountCreatedBy: "Admin", actions: [] }),
+  row({ id: 3, employeeNumber: "BR-EMP-0057", name: "Rafael Santiago", accountState: "Requested", requestReference: "RQ-0003", requestStatus: "requested", requestedAt: "2026-11-12T03:00:00Z", workEmail: "rafael.santiago@brenraphaels.ph", actions: ["remind", "cancel"] }),
+  row({ id: 4, employeeNumber: "BR-EMP-0056", name: "Angelica Ramos", accountState: "Account created", requestReference: "RQ-0002", requestStatus: "account_created", accountCreatedAt: "2026-11-05T03:00:00Z", accountCreatedBy: "Admin", actions: [] }),
   row({ id: 5, employeeNumber: "BR-EMP-0055", name: "Paolo Garcia", accountState: "Account created", becomesActiveOn: "2026-12-01", actions: [] }),
 ];
 const listing = (list: unknown[], canAct = true) => ({ rows: list, counts: { all: 4, needsAccount: 2, requested: 1, accountCreated: 1, noAccountNeeded: 0 },
@@ -55,6 +55,8 @@ it("describes each account state: not requested, requested with sent date, creat
   expect(page).toContain("View request");
   expect(page).toContain("Created 5 Nov by Admin");
   expect(page).toContain("Becomes Active on 1 Dec 2026");
+  expect(page).toContain(`id="employee-3"`); // the notification link /employee-onboarding#employee-3 lands on the person's row
+
   // an account that exists, waiting only for the start date, has no button at all
   const paolo = page.slice(page.indexOf("Paolo Garcia"));
   expect(paolo.slice(0, paolo.indexOf("</tr>"))).not.toContain("<button");

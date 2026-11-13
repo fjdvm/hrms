@@ -52,6 +52,14 @@ Answers: `200` for any valid delivery (including a repeat or out-of-order one, s
 
 Notifications: the requester is told once when the account is created, and once when the request is declined (with the reason), through `hrms_staff_notifications` and the existing gateway, so the live connection delivers them. A notification can name its recipients (`recipientIds` in the payload, removed before sending); the rest keep going to the holders of their area's Module. Not here: the Active rule (#345), remind and cancel (#342).
 
+## Request status panel (#338)
+
+"View request" on a Requested or Account created row (Super Admin and HRMS Manager only, like the other actions) opens `components/employees/request-status-panel.tsx`, a right-hand side panel from the Onboarding Figma ("Request status"). It reads `employeesFor(...).accountRequestStatus(employeeId)` through the `loadAccountRequestStatus` server action when it opens: the Employee, work email, Role, needs access from, who requested it and when, the Modules requested grouped by system, and four progress steps (Sent to admin portal, Seen by admin, Account created, Login details sent to <first name>), each with its time (Manila) and actor from `hrms_account_request_events`, or "Waiting for admin" until it happens. Deviation from the Figma, by the parent spec: no "Branch access" field; "Modules requested" instead. The Figma's Cancel request and Remind admin buttons belong to #342 and are not here.
+
+The read is open to any holder of the Employee Onboarding Module and shows only the person's active request (`requested`, `seen`, `account_created`, `login_sent`); it answers `not-found` for anyone else. The amber warning (`overdue`) shows when the Manila start date has passed and no `account_created` event exists, and says how many days ago the admin saw the request.
+
+Live updates, never a timer: the header, which owns the notifications WebSocket, dispatches `LIVE_EVENT` (`lib/live-events.ts`) on `notification.created`. `OnboardingLive` calls `router.refresh()` so the rows re-read, and an open panel re-reads itself; closed panels do nothing. Reopening the panel is the user-action refresh. The webhook's notification links to `/employee-onboarding#employee-<id>`; each row has that id and highlights when targeted. Tests: `tests/request-status-panel.test.tsx`, `tests/account-request-status-read.test.ts`, `tests/onboarding-page.test.tsx`.
+
 ## Remind admin and cancel (#342)
 
 `employeesFor(...).remindAccountRequest(reference)` and `.cancelAccountRequest(reference)` act on one Account request by its `RQ-####` reference. Both validate the `Employee Onboarding` Module, then require Super Admin or HRMS Manager (a refusal happens before the Portal is called), then require the request to be Requested or Seen. Once the account exists, or the request is cancelled or declined, they throw `AccountRequestError("conflict")` with `detail.status` set to the current status.
