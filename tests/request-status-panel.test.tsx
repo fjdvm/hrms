@@ -183,3 +183,19 @@ it("a cancel refused because the account just appeared says so and re-reads the 
   await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Remind admin" })).toBeNull());
   expect(mocks.refresh).not.toHaveBeenCalled();
 });
+
+it("shows a declined request with the reason and message, and no warning or progress to wait on", async () => {
+  mocks.load.mockResolvedValue({ ok: true, status: status({ status: "declined", overdue: false, daysSinceSeen: null,
+    decline: { reason: "Wrong role", message: "Please request Cashier.", by: "IT Admin", at: "2026-11-12T08:00:00Z" },
+    steps: [base.steps[0], { key: "declined", label: "Request declined", done: true, at: "2026-11-12T08:00:00Z", actor: "IT Admin" }] }) });
+  render(<RequestStatusPanel employee={employee} history={{ reference: "RQ-0033" }} />);
+  await userEvent.click(screen.getByRole("button", { name: "View declined request" }));
+  await screen.findByText(/Wrong role/);
+  expect(mocks.load).toHaveBeenCalledWith(3, "RQ-0033");
+  expect(screen.getByText("Declined")).toBeTruthy();
+  expect(screen.getByText(/Please request Cashier\./)).toBeTruthy();
+  expect(screen.getByText(/Declined by IT Admin/)).toBeTruthy();
+  expect(screen.getByText("Request declined")).toBeTruthy();
+  expect(screen.queryByText(/still has no login/)).toBeNull();
+  expect(screen.queryByText("Waiting for admin")).toBeNull();
+});

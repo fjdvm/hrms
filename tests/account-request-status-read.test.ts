@@ -73,3 +73,29 @@ it("returns when the admin was last reminded, so the panel can say when the next
   expect(lastReminderAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   expect(Math.abs(Date.now() - Date.parse(lastReminderAt!))).toBeLessThan(60_000);
 });
+
+it("reads a declined request with the administrator's reason and message, and the row returns to Not requested with a link to it", async () => {
+  await employees().requestAccount(1, input());
+  await db.exec(`INSERT INTO hrms_account_request_events (request_id,status,actor_name,reason,message,occurred_at) VALUES (1,'declined','IT Admin','Wrong role','Please request Cashier.','2026-11-12T08:00:00Z');
+    UPDATE hrms_account_requests SET status='declined'`);
+  const row = (await employees().onboarding()).rows.find((r) => r.id === 1)!;
+  expect(row).toMatchObject({ accountState: "Not requested", actions: ["request", "no-account-needed"], declined: { reference: "RQ-0001", at: "2026-11-12T08:00:00.000Z" } });
+  await expect(employees().accountRequestStatus(1)).rejects.toMatchObject({ reason: "not-found" });
+  const declined = await employees().accountRequestStatus(1, "RQ-0001");
+  expect(declined).toMatchObject({ reference: "RQ-0001", status: "declined", overdue: false,
+    decline: { reason: "Wrong role", message: "Please request Cashier.", by: "IT Admin", at: "2026-11-12T08:00:00.000Z" } });
+  expect(declined.steps.map((s) => [s.key, s.done])).toEqual([["requested", true], ["declined", true]]);
+  await expect(employees().accountRequestStatus(2, "RQ-0001")).rejects.toMatchObject({ reason: "not-found" });
+  await expect(employees().accountRequestStatus(1, "nope")).rejects.toMatchObject({ reason: "validation" });
+});
+
+it("lets HR send a new request after a declined one, with a new reference, and the declined link goes away", async () => {
+  await employees().requestAccount(1, input());
+  await db.exec(`INSERT INTO hrms_account_request_events (request_id,status,actor_name,reason,occurred_at) VALUES (1,'declined','IT Admin','Wrong role','2026-11-12T08:00:00Z');
+    UPDATE hrms_account_requests SET status='declined'`);
+  expect(await employees().requestAccount(1, input())).toMatchObject({ reference: "RQ-0002" });
+  const row = (await employees().onboarding()).rows.find((r) => r.id === 1)!;
+  expect(row).toMatchObject({ accountState: "Requested", requestReference: "RQ-0002", declined: null });
+  expect((await employees().accountRequestStatus(1)).reference).toBe("RQ-0002");
+  expect((await employees().accountRequestStatus(1, "RQ-0001")).decline?.reason).toBe("Wrong role");
+});

@@ -11,7 +11,7 @@ import Page from "@/app/(hrms)/employee-onboarding/page";
 
 const row = (over: Record<string, unknown>) => ({ id: 1, employeeNumber: "BR-EMP-0058", name: "Ellaine Torres", initials: "ET", position: "Branch Cashier", branch: "Cainta branch",
   startDate: "2026-11-10", workEmail: "ellaine.torres@brenraphaels.ph", accountState: "Not requested", requestReference: null, requestStatus: null, overdue: false,
-  becomesActiveOn: null, actions: ["request", "no-account-needed"], requestedAt: null, accountCreatedAt: null, accountCreatedBy: null, ...over });
+  becomesActiveOn: null, actions: ["request", "no-account-needed"], requestedAt: null, accountCreatedAt: null, accountCreatedBy: null, declined: null, ...over });
 const rows = [
   row({}),
   row({ id: 3, employeeNumber: "BR-EMP-0057", name: "Rafael Santiago", accountState: "Requested", requestReference: "RQ-0003", requestStatus: "requested", requestedAt: "2026-11-12T03:00:00Z", workEmail: "rafael.santiago@brenraphaels.ph", actions: ["remind", "cancel"] }),
@@ -104,4 +104,13 @@ it("offers No account needed beside Request user account, and Undo once marked, 
   expect(page.indexOf(">No account needed</button>")).toBeLessThan(page.indexOf("Request user account"));
   expect(page).toContain("Undo");
   expect(page).toContain("No login required");
+});
+
+it("shows a declined request on a Not requested row with a link to it, and Request user account still available", async () => {
+  state.onboarding.mockResolvedValue(listing([row({ declined: { reference: "RQ-0007", at: "2026-11-12T08:00:00Z" } })]));
+  const page = await html();
+  expect(page).toContain("Not requested");
+  expect(page).toMatch(/Declined 12 Nov · no account yet/);
+  expect(page).toContain("View declined request");
+  expect(page).toContain("Request user account");
 });

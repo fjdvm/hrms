@@ -55,14 +55,14 @@ export async function sendAccountRequest(employeeId: number, input: { workEmail:
 export type StatusResult = { ok: true; status: AccountRequestStatus } | { ok: false; error: string };
 
 /** The status panel's data, read when the panel opens and again on a live update or the user's refresh. */
-export async function loadAccountRequestStatus(employeeId: number): Promise<StatusResult> {
+export async function loadAccountRequestStatus(employeeId: number, reference?: string): Promise<StatusResult> {
   try {
-    return { ok: true, status: await (await employeesForRequest()).accountRequestStatus(employeeId) };
+    return { ok: true, status: await (await employeesForRequest()).accountRequestStatus(employeeId, reference) };
   } catch (error) {
     if (error instanceof EmployeeError) {
       if (error.reason === "denied") redirect(NO_ACCESS_PATH);
       if (error.reason === "invalid") redirect(LOGIN_PATH);
-      return { ok: false, error: error.reason === "not-found" ? "This person has no active account request." : "The request could not be loaded. Please try again in a moment." };
+      return { ok: false, error: error.reason === "not-found" ? reference ? "That declined request could not be found." : "This person has no active account request." : "The request could not be loaded. Please try again in a moment." };
     }
     throw error;
   }

@@ -33,7 +33,7 @@ export function formatOnboardingSubtitle({ hires, needsAccount }: { hires: numbe
 /** The small line under the account badge. */
 export function accountNote(row: OnboardingRow) {
   switch (row.accountState) {
-    case "Not requested": return "No account yet";
+    case "Not requested": return row.declined?.at ? `Declined ${formatShortDate(new Date(row.declined.at))} · no account yet` : row.declined ? "Declined · no account yet" : "No account yet";
     case "Requested": return row.requestedAt ? `Sent ${formatShortDate(new Date(row.requestedAt))} · waiting for admin` : "Waiting for admin";
     case "Account created":
       if (row.becomesActiveOn) return `Becomes Active on ${formatOfferDate(row.becomesActiveOn)}`;

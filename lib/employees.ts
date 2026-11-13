@@ -25,8 +25,10 @@ export type OnboardingRow = {
   becomesActiveOn: string | null; actions: OnboardingAction[];
   /** When the active request was sent (ISO), and when and by whom the Portal account was created; null until known. */
   requestedAt: string | null; accountCreatedAt: string | null; accountCreatedBy: string | null;
+  /** A Not requested person's most recent request was declined: its reference and when (ISO). The row links to its history. */
+  declined: { reference: string; at: string | null } | null;
 };
-export type RequestStepKey = "requested" | "seen" | "account_created" | "login_sent";
+export type RequestStepKey = "requested" | "seen" | "account_created" | "login_sent" | "declined";
 export type AccountRequestStep = { key: RequestStepKey; label: string; done: boolean; at: string | null; actor: string | null };
 export type AccountRequestStatus = {
   reference: string; status: string; employee: { name: string; employeeNumber: string }; workEmail: string; role: string;
@@ -36,6 +38,8 @@ export type AccountRequestStatus = {
   overdue: boolean;
   /** Whole days since the admin saw the request; null until seen. */
   daysSinceSeen: number | null;
+  /** Set for a Declined request: the administrator's reason and optional message, who declined and when. */
+  decline: { reason: string | null; message: string | null; by: string; at: string } | null;
   /** When the admin was last reminded (ISO), or null; the next reminder is allowed 24 hours later. */
   lastReminderAt: string | null;
 };
@@ -163,12 +167,14 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     // The active request (not cancelled or declined) decides the state; otherwise the "No account needed" decision; otherwise none.
     const { rows } = await db.query<{ id: number; employeeNumber: string; name: string; position: string; branch: string; startDate: string;
       noAccountNeeded: boolean; requestStatus: string | null; requestReference: string | null; requestEmail: string | null;
-      requestedAt: string | Date | null; accountCreatedAt: string | Date | null; accountCreatedBy: string | null }>(`
+      requestedAt: string | Date | null; accountCreatedAt: string | Date | null; accountCreatedBy: string | null; declinedAt: string | Date | null }>(`
       SELECT e.id, e.employee_number AS "employeeNumber", e.full_name AS name, e.position, e.branch, e.start_date::text AS "startDate",
         e.no_account_needed_at IS NOT NULL AS "noAccountNeeded", r.status AS "requestStatus", r.reference AS "requestReference", r.work_email AS "requestEmail",
-        r.created_at AS "requestedAt", r.account_created_at AS "accountCreatedAt", r.account_created_by AS "accountCreatedBy"
+        r.created_at AS "requestedAt", r.account_created_at AS "accountCreatedAt", r.account_created_by AS "accountCreatedBy", r.declined_at AS "declinedAt"
       FROM public.hrms_employees e
-      LEFT JOIN LATERAL (SELECT status, reference, work_email, created_at, account_created_at, account_created_by FROM public.hrms_account_requests q WHERE q.employee_id = e.id
+      LEFT JOIN LATERAL (SELECT status, reference, work_email, created_at, account_created_at, account_created_by,
+          (SELECT v.occurred_at FROM public.hrms_account_request_events v WHERE v.request_id = q.id AND v.status = 'declined') AS declined_at
+        FROM public.hrms_account_requests q WHERE q.employee_id = e.id
         ORDER BY (q.status IN ('requested','seen','account_created','login_sent')) DESC, q.id DESC LIMIT 1) r ON true
       WHERE e.status = 'Onboarding'
         AND ($1::text IS NULL OR e.full_name ILIKE '%' || $1 || '%' OR e.employee_number ILIKE '%' || $1 || '%')
@@ -184,6 +190,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
         startDate: r.startDate, workEmail: active ? r.requestEmail! : defaultWorkEmail(r.name), accountState,
         requestReference: r.requestReference, requestStatus: r.requestStatus,
         requestedAt: active ? toIso(r.requestedAt) : null, accountCreatedAt: active ? toIso(r.accountCreatedAt) : null, accountCreatedBy: active ? r.accountCreatedBy : null,
+        declined: accountState === "Not requested" && r.requestStatus === "declined" ? { reference: r.requestReference!, at: toIso(r.declinedAt) } : null,
         overdue: r.startDate < today && (accountState === "Not requested" || accountState === "Requested"),
         becomesActiveOn: accountState === "Account created" && r.startDate > today ? r.startDate : null, actions };
     });
@@ -197,25 +204,31 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     };
   }
   /** The active request's details and progress for the status panel. Read-only, so any holder of the Module may read it. */
-  async function readAccountRequestStatus(employeeId: number): Promise<AccountRequestStatus> {
+  async function readAccountRequestStatus(employeeId: number, reference?: string): Promise<AccountRequestStatus> {
     await authorise("Employee Onboarding");
-    if (!validId(employeeId)) throw new EmployeeError("validation");
+    if (!validId(employeeId) || (reference !== undefined && (typeof reference !== "string" || !/^RQ-\d{4,9}$/.test(reference)))) throw new EmployeeError("validation");
     const { rows } = await db.query<{ id: number; reference: string; status: string; name: string; employeeNumber: string; startDate: string; workEmail: string;
       role: string; neededFrom: string; requestedBy: string; requestedAt: string | Date; lastReminderAt: string | Date | null; modules: { name: string; system: string }[] }>(`
       SELECT q.id, q.reference, q.status, e.full_name AS name, e.employee_number AS "employeeNumber", e.start_date::text AS "startDate", q.work_email AS "workEmail",
         q.portal_role AS role, q.access_needed_from::text AS "neededFrom", q.requester_name AS "requestedBy", q.created_at AS "requestedAt", q.last_reminder_at AS "lastReminderAt", q.requested_modules AS modules
       FROM public.hrms_account_requests q JOIN public.hrms_employees e ON e.id = q.employee_id
-      WHERE q.employee_id = $1 AND q.status IN ('requested','seen','account_created','login_sent')`, [employeeId]);
+      WHERE q.employee_id = $1 AND (${reference === undefined ? "q.status IN ('requested','seen','account_created','login_sent')" : "q.reference = $2 AND q.status = 'declined'"})`,
+      reference === undefined ? [employeeId] : [employeeId, reference]);
     const request = rows[0];
     if (!request) throw new EmployeeError("not-found");
-    const { rows: events } = await db.query<{ status: string; actor: string; at: string | Date }>(
-      `SELECT status, actor_name AS actor, occurred_at AS at FROM public.hrms_account_request_events WHERE request_id = $1`, [request.id]);
+    const { rows: events } = await db.query<{ status: string; actor: string; at: string | Date; reason: string | null; message: string | null }>(
+      `SELECT status, actor_name AS actor, occurred_at AS at, reason, message FROM public.hrms_account_request_events WHERE request_id = $1`, [request.id]);
     const first = request.name.split(/\s+/u)[0];
     const labels: [RequestStepKey, string][] = [["requested", "Sent to admin portal"], ["seen", "Seen by admin"], ["account_created", "Account created"], ["login_sent", `Login details sent to ${first}`]];
+    const declined = request.status === "declined";
+    const declinedEvent = declined ? events.find(e => e.status === "declined") : undefined;
+    if (declined) labels.splice(2, 2, ["declined", "Request declined"]);
     const steps = labels.map(([key, label]): AccountRequestStep => {
       const event = events.find(e => e.status === key);
       return { key, label, done: !!event, at: event ? toIso(event.at) : null, actor: event?.actor ?? null };
     });
+    // A declined request never reaches the later steps; show only what happened.
+    const shown = declined ? steps.filter(step => step.done) : steps;
     const manila = (date: Date) => date.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
     const today = manila(now());
     const seen = steps[1].at;
@@ -225,8 +238,9 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     return { reference: request.reference, status: request.status, employee: { name: request.name, employeeNumber: request.employeeNumber },
       workEmail: request.workEmail, role: request.role, neededFrom: request.neededFrom, requestedBy: request.requestedBy,
       requestedAt: toIso(request.requestedAt)!, startDate: request.startDate,
-      modules: [...grouped].map(([system, names]) => ({ system, names })), steps,
-      overdue: request.startDate < today && !steps[2].done, daysSinceSeen, lastReminderAt: toIso(request.lastReminderAt) };
+      modules: [...grouped].map(([system, names]) => ({ system, names })), steps: shown,
+      overdue: !declined && request.startDate < today && !steps[2].done, daysSinceSeen, lastReminderAt: toIso(request.lastReminderAt),
+      decline: declined ? { reason: declinedEvent?.reason ?? null, message: declinedEvent?.message ?? null, by: declinedEvent?.actor ?? "Portal administrator", at: toIso(declinedEvent?.at ?? request.requestedAt)! } : null };
   }
   /** Only Super Admin and HRMS Manager act in Onboarding; everyone else holding the Module reads. */
   async function authoriseActor() {
@@ -372,7 +386,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       return { reference: created.reference, status: "requested" as const };
     },
     /** The status panel's read: request details, who sent it, and each progress step with time and actor. */
-    accountRequestStatus: (employeeId: number) => readAccountRequestStatus(employeeId),
+    accountRequestStatus: (employeeId: number, reference?: string) => readAccountRequestStatus(employeeId, reference),
 
     /**
      * Marks an Onboarding person "No account needed", logged with who and when by the Employee audit trigger. Only for someone with
