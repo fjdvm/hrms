@@ -35,7 +35,7 @@ it("reads the request for the panel: details, Modules by system, and each step w
   await employees().requestAccount(1, input({ note: "Front counter" }));
   const pending = await employees().accountRequestStatus(1);
   expect(pending).toMatchObject({ reference: "RQ-0001", status: "requested", workEmail: "maria.santos@brenraphaels.ph", role: "HR Officer",
-    neededFrom: "2026-12-01", requestedBy: "Ada Manager", employee: { name: "Maria Santos", employeeNumber: "BR-EMP-0001" }, overdue: false, daysSinceSeen: null });
+    neededFrom: "2026-12-01", requestedBy: "Ada Manager", employee: { name: "Maria Santos", employeeNumber: "BR-EMP-0001" }, overdue: false, daysSinceSeen: null, lastReminderAt: null });
   expect(pending.modules.flatMap((m) => m.names)).toEqual(expect.arrayContaining(["Applications", "Offers"]));
   expect(pending.steps.map((s) => [s.label, s.done])).toEqual([["Sent to admin portal", true], ["Seen by admin", false], ["Account created", false], ["Login details sent to Maria", false]]);
   expect(pending.steps[0].actor).toBe("Ada Manager");
@@ -63,6 +63,15 @@ it("ignores a cancelled request: only the active one is shown", async () => {
   await employees().requestAccount(1, input());
   await db.exec(`UPDATE hrms_account_requests SET status = 'cancelled'`);
   await expect(employees().accountRequestStatus(1)).rejects.toMatchObject({ reason: "not-found" });
+});
+
+it("returns when the admin was last reminded, so the panel can say when the next reminder is allowed", async () => {
+  await employees().requestAccount(1, input());
+  expect((await employees().accountRequestStatus(1)).lastReminderAt).toBeNull();
+  await employees().remindAccountRequest("RQ-0001");
+  const { lastReminderAt } = await employees().accountRequestStatus(1);
+  expect(lastReminderAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  expect(Math.abs(Date.now() - Date.parse(lastReminderAt!))).toBeLessThan(60_000);
 });
 
 it("reads a declined request with the administrator's reason and message, and the row returns to Not requested with a link to it", async () => {

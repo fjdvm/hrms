@@ -1,11 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Bell, Check, UserPlus, X, XCircle } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { loadAccountRequestStatus } from "@/app/(hrms)/employee-onboarding/actions";
+import { cancelRequest, loadAccountRequestStatus, remindAdmin } from "@/app/(hrms)/employee-onboarding/actions";
 import type { AccountRequestStatus, AccountRequestStep, OnboardingRow } from "@/lib/employees";
 import { LIVE_EVENT } from "@/lib/live-events";
 import { formatOfferDate } from "@/lib/offer-view";
@@ -109,11 +114,81 @@ function Details({ status }: { status: AccountRequestStatus }) {
   );
 }
 
+const REMIND_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Remind and Cancel exist only while the admin has not yet created the account. */
+const isOpen = (status: AccountRequestStatus) => status.status === "requested" || status.status === "seen";
+
+/**
+ * "Cancel request" (after a confirmation) and "Remind admin" at the foot of the panel. After a reminder it says when the next one is
+ * allowed (24 hours later) and the button waits. Hidden once the account exists, so a live update that brings the account removes them.
+ */
+function Actions({ status, reload, onCancelled, onReminded, onNotice }: { status: AccountRequestStatus; reload: () => void; onCancelled: () => void; onReminded: (at: string) => void; onNotice: (message?: string) => void }) {
+  const [pending, start] = useTransition();
+  const [confirming, setConfirming] = useState(false);
+  const [now] = useState(() => Date.now()); // a snapshot from when the actions appear; no timer, so no polling
+  const first = status.employee.name.split(/\s+/u)[0];
+  const nextAt = status.lastReminderAt ? new Date(new Date(status.lastReminderAt).getTime() + REMIND_INTERVAL_MS) : null;
+  const waiting = nextAt !== null && nextAt.getTime() > now;
+
+  const remind = () => start(async () => {
+    onNotice();
+    const result = await remindAdmin(status.reference);
+    if (result.ok) { toast.success("Reminder sent to the admin"); if (result.remindedAt) onReminded(result.remindedAt); return; }
+    if (result.retryAt) onReminded(new Date(new Date(result.retryAt).getTime() - REMIND_INTERVAL_MS).toISOString());
+    onNotice(result.error);
+    if (result.status) reload();
+  });
+  const cancel = (event: React.MouseEvent) => {
+    event.preventDefault(); // stay open until the server answers
+    onNotice();
+    start(async () => {
+      const result = await cancelRequest(status.reference);
+      if (result.ok) { setConfirming(false); toast.success(`Account request for ${status.employee.name} cancelled`); onCancelled(); return; }
+      setConfirming(false);
+      onNotice(result.error);
+      reload();
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-[10px] border-t border-[#ebebeb] px-[24px] py-[16px]">
+      {status.lastReminderAt && (
+        <p className="text-xs text-zinc-500">
+          Reminder sent {formatStepTime(status.lastReminderAt)}.{waiting && nextAt && ` You can remind the admin again after ${formatStepTime(nextAt.toISOString())}.`}
+        </p>
+      )}
+      <div className="flex justify-end gap-[8px]">
+        <AlertDialog open={confirming} onOpenChange={(next) => { if (!pending) setConfirming(next); }}>
+          <AlertDialogTrigger asChild>
+            <Button type="button" variant="outline" disabled={pending} className="rounded-lg text-destructive hover:text-destructive">Cancel request</Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel the account request for {status.employee.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The admin portal will be told to withdraw {status.reference}, and {first} goes back to Not requested. You can send a new request afterwards.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={pending}>Keep request</AlertDialogCancel>
+              <AlertDialogAction disabled={pending} onClick={cancel}>{pending ? "Cancelling…" : "Cancel request"}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <Button type="button" disabled={pending || waiting} onClick={remind} className="rounded-lg">Remind admin</Button>
+      </div>
+    </div>
+  );
+}
+
 /** "View request" on a row with an active request, opening the side panel. It reads on open and again when the live connection pushes a notification. */
 export function RequestStatusPanel({ employee, history }: { employee: Pick<OnboardingRow, "id" | "name" | "requestReference">; history?: { reference: string } }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<AccountRequestStatus>();
   const [error, setError] = useState<string>();
+  /** What a refused Remind or Cancel says; kept here so it survives the actions disappearing when the account turns up. */
+  const [notice, setNotice] = useState<string>();
   const latest = useRef(0);
   const reference = history?.reference;
 
@@ -132,7 +207,7 @@ export function RequestStatusPanel({ employee, history }: { employee: Pick<Onboa
 
   const change = (next: boolean) => {
     setOpen(next);
-    if (next) void load(); else { latest.current++; setStatus(undefined); setError(undefined); }
+    if (next) void load(); else { latest.current++; setStatus(undefined); setError(undefined); setNotice(undefined); }
   };
 
   return (
@@ -157,7 +232,13 @@ export function RequestStatusPanel({ employee, history }: { employee: Pick<Onboa
           {status ? <Details status={status} />
             : <p role={error ? "alert" : "status"} className={`text-sm ${error ? "text-destructive" : "text-zinc-500"}`}>{error ?? "Loading…"}</p>}
           {status && error && <p role="alert" className="mt-[12px] text-sm text-destructive">{error}</p>}
+          {notice && <p role="alert" className="mt-[12px] text-sm text-destructive">{notice}</p>}
         </div>
+        {status && isOpen(status) && (
+          <Actions status={status} reload={() => void load()}
+            onNotice={setNotice} onReminded={(at) => setStatus((current) => current && { ...current, lastReminderAt: at })}
+            onCancelled={() => { change(false); router.refresh(); }} />
+        )}
       </SheetContent>
     </Sheet>
   );

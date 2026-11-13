@@ -99,3 +99,45 @@ export async function markNoAccountNeeded(employeeId: number): Promise<NoAccount
 export async function undoNoAccountNeeded(employeeId: number): Promise<NoAccountResult> {
   return changeNoAccountNeeded(employeeId, "undo");
 }
+
+export type RequestActionResult = { ok: true; remindedAt?: string } | { ok: false; error: string; retryAt?: string; status?: string };
+
+/** What a refused Remind or Cancel says. `conflict` carries the request's current status, so the panel can tell "account created" from "no longer open". */
+function requestActionMessage(error: AccountRequestError): string {
+  switch (error.reason) {
+    case "unavailable": return "HRMS could not reach the Portal. Nothing was changed. Please try again in a moment.";
+    case "too-soon": return "The admin was reminded recently.";
+    case "conflict": return error.detail.status === "account_created" || error.detail.status === "login_sent"
+      ? "The account has just been created, so this request can no longer be changed."
+      : "This request is no longer open.";
+    case "not-found": return "This request no longer exists.";
+    default: return "The request could not be updated.";
+  }
+}
+
+async function actOnRequest(reference: string, act: "remind" | "cancel"): Promise<RequestActionResult> {
+  try {
+    const employees = await employeesForRequest();
+    const done = act === "remind" ? await employees.remindAccountRequest(reference) : await employees.cancelAccountRequest(reference);
+    revalidatePath("/employee-onboarding");
+    return { ok: true, remindedAt: "remindedAt" in done ? done.remindedAt : undefined };
+  } catch (error) {
+    if (error instanceof AccountRequestError || error instanceof EmployeeError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+    }
+    if (!(error instanceof AccountRequestError)) throw error;
+    // The request moved on (an account exists, or it is closed): show the current list rather than a stale row.
+    if (error.reason === "conflict" || error.reason === "not-found") revalidatePath("/employee-onboarding");
+    return { ok: false, error: requestActionMessage(error), retryAt: error.detail.retryAt, status: error.detail.status };
+  }
+}
+
+/** "Remind admin": nudges the Portal's administrators, once per 24 hours per request. */
+export async function remindAdmin(reference: string): Promise<RequestActionResult> {
+  return actOnRequest(reference, "remind");
+}
+/** "Cancel request": withdraws a Requested or Seen request, returning the person to Not requested. */
+export async function cancelRequest(reference: string): Promise<RequestActionResult> {
+  return actOnRequest(reference, "cancel");
+}
