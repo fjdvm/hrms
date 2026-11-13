@@ -56,6 +56,8 @@ beforeEach(async () => {
   vi.stubEnv("HRMS_DEV_BYPASS", "");
   vi.stubEnv("API_GATEWAY_URL", "https://gateway.test");
   vi.stubEnv("API_GATEWAY_KEY", "hrms-key");
+  vi.stubEnv("HRMS_APP_URL", "https://hrms.test");
+  vi.stubEnv("NOTIFICATIONS_APP", undefined);
   vi.spyOn(database, "query").mockImplementation((sql, values) => db.query(sql, values));
 });
 afterEach(async () => { vi.restoreAllMocks(); await db.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -94,7 +96,9 @@ it("records seen with its actor and time, once, however often it is delivered", 
   expect(seen).toHaveLength(1);
   expect(seen[0]).toMatchObject({ actor_name: "Admin One" });
   expect(seen[0].occurred_at.toISOString()).toBe("2026-11-20T02:30:00.000Z");
-  expect(await queued()).toEqual([]);
+  expect(await queued()).toEqual([expect.objectContaining({ payload: expect.objectContaining({
+    type: "account-request.seen", recipientIds: ["user-9"],
+  }) })]);
 });
 
 it("moves to account created, records who and when, and tells the requester once through the existing outbox and gateway", async () => {
@@ -106,14 +110,14 @@ it("moves to account created, records who and when, and tells the requester once
   expect((row.account_created_at as Date).toISOString()).toBe("2026-11-20T03:00:00.000Z");
   expect((await events()).map((e) => e.status)).toEqual(["requested", "seen", "account_created"]);
   const notices = await queued();
-  expect(notices).toHaveLength(1);
+  expect(notices).toHaveLength(2);
   expect(notices[0].payload).toMatchObject({ type: "account-request.account_created", title: "Account created: Maria Santos", link: "/employee-onboarding#employee-1", recipientIds: ["user-9"] });
   expect(afterCallbacks).toHaveLength(3); // delivery is kicked off after each accepted response
   await deliverStaffNotifications(database);
-  expect(sends).toHaveLength(1);
-  expect(sends[0].body).toMatchObject({ userIds: ["user-9"], title: "Account created: Maria Santos", sendingApp: "HRMS", targetApp: "HRMS" });
-  expect(sends[0].body).not.toHaveProperty("recipientIds");
-  expect(sends[0].key).toBe("account-request.account_created:RQ-0001");
+  expect(sends).toHaveLength(2);
+  const createdNotice = sends.find(send => send.key === "account-request.account_created:RQ-0001")!;
+  expect(createdNotice.body).toMatchObject({ userIds: ["user-9"], title: "Account created: Maria Santos", sendingApp: "hrms", targetApp: "hrms", link: "https://hrms.test/employee-onboarding#employee-1" });
+  expect(createdNotice.body).not.toHaveProperty("recipientIds");
   const page = await employeesFor(portal.signIn({ name: "Ada", username: "ada", email: "a@example.test", role: "HRMS Manager" }, ["Employee Onboarding"]), database).onboarding();
   expect(page.rows[0]).toMatchObject({ accountState: "Account created", accountCreatedBy: "Admin One", accountCreatedAt: "2026-11-20T03:00:00.000Z" });
 });
@@ -121,13 +125,13 @@ it("moves to account created, records who and when, and tells the requester once
 it("tolerates out-of-order delivery: login sent first, a late seen, and never moves backwards", async () => {
   await deliver(status("RQ-0001", "login_sent", { actor: "System", occurredAt: "2026-11-20T04:00:00Z" }));
   expect((await requestRow()).status).toBe("login_sent");
-  expect(await queued()).toEqual([]);
+  expect((await queued()).map(n => n.payload.type)).toEqual(["account-request.login_sent"]);
   await deliver(status("RQ-0001", "account_created", { actor: "Admin One", occurredAt: "2026-11-20T03:00:00Z" }));
   await deliver(status("RQ-0001", "seen", { occurredAt: "2026-11-20T02:00:00Z" }));
   const row = await requestRow();
   expect(row).toMatchObject({ status: "login_sent", account_created_by: "Admin One" });
   expect((await events()).map((e) => e.status).sort()).toEqual(["account_created", "login_sent", "requested", "seen"]);
-  expect(await queued()).toHaveLength(1);
+  expect((await queued()).map(n => n.payload.type)).toEqual(["account-request.account_created", "account-request.login_sent"]);
 });
 
 it("records a cancel, and a decline with its reason and message, and tells the requester about the decline", async () => {
@@ -135,14 +139,14 @@ it("records a cancel, and a decline with its reason and message, and tells the r
   expect((await deliver(status("RQ-0001", "cancelled", { actor: "Ada Manager", reason: "ignored", message: "ignored" }))).status).toBe(200);
   expect(await requestRow()).toMatchObject({ status: "cancelled" });
   expect((await events()).find((e) => e.status === "cancelled")).toMatchObject({ actor_name: "Ada Manager", reason: null, message: null });
-  expect(await queued()).toEqual([]);
+  expect((await queued()).map(n => n.payload.type)).toEqual(["account-request.seen"]);
   await db.exec(`UPDATE hrms_account_requests SET status = 'requested' WHERE id = 1; DELETE FROM hrms_account_request_events WHERE status IN ('seen','cancelled')`);
   await deliver(status("RQ-0001", "declined", { actor: "Admin One", reason: "Wrong role", message: "Please request Cashier." }));
   await deliver(status("RQ-0001", "declined", { actor: "Admin One", reason: "Wrong role", message: "Please request Cashier." }));
   expect(await requestRow()).toMatchObject({ status: "declined" });
   expect((await events()).find((e) => e.status === "declined")).toMatchObject({ actor_name: "Admin One", reason: "Wrong role", message: "Please request Cashier." });
   const notices = await queued();
-  expect(notices).toHaveLength(1);
+  expect(notices).toHaveLength(2);
   expect(notices[0].payload).toMatchObject({ type: "account-request.declined", title: "Account request declined: Maria Santos", body: expect.stringContaining("Wrong role"), recipientIds: ["user-9"] });
   await db.exec(`INSERT INTO hrms_account_requests (employee_id,status,work_email,portal_role,access_needed_from,personal_email,requester_id,requester_name)
     VALUES (1,'requested','maria2@brenraphaels.ph','HR Officer','2026-12-01','p@example.test','user-9','Ada Manager')`);
