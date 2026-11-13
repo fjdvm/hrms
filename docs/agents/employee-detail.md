@@ -34,6 +34,14 @@ Order: the row is inserted first (so the database settles a double click or conc
 
 `lib/portal/account-requests.ts` holds the Portal calls. The contract (issue #315) names them but not their paths; the paths used, following the Portal's `/api/integrations/*` pattern, are `GET /api/integrations/account-requests/options` and `POST /api/integrations/account-requests`. Confirm them with the Portal developer; they are constants in that file. Remind and cancel (#342) and the status webhook (#336) are not part of this ticket.
 
+## Request user account dialog (#333)
+
+`components/employees/request-account-dialog.tsx` is the "Request user account" button and dialog on a Not requested Onboarding row (the page renders it only where the read model offers the `request` action, so only Super Admin and HRMS Manager see it). Opening it calls the `loadAccountRequestOptions` server action, which returns the Portal's Roles and Modules per system on demand; if the Portal cannot answer the dialog says so and sends nothing. The server actions are in `app/(hrms)/employee-onboarding/actions.ts` and are thin wrappers over `accountRequestOptions()` and `requestAccount()`.
+
+Per the Figma it shows the employee summary, work email (prefilled `firstname.lastname@brenraphaels.ph`) with the personal-email hint, Role, needs-access-from (prefilled with the start date, with an "already started" note) and a note. Deviation from the Figma, by the parent spec: no Branch access field; a Module checklist grouped by system like the Portal's matrix instead. Picking a Role prefills the checkboxes from its access template and replaces any earlier ticks; they stay editable.
+
+Validation problems and duplicate or taken-email errors from the server are shown inline against their field; a Portal outage shows a dialog-level message and no toast. On success the dialog closes, a toast confirms, and `router.refresh()` re-reads the page so the row reads Requested without a reload (the action also revalidates `/employee-onboarding`). The toast's "View" link in the Figma waits for the request detail panel (not part of this ticket). Test: `tests/request-account-dialog.test.tsx`.
+
 ## Portal status webhook (#336)
 
 `POST /api/portal/account-requests/status` (`app/api/portal/account-requests/status/route.ts`) receives the Portal's progress on an Account request. The contract (issue #315) names the call but not its path; this path is an assumption to confirm with the Portal developer. The Portal authenticates with `Authorization: Bearer <PORTAL_SYSTEM_SECRET>` (`lib/portal/webhook.ts`, constant-time, refused when the secret is unset). Body: `{ reference, status, actor, occurredAt, reason?, message? }`, `status` one of `seen`, `account_created`, `login_sent`, `cancelled`, `declined`; `reason` and `message` are kept only for `declined`.
