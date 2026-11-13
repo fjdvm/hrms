@@ -32,12 +32,11 @@ SMTP acceptance and the recorded Login sent event were checked, not receipt in a
 | Taken email | Requested the already-existing signed-in administrator's email. HRMS showed “That work email is already in use” and the field error; no active request was retained. |
 | Portal outage | A temporary local forwarding proxy returned 503 only for Account request endpoints. The HRMS request dialog showed “HRMS could not reach the Portal. Nothing was sent. Please try again in a moment.” No production Portal outage was induced. |
 | Login email failure recovery | Local SMTP did not confirm delivery for `RQ-0010`–`RQ-0012`. The Users and Account created statuses survived. After the Portal fix, reopening `RQ-0012`'s creation URL redirected to its Created request panel, with Resend login details available, rather than 404. |
-| Resend succeeds | Local env overrides had blank SMTP credentials. Restarted only the test process with the already-configured credentials (no env file edits); Resend for `RQ-0012` succeeded and HRMS recorded Login sent at 18:52 Manila. |
+| Resend succeeds | Local env overrides had blank SMTP credentials. Restarted the test process with configured credentials; Resend for `RQ-0012` succeeded and HRMS recorded Login sent at 18:52 Manila. After Staff saved the local SMTP settings, restarted Portal and resent `RQ-0011` successfully too. `RQ-0010`'s already-open HRMS panel updated Login sent automatically after its resend. |
 
 The synthetic records and request history are retained as evidence. `BR-EMP-0001` and
 `BR-EMP-0008` are Active; Jose and the recovery fixture remain Onboarding with future dates.
-`RQ-0012` reached Login sent after recovery. The other locally created requests retain their
-confirmed delivery state. No credentials
+`RQ-0010`–`RQ-0012` reached Login sent after recovery. No credentials
 were printed or stored in this report. Temporary proxy and browser instrumentation are not app code.
 
 ## Mismatches fixed
