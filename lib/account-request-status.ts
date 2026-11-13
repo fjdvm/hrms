@@ -1,4 +1,5 @@
 import { database, type Database } from "./database";
+import { activateDue } from "./employee-activation";
 
 export const PORTAL_STATUSES = ["seen", "account_created", "login_sent", "cancelled", "declined"] as const;
 export type PortalStatus = (typeof PORTAL_STATUSES)[number];
@@ -92,7 +93,7 @@ SELECT id, $2, $3, $5, $6, $4::timestamptz FROM public.hrms_account_requests WHE
 ON CONFLICT (request_id, status) DO NOTHING`;
 
 /** Applies the Portal's status deliveries. Idempotent and tolerant of out-of-order delivery. */
-export function accountRequestStatusFor(db: Database = database) {
+export function accountRequestStatusFor(db: Database = database, now: () => Date = () => new Date()) {
   return {
     async receive(body: unknown): Promise<void> {
       const d = parseDelivery(body);
@@ -107,6 +108,8 @@ export function accountRequestStatusFor(db: Database = database) {
         return;
       }
       if (found === 0) throw new StatusWebhookError("not-found");
+      // An account that now exists may be all this person was waiting for (#345). If this fails the Portal retries, and the daily job catches up.
+      await activateDue(db, now, d.reference);
     },
   };
 }

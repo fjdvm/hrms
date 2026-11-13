@@ -190,6 +190,11 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     if (!canActInOnboarding(staff.role)) throw new AccountRequestError("denied");
     return staff;
   }
+  /** Why a "No account needed" change did nothing: no such person, or the person is no longer in a state that allows it. */
+  async function explainRefusal(employeeId: number): Promise<never> {
+    const { rows } = await db.query<{ id: number }>(`SELECT id FROM public.hrms_employees WHERE id = $1`, [employeeId]);
+    throw new AccountRequestError(rows[0] ? "conflict" : "not-found");
+  }
   return {
     /** The Portal's Roles (with access-template Modules) and Modules per system, fetched on demand for the Request dialog. */
     async accountRequestOptions() {
@@ -256,6 +261,29 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       }
       await db.query(`INSERT INTO public.hrms_account_request_events (request_id,status,actor_name) VALUES ($1,'requested',$2)`, [created.id, staff.name]);
       return { reference: created.reference, status: "requested" as const };
+    },
+    /**
+     * Marks an Onboarding person "No account needed", logged with who and when by the Employee audit trigger. Only for someone with
+     * no active request. It does not make them Active: that happens by itself on the start date (the daily job), never on a button.
+     */
+    async setNoAccountNeeded(employeeId: number) {
+      const staff = await authoriseActor();
+      if (!validId(employeeId)) throw new AccountRequestError("validation");
+      const { rows } = await db.query<{ id: number }>(`WITH actor AS MATERIALIZED (SELECT set_config('hrms.actor_id',$2,true), set_config('hrms.actor_name',$3,true))
+        UPDATE public.hrms_employees e SET no_account_needed_at = $4::timestamptz, no_account_needed_by = $2 FROM actor
+        WHERE e.id = $1 AND e.status = 'Onboarding' AND e.no_account_needed_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM public.hrms_account_requests q WHERE q.employee_id = e.id AND q.status IN ('requested','seen','account_created','login_sent'))
+        RETURNING e.id`, [employeeId, staff.id ?? staff.username, staff.name, now().toISOString()]);
+      if (!rows[0]) await explainRefusal(employeeId);
+    },
+    /** Undoes "No account needed", logged the same way. Only until the person is Active. */
+    async undoNoAccountNeeded(employeeId: number) {
+      const staff = await authoriseActor();
+      if (!validId(employeeId)) throw new AccountRequestError("validation");
+      const { rows } = await db.query<{ id: number }>(`WITH actor AS MATERIALIZED (SELECT set_config('hrms.actor_id',$2,true), set_config('hrms.actor_name',$3,true))
+        UPDATE public.hrms_employees e SET no_account_needed_at = NULL, no_account_needed_by = NULL FROM actor
+        WHERE e.id = $1 AND e.status = 'Onboarding' AND e.no_account_needed_at IS NOT NULL RETURNING e.id`, [employeeId, staff.id ?? staff.username, staff.name]);
+      if (!rows[0]) await explainRefusal(employeeId);
     },
     /** Onboarding: every Onboarding Employee record with its account state. Active records never appear. Read-only unless the role may act. */
     onboarding: (filters: OnboardingFilters = {}) => readOnboarding(filters),
