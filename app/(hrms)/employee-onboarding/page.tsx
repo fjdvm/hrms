@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Check, UserPlus } from "lucide-react";
+import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CELL, HEAD, InfoNote, PAGE, PageHeader, PersonCell } from "@/components/hiring/parts";
+import { RequestAccountDialog } from "@/components/employees/request-account-dialog";
 import { OnboardingSearch } from "@/components/employees/onboarding-search";
 import { EmployeeError, type OnboardingRow } from "@/lib/employees";
 import { formatOfferDate } from "@/lib/offer-view";
@@ -25,7 +26,7 @@ function Actions({ row }: { row: OnboardingRow }) {
   return (
     <div className="flex flex-wrap justify-end gap-[8px]">
       {has("no-account-needed") && <Button type="button" variant="outline" size="sm" className={BUTTON}>No account needed</Button>}
-      {has("request") && <Button type="button" size="sm" className={BUTTON}><UserPlus aria-hidden />Request user account</Button>}
+      {has("request") && <RequestAccountDialog employee={row} />}
       {(has("remind") || has("cancel")) && <Button type="button" variant="outline" size="sm" className={BUTTON}>View request</Button>}
       {has("undo-no-account-needed") && <Button type="button" variant="outline" size="sm" className={BUTTON}><Check aria-hidden />Undo</Button>}
     </div>
