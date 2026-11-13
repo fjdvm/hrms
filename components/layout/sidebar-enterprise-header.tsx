@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
 import { ChevronsUpDown, Check, X } from "lucide-react";
 import {
   SidebarHeader,
@@ -15,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { BrandLockup } from "@/components/brand/brand-lockup";
 import { systems, type SystemChild } from "./sidebar-nav";
 
 export function SidebarEnterpriseHeader({ isMobile }: { isMobile: boolean }) {
@@ -25,22 +25,8 @@ export function SidebarEnterpriseHeader({ isMobile }: { isMobile: boolean }) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <div className="flex items-center p-1 rounded-xl hover:bg-sidebar-accent cursor-pointer transition-colors group gap-[11px]">
-                <Image
-                  src="/images/bren-raphaels-logo.svg"
-                  alt=""
-                  width={44}
-                  height={44}
-                  unoptimized
-                  className="size-11 shrink-0 rounded-[10px]"
-                />
-                <div className="flex flex-col min-w-0 gap-1.5 pr-1">
-                  <h1 className="text-xl font-bold text-zinc-900 truncate leading-none">
-                    Bren Raphael&apos;s
-                  </h1>
-                  <span className="text-[11px] font-semibold bg-[#f3e8ff] text-[#6d28d9] px-2 py-[3px] rounded-md truncate w-fit inline-block">
-                    Human Resource Mgmt.
-                  </span>
-                </div>
+                <h1 className="sr-only">Bren Raphael&apos;s HRMS</h1>
+                <BrandLockup system="HRMS" className="min-w-0 flex-1" />
                 <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0 group-hover:text-sidebar-foreground transition-colors" />
               </div>
             </DropdownMenuTrigger>

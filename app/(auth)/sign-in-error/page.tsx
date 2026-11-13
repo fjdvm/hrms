@@ -1,3 +1,4 @@
+import { BrandLockup } from "@/components/brand/brand-lockup";
 import { Suspense } from "react";
 import { LOGIN_PATH } from "@/lib/portal/config";
 
@@ -35,7 +36,8 @@ export default function SignInErrorPage({
 }) {
   return (
     <main className="min-h-screen flex items-center justify-center p-md">
-      <div className="max-w-[28rem] space-y-sm text-center">
+      <div className="flex max-w-[28rem] flex-col items-center space-y-sm text-center">
+        <BrandLockup system="Enterprise Suite" className="mb-md" />
         <Suspense fallback={null}>
           <Message searchParams={searchParams} />
         </Suspense>
