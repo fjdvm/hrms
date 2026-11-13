@@ -36,6 +36,8 @@ export type AccountRequestStatus = {
   overdue: boolean;
   /** Whole days since the admin saw the request; null until seen. */
   daysSinceSeen: number | null;
+  /** When the admin was last reminded (ISO), or null; the next reminder is allowed 24 hours later. */
+  lastReminderAt: string | null;
 };
 const toIso = (value: string | Date | null) => (value === null ? null : new Date(value).toISOString());
 const DOMAIN = "brenraphaels.ph";
@@ -199,9 +201,9 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     await authorise("Employee Onboarding");
     if (!validId(employeeId)) throw new EmployeeError("validation");
     const { rows } = await db.query<{ id: number; reference: string; status: string; name: string; employeeNumber: string; startDate: string; workEmail: string;
-      role: string; neededFrom: string; requestedBy: string; requestedAt: string | Date; modules: { name: string; system: string }[] }>(`
+      role: string; neededFrom: string; requestedBy: string; requestedAt: string | Date; lastReminderAt: string | Date | null; modules: { name: string; system: string }[] }>(`
       SELECT q.id, q.reference, q.status, e.full_name AS name, e.employee_number AS "employeeNumber", e.start_date::text AS "startDate", q.work_email AS "workEmail",
-        q.portal_role AS role, q.access_needed_from::text AS "neededFrom", q.requester_name AS "requestedBy", q.created_at AS "requestedAt", q.requested_modules AS modules
+        q.portal_role AS role, q.access_needed_from::text AS "neededFrom", q.requester_name AS "requestedBy", q.created_at AS "requestedAt", q.last_reminder_at AS "lastReminderAt", q.requested_modules AS modules
       FROM public.hrms_account_requests q JOIN public.hrms_employees e ON e.id = q.employee_id
       WHERE q.employee_id = $1 AND q.status IN ('requested','seen','account_created','login_sent')`, [employeeId]);
     const request = rows[0];
@@ -224,7 +226,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       workEmail: request.workEmail, role: request.role, neededFrom: request.neededFrom, requestedBy: request.requestedBy,
       requestedAt: toIso(request.requestedAt)!, startDate: request.startDate,
       modules: [...grouped].map(([system, names]) => ({ system, names })), steps,
-      overdue: request.startDate < today && !steps[2].done, daysSinceSeen };
+      overdue: request.startDate < today && !steps[2].done, daysSinceSeen, lastReminderAt: toIso(request.lastReminderAt) };
   }
   /** Only Super Admin and HRMS Manager act in Onboarding; everyone else holding the Module reads. */
   async function authoriseActor() {
