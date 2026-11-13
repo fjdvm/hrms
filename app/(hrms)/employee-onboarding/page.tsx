@@ -69,6 +69,7 @@ function NewHireTable({ rows, canAct }: { rows: OnboardingRow[]; canAct: boolean
               <div className="flex flex-col items-start gap-[4px]">
                 <Badge variant={BADGE[row.accountState]}>{row.accountState}</Badge>
                 <span className="text-[11px] text-muted-foreground">{accountNote(row)}</span>
+                {canAct && row.declined && <RequestStatusPanel employee={row} history={{ reference: row.declined.reference }} />}
               </div>
             </TableCell>
             <TableCell className={CELL}><Actions row={row} canAct={canAct} /></TableCell>

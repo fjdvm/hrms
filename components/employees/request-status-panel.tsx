@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Check, UserPlus, X } from "lucide-react";
+import { Bell, Check, UserPlus, X, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -10,14 +10,14 @@ import type { AccountRequestStatus, AccountRequestStep, OnboardingRow } from "@/
 import { LIVE_EVENT } from "@/lib/live-events";
 import { formatOfferDate } from "@/lib/offer-view";
 
-const BADGE = { requested: "warning", seen: "warning", account_created: "success", login_sent: "success" } as const;
-const BADGE_LABEL = { requested: "Requested", seen: "Requested", account_created: "Account created", login_sent: "Account created" } as const;
+const BADGE = { requested: "warning", seen: "warning", account_created: "success", login_sent: "success", declined: "destructive" } as const;
+const BADGE_LABEL = { requested: "Requested", seen: "Requested", account_created: "Account created", login_sent: "Account created", declined: "Declined" } as const;
 const manila = (iso: string, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Manila", ...options }).format(new Date(iso));
 /** "12 Nov, 10:02 AM". */
 export const formatStepTime = (iso: string) => `${manila(iso, { day: "numeric", month: "short" })}, ${manila(iso, { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase()}`;
 
 const WAITING: Record<AccountRequestStep["key"], string> = {
-  requested: "", seen: "Waiting for admin", account_created: "Waiting for admin", login_sent: "By email, automatically",
+  requested: "", declined: "", seen: "Waiting for admin", account_created: "Waiting for admin", login_sent: "By email, automatically",
 };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -34,13 +34,13 @@ function Steps({ steps }: { steps: AccountRequestStep[] }) {
   return (
     <ol aria-label="Progress" className="flex flex-col">
       {steps.map((step, index) => {
-        const state = step.done ? "done" : index === current ? "current" : "waiting";
+        const state = step.key === "declined" ? "declined" : step.done ? "done" : index === current ? "current" : "waiting";
         return (
           <li key={step.key} data-state={state} className="flex gap-[12px]">
             <div className="flex flex-col items-center">
               <span aria-hidden className={`flex size-[24px] shrink-0 items-center justify-center rounded-full border-[1.5px] ${
-                state === "done" ? "border-[#16a34a] bg-[#16a34a] text-white" : state === "current" ? "border-[#5b2a86] bg-white" : "border-[#e4e4e7] bg-white"}`}>
-                {state === "done" ? <Check className="size-[12px]" strokeWidth={3} /> : state === "current" ? <span className="size-[8px] rounded-full bg-[#5b2a86]" /> : null}
+                state === "declined" ? "border-[#b91c1c] bg-[#b91c1c] text-white" : state === "done" ? "border-[#16a34a] bg-[#16a34a] text-white" : state === "current" ? "border-[#5b2a86] bg-white" : "border-[#e4e4e7] bg-white"}`}>
+                {state === "declined" ? <X className="size-[12px]" strokeWidth={3} /> : state === "done" ? <Check className="size-[12px]" strokeWidth={3} /> : state === "current" ? <span className="size-[8px] rounded-full bg-[#5b2a86]" /> : null}
               </span>
               {index < steps.length - 1 && <span aria-hidden className={`h-[30px] w-[2px] ${step.done ? "bg-[#16a34a]" : "bg-[#e4e4e7]"}`} />}
             </div>
@@ -71,9 +71,23 @@ function Warning({ status }: { status: AccountRequestStatus }) {
   );
 }
 
+function Declined({ status }: { status: AccountRequestStatus }) {
+  const decline = status.decline!;
+  const first = status.employee.name.split(/s+/u)[0];
+  return (
+    <div role="alert" className="flex flex-col gap-[6px] rounded-lg bg-[#fdecec] px-[12px] py-[10px] text-[13px] text-[#b91c1c]">
+      <p className="flex items-center gap-[8px] font-semibold"><XCircle aria-hidden className="size-[16px] shrink-0" />Declined by {decline.by} · {formatStepTime(decline.at)}</p>
+      <p><span className="font-medium">Reason:</span> {decline.reason ?? "No reason given"}</p>
+      {decline.message && <p className="whitespace-pre-wrap break-words"><span className="font-medium">Message:</span> {decline.message}</p>}
+      <p className="text-[#7f1d1d]">Fix what the administrator asked for, then send {first} a new request from the Onboarding list.</p>
+    </div>
+  );
+}
+
 function Details({ status }: { status: AccountRequestStatus }) {
   return (
     <div className="flex flex-col gap-[18px]">
+      {status.decline && <Declined status={status} />}
       <dl className="flex flex-col gap-[12px]">
         <div className="flex gap-[16px]"><Field label="Employee">{status.employee.name} · {status.employee.employeeNumber}</Field><Field label="Work email">{status.workEmail}</Field></div>
         <div className="flex gap-[16px]"><Field label="Role">{status.role}</Field><Field label="Needs access from">{formatOfferDate(status.neededFrom)}</Field></div>
@@ -96,18 +110,19 @@ function Details({ status }: { status: AccountRequestStatus }) {
 }
 
 /** "View request" on a row with an active request, opening the side panel. It reads on open and again when the live connection pushes a notification. */
-export function RequestStatusPanel({ employee }: { employee: Pick<OnboardingRow, "id" | "name" | "requestReference"> }) {
+export function RequestStatusPanel({ employee, history }: { employee: Pick<OnboardingRow, "id" | "name" | "requestReference">; history?: { reference: string } }) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<AccountRequestStatus>();
   const [error, setError] = useState<string>();
   const latest = useRef(0);
+  const reference = history?.reference;
 
   const load = useCallback(async () => {
     const current = ++latest.current;
-    const result = await loadAccountRequestStatus(employee.id);
+    const result = await (reference ? loadAccountRequestStatus(employee.id, reference) : loadAccountRequestStatus(employee.id));
     if (current !== latest.current) return;
     if (result.ok) { setStatus(result.status); setError(undefined); } else setError(result.error);
-  }, [employee.id]);
+  }, [employee.id, reference]);
 
   useEffect(() => {
     if (!open) return;
@@ -123,7 +138,8 @@ export function RequestStatusPanel({ employee }: { employee: Pick<OnboardingRow,
   return (
     <Sheet open={open} onOpenChange={change}>
       <SheetTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="h-auto rounded-lg px-[12px] py-[6px] text-[13px]">View request</Button>
+        {history ? <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[11px]">View declined request</Button>
+          : <Button type="button" variant="outline" size="sm" className="h-auto rounded-lg px-[12px] py-[6px] text-[13px]">View request</Button>}
       </SheetTrigger>
       <SheetContent side="right" showCloseButton={false} className="flex w-[500px] max-w-[calc(100vw-16px)] flex-col gap-0 p-0 sm:max-w-[500px]">
         <div className="flex items-center gap-[12px] border-b border-[#ebebeb] pb-[16px] pl-[24px] pr-[20px] pt-[20px]">
