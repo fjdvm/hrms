@@ -24,10 +24,17 @@ export async function deliverStaffNotifications(db: Database = database): Promis
     const audiences = new Map<string, Promise<string[] | null>>();
     for (const row of rows) {
       try {
-        const audienceOf = audienceModule(row.payload);
-        if (!audienceOf) throw new Error("Unknown notification type");
-        if (!audiences.has(audienceOf)) audiences.set(audienceOf, listModuleHolders(audienceOf));
-        const audience = await audiences.get(audienceOf);
+        // A notification for one person names them (`recipientIds`); the rest go to the holders of their area's Module.
+        const { recipientIds, ...message } = row.payload;
+        const named = Array.isArray(recipientIds) && recipientIds.length > 0 && recipientIds.every((id) => typeof id === "string") ? (recipientIds as string[]) : null;
+        let audience: string[] | null;
+        if (named) audience = named;
+        else {
+          const audienceOf = audienceModule(row.payload);
+          if (!audienceOf) throw new Error("Unknown notification type");
+          if (!audiences.has(audienceOf)) audiences.set(audienceOf, listModuleHolders(audienceOf));
+          audience = (await audiences.get(audienceOf)) ?? null;
+        }
         if (!audience) throw new Error("Recipients unavailable");
         if (audience.length > 0) {
           const url = process.env.API_GATEWAY_URL;
@@ -36,7 +43,7 @@ export async function deliverStaffNotifications(db: Database = database): Promis
           const response = await fetch(`${url.replace(/\/$/, "")}/notifications/notifications`, {
             method: "POST",
             headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "idempotency-key": row.id },
-            body: JSON.stringify({ ...row.payload, sendingApp: notificationsApp(), targetApp: notificationsApp(), userIds: audience, idempotencyKey: row.id }),
+            body: JSON.stringify({ ...message, sendingApp: notificationsApp(), targetApp: notificationsApp(), userIds: audience, idempotencyKey: row.id }),
             cache: "no-store",
             signal: AbortSignal.timeout(5000),
           });
