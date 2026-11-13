@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { CELL, HEAD, InfoNote, PAGE, PageHeader, PersonCell } from "@/components/hiring/parts";
 import { RequestAccountDialog } from "@/components/employees/request-account-dialog";
 import { OnboardingSearch } from "@/components/employees/onboarding-search";
+import { OnboardingLiveRefresh } from "@/components/employees/onboarding-live-refresh";
+import { RequestStatusPanel } from "@/components/employees/request-status-panel";
 import { EmployeeError, type OnboardingRow } from "@/lib/employees";
 import { formatOfferDate } from "@/lib/offer-view";
 import { ONBOARDING_TABS, accountNote, formatOnboardingSubtitle, onboardingFiltersOf, onboardingHref, onboardingSearchFromParam, onboardingTabFromParam, type OnboardingTab } from "@/lib/onboarding-view";
@@ -21,13 +23,13 @@ const BADGE = { "Not requested": "secondary", Requested: "warning", "Account cre
 const BUTTON = "h-auto rounded-lg px-[12px] py-[6px] text-[13px]";
 
 /** Buttons are rendered where the read model offers the action; they are wired in later slices. */
-function Actions({ row }: { row: OnboardingRow }) {
+function Actions({ row, canAct }: { row: OnboardingRow; canAct: boolean }) {
   const has = (action: OnboardingRow["actions"][number]) => row.actions.includes(action);
   return (
     <div className="flex flex-wrap justify-end gap-[8px]">
       {has("no-account-needed") && <Button type="button" variant="outline" size="sm" className={BUTTON}>No account needed</Button>}
       {has("request") && <RequestAccountDialog employee={row} />}
-      {(has("remind") || has("cancel")) && <Button type="button" variant="outline" size="sm" className={BUTTON}>View request</Button>}
+      {canAct && row.requestReference && (row.accountState === "Requested" || row.accountState === "Account created") && <RequestStatusPanel employee={row} />}
       {has("undo-no-account-needed") && <Button type="button" variant="outline" size="sm" className={BUTTON}><Check aria-hidden />Undo</Button>}
     </div>
   );
@@ -48,7 +50,7 @@ function NewHireTable({ rows, canAct }: { rows: OnboardingRow[]; canAct: boolean
       </TableHeader>
       <TableBody>
         {rows.map((row) => (
-          <TableRow key={row.id} className="border-border-subtle">
+          <TableRow key={row.id} id={`employee-${row.id}`} className="scroll-mt-[80px] border-border-subtle target:bg-accent">
             <TableCell className={CELL}><PersonCell name={row.name} subtitle={row.employeeNumber} /></TableCell>
             <TableCell className={CELL}>
               <div className="flex flex-col gap-[2px]">
@@ -69,7 +71,7 @@ function NewHireTable({ rows, canAct }: { rows: OnboardingRow[]; canAct: boolean
                 <span className="text-[11px] text-muted-foreground">{accountNote(row)}</span>
               </div>
             </TableCell>
-            <TableCell className={CELL}><Actions row={row} /></TableCell>
+            <TableCell className={CELL}><Actions row={row} canAct={canAct} /></TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -106,6 +108,7 @@ async function Listing({ tab, search }: { tab: OnboardingTab; search?: string })
   const filtered = tab !== "All" || search !== undefined;
   return (
     <>
+      <OnboardingLiveRefresh />
       <PageHeader title={TITLE} subtitle={formatOnboardingSubtitle({ hires: counts.all, needsAccount: summary.needsAccount })} />
       <div className="grid gap-[16px] sm:grid-cols-3">
         <SummaryCard label="Needs account" value={summary.needsAccount} tone="text-[#8a5a00]" />
@@ -133,7 +136,7 @@ async function Listing({ tab, search }: { tab: OnboardingTab; search?: string })
           <NewHireTable rows={rows} canAct={canAct} />
         )}
         <InfoNote>
-          “Request user account” sends the new hire’s details to the admin portal. The admin creates the account and the login details are emailed to the employee.
+          “Request user account” sends the new hire’s details to the admin portal. The admin creates the account and the login details are emailed to the employee. The status here updates automatically.
           Once their account exists (or no account is needed) and their start date has arrived, they become Active on their own.
         </InfoNote>
       </Card>

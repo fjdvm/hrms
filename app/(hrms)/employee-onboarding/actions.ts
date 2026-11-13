@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { AccountRequestError } from "@/lib/account-requests";
-import { EmployeeError } from "@/lib/employees";
+import { EmployeeError, type AccountRequestStatus } from "@/lib/employees";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import type { AccountRequestOptions } from "@/lib/portal/account-requests";
 import { employeesForRequest } from "@/lib/portal/employees";
@@ -48,5 +48,21 @@ export async function sendAccountRequest(employeeId: number, input: { workEmail:
   } catch (error) {
     const { reason, problems } = refusal(error);
     return { ok: false, error: MESSAGES[reason], problems };
+  }
+}
+
+export type StatusResult = { ok: true; status: AccountRequestStatus } | { ok: false; error: string };
+
+/** The status panel's data, read when the panel opens and again on a live update or the user's refresh. */
+export async function loadAccountRequestStatus(employeeId: number): Promise<StatusResult> {
+  try {
+    return { ok: true, status: await (await employeesForRequest()).accountRequestStatus(employeeId) };
+  } catch (error) {
+    if (error instanceof EmployeeError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+      return { ok: false, error: error.reason === "not-found" ? "This person has no active account request." : "The request could not be loaded. Please try again in a moment." };
+    }
+    throw error;
   }
 }

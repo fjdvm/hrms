@@ -25,6 +25,17 @@ export type OnboardingRow = {
   /** When the active request was sent (ISO), and when and by whom the Portal account was created; null until known. */
   requestedAt: string | null; accountCreatedAt: string | null; accountCreatedBy: string | null;
 };
+export type RequestStepKey = "requested" | "seen" | "account_created" | "login_sent";
+export type AccountRequestStep = { key: RequestStepKey; label: string; done: boolean; at: string | null; actor: string | null };
+export type AccountRequestStatus = {
+  reference: string; status: string; employee: { name: string; employeeNumber: string }; workEmail: string; role: string;
+  neededFrom: string; requestedBy: string; requestedAt: string; startDate: string;
+  modules: { system: string; names: string[] }[]; steps: AccountRequestStep[];
+  /** The start date has passed (Manila) and the account has not been created. */
+  overdue: boolean;
+  /** Whole days since the admin saw the request; null until seen. */
+  daysSinceSeen: number | null;
+};
 const toIso = (value: string | Date | null) => (value === null ? null : new Date(value).toISOString());
 const DOMAIN = "brenraphaels.ph";
 const emailPart = (word: string) => word.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -182,6 +193,38 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       canAct: acting,
     };
   }
+  /** The active request's details and progress for the status panel. Read-only, so any holder of the Module may read it. */
+  async function readAccountRequestStatus(employeeId: number): Promise<AccountRequestStatus> {
+    await authorise("Employee Onboarding");
+    if (!validId(employeeId)) throw new EmployeeError("validation");
+    const { rows } = await db.query<{ id: number; reference: string; status: string; name: string; employeeNumber: string; startDate: string; workEmail: string;
+      role: string; neededFrom: string; requestedBy: string; requestedAt: string | Date; modules: { name: string; system: string }[] }>(`
+      SELECT q.id, q.reference, q.status, e.full_name AS name, e.employee_number AS "employeeNumber", e.start_date::text AS "startDate", q.work_email AS "workEmail",
+        q.portal_role AS role, q.access_needed_from::text AS "neededFrom", q.requester_name AS "requestedBy", q.created_at AS "requestedAt", q.requested_modules AS modules
+      FROM public.hrms_account_requests q JOIN public.hrms_employees e ON e.id = q.employee_id
+      WHERE q.employee_id = $1 AND q.status IN ('requested','seen','account_created','login_sent')`, [employeeId]);
+    const request = rows[0];
+    if (!request) throw new EmployeeError("not-found");
+    const { rows: events } = await db.query<{ status: string; actor: string; at: string | Date }>(
+      `SELECT status, actor_name AS actor, occurred_at AS at FROM public.hrms_account_request_events WHERE request_id = $1`, [request.id]);
+    const first = request.name.split(/\s+/u)[0];
+    const labels: [RequestStepKey, string][] = [["requested", "Sent to admin portal"], ["seen", "Seen by admin"], ["account_created", "Account created"], ["login_sent", `Login details sent to ${first}`]];
+    const steps = labels.map(([key, label]): AccountRequestStep => {
+      const event = events.find(e => e.status === key);
+      return { key, label, done: !!event, at: event ? toIso(event.at) : null, actor: event?.actor ?? null };
+    });
+    const manila = (date: Date) => date.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+    const today = manila(now());
+    const seen = steps[1].at;
+    const daysSinceSeen = seen ? Math.max(0, Math.round((Date.parse(today) - Date.parse(manila(new Date(seen)))) / 86_400_000)) : null;
+    const grouped = new Map<string, string[]>();
+    for (const item of request.modules) grouped.set(item.system, [...(grouped.get(item.system) ?? []), item.name]);
+    return { reference: request.reference, status: request.status, employee: { name: request.name, employeeNumber: request.employeeNumber },
+      workEmail: request.workEmail, role: request.role, neededFrom: request.neededFrom, requestedBy: request.requestedBy,
+      requestedAt: toIso(request.requestedAt)!, startDate: request.startDate,
+      modules: [...grouped].map(([system, names]) => ({ system, names })), steps,
+      overdue: request.startDate < today && !steps[2].done, daysSinceSeen };
+  }
   /** Only Super Admin and HRMS Manager act in Onboarding; everyone else holding the Module reads. */
   async function authoriseActor() {
     let staff;
@@ -257,6 +300,8 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       await db.query(`INSERT INTO public.hrms_account_request_events (request_id,status,actor_name) VALUES ($1,'requested',$2)`, [created.id, staff.name]);
       return { reference: created.reference, status: "requested" as const };
     },
+    /** The status panel's read: request details, who sent it, and each progress step with time and actor. */
+    accountRequestStatus: (employeeId: number) => readAccountRequestStatus(employeeId),
     /** Onboarding: every Onboarding Employee record with its account state. Active records never appear. Read-only unless the role may act. */
     onboarding: (filters: OnboardingFilters = {}) => readOnboarding(filters),
     /** The Employee list: rows, tab counts, summary and Branch options. Never includes government IDs or pay. */
