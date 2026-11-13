@@ -1,5 +1,7 @@
 # Training and Development: Figma brief
 
+**Version 2026-11-13.** If you receive a copy with an older date, ask for the latest. Any change to the decisions below comes back through the product owner and bumps this date.
+
 For the developer who owns the main Figma file. Design only the Training and Development Module as NEW frames. Do not edit or restyle existing frames. Another person designs Performance Management; do not build Performance screens.
 
 - Figma file: `76nS6Pw2TXA6fWfUvTmzJ1`, page **HRMS** (`244:2817`)
