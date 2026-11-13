@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LIVE_EVENT } from "@/lib/live-events";
 import type { Inbox, StaffNotification } from "@/lib/notifications/notifications";
 
 const MAX_BADGE = 99;
@@ -83,6 +84,7 @@ function useInbox() {
             if (event.type === "notification.created" || event.type === "notifications.read") {
               failures = 0;
               void sync();
+              if (event.type === "notification.created") window.dispatchEvent(new Event(LIVE_EVENT));
             }
           } catch { /* Ignore unknown frames. */ }
         };

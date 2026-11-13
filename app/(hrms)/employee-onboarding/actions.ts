@@ -51,3 +51,35 @@ export async function sendAccountRequest(employeeId: number, input: { workEmail:
     return { ok: false, error: MESSAGES[reason], problems };
   }
 }
+
+export type NoAccountResult = { ok: true } | { ok: false; error: string };
+
+const NO_ACCOUNT_MESSAGES: Record<AccountRequestError["reason"], string> = {
+  ...MESSAGES,
+  conflict: "This person's account state has changed, or they are already Active. The list has been refreshed.",
+  "not-found": "That Employee record no longer exists.",
+};
+
+async function changeNoAccountNeeded(employeeId: number, change: "set" | "undo"): Promise<NoAccountResult> {
+  try {
+    const employees = await employeesForRequest();
+    if (change === "set") await employees.setNoAccountNeeded(employeeId);
+    else await employees.undoNoAccountNeeded(employeeId);
+    revalidatePath("/employee-onboarding");
+    return { ok: true };
+  } catch (error) {
+    const { reason } = refusal(error);
+    // The person's state moved on (Active, or a request was sent): show the current list rather than a stale row.
+    if (reason === "conflict" || reason === "not-found") revalidatePath("/employee-onboarding");
+    return { ok: false, error: NO_ACCOUNT_MESSAGES[reason] };
+  }
+}
+
+/** Marks an Onboarding person "No account needed" (Super Admin and HRMS Manager only, enforced by the employees module). */
+export async function markNoAccountNeeded(employeeId: number): Promise<NoAccountResult> {
+  return changeNoAccountNeeded(employeeId, "set");
+}
+/** Undoes "No account needed" until the person is Active. */
+export async function undoNoAccountNeeded(employeeId: number): Promise<NoAccountResult> {
+  return changeNoAccountNeeded(employeeId, "undo");
+}
