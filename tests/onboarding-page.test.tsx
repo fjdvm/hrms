@@ -55,6 +55,9 @@ it("describes each account state: not requested, requested with sent date, creat
   expect(page).toContain("View request");
   expect(page).toContain("Created 5 Nov by Admin");
   expect(page).toContain("Becomes Active on 1 Dec 2026");
+  // an account that exists, waiting only for the start date, has no button at all
+  const paolo = page.slice(page.indexOf("Paolo Garcia"));
+  expect(paolo.slice(0, paolo.indexOf("</tr>"))).not.toContain("<button");
 });
 
 it("is read-only for holders without an acting role: no action buttons", async () => {
@@ -88,4 +91,15 @@ it("shows an alert, not a crash, when the new hires cannot load", async () => {
   const page = await html();
   expect(page).toContain("The new hires could not be loaded");
   expect(page).toContain('role="alert"');
+});
+
+it("offers No account needed beside Request user account, and Undo once marked, with its tab count", async () => {
+  state.onboarding.mockResolvedValue({ ...listing([row({}), row({ id: 6, employeeNumber: "BR-EMP-0054", name: "Mario Cruz", accountState: "No account needed", actions: ["undo-no-account-needed"] })]),
+    counts: { all: 2, needsAccount: 1, requested: 0, accountCreated: 0, noAccountNeeded: 1 } });
+  const page = await html();
+  expect(page).toContain(">No account needed 1<");
+  expect(page).toContain("/employee-onboarding?status=no-account-needed");
+  expect(page.indexOf(">No account needed</button>")).toBeLessThan(page.indexOf("Request user account"));
+  expect(page).toContain("Undo");
+  expect(page).toContain("No login required");
 });
