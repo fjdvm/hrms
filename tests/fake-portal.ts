@@ -43,6 +43,15 @@ export class FakePortal {
   receivedRequests: Record<string, unknown>[] = [];
   /** Answers every Account request with this non-2xx status instead of accepting it. */
   accountRequestStatus: number | null = null;
+  /** Answers every remind and cancel with this non-2xx status instead of accepting it. */
+  actionStatus: number | null = null;
+  /** References the Portal was reminded about, and asked to cancel. */
+  reminders: string[] = [];
+  cancellations: string[] = [];
+  /** The Portal's own status for a reference (default requested). Anything but requested or seen makes remind and cancel answer 409 with it. */
+  requestStates: Record<string, string> = {};
+  /** Runs inside a remind or cancel before the Portal answers: where a test lets "an admin act at the same moment". */
+  beforeAction: ((reference: string, action: "remind" | "cancel") => Promise<void>) | null = null;
 
   /** Signs a Staff member in and returns their opaque session handle. */
   signIn(staff: Staff, modules: string[]): string {
@@ -107,6 +116,8 @@ export class FakePortal {
     if (this.unavailable) return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
     if (path.endsWith("/options")) return request.method === "GET" ? Response.json(this.accountRequestOptions) : new Response("method not allowed", { status: 405 });
     if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
+    const action = /^\/api\/integrations\/account-requests\/(RQ-\d+)\/(remind|cancel)$/.exec(path);
+    if (action) return this.accountRequestAction(action[1], action[2] as "remind" | "cancel");
     return request.json().then((body: { reference: string; employee: { workEmail: string } }) => {
       if (this.accountRequestStatus) return Response.json({ error: "failed" }, { status: this.accountRequestStatus });
       // Idempotent on reference: a repeat is accepted and not stored twice.
@@ -117,6 +128,20 @@ export class FakePortal {
       this.receivedRequests.push(body);
       return Response.json({ reference: body.reference });
     });
+  }
+
+  private async accountRequestAction(reference: string, action: "remind" | "cancel"): Promise<Response> {
+    if (this.actionStatus) return Response.json({ error: "failed" }, { status: this.actionStatus });
+    if (!this.receivedRequests.some((r) => r.reference === reference)) return Response.json({ error: "unknown_reference" }, { status: 404 });
+    await this.beforeAction?.(reference, action);
+    const status = this.requestStates[reference] ?? "requested";
+    if (status !== "requested" && status !== "seen") return Response.json({ status }, { status: 409 });
+    if (action === "remind") this.reminders.push(reference);
+    else {
+      this.cancellations.push(reference);
+      this.requestStates[reference] = "cancelled";
+    }
+    return Response.json({ reference });
   }
 
   private authorize(url: URL): Response {

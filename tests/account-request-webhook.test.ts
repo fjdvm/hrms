@@ -37,7 +37,8 @@ beforeEach(async () => {
   await db.exec(`INSERT INTO hrms_offers (application_id,monthly_salary,start_date,employment_type,schedule,probation,reports_to,branch,created_by_name)
     VALUES (-1,19000,'2026-12-01','Full-time','Mon-Fri','6 months','Liza','Cainta','Ada');
     INSERT INTO hrms_employees (employee_number,offer_id,application_id,full_name,email,position,branch,start_date,monthly_salary,employment_type,schedule,probation,reports_to,hired_by_name)
-    VALUES ('BR-EMP-0001',1,-1,'Maria Santos','maria.personal@example.test','Cashier','Cainta','2026-12-01',19000,'Full-time','Mon-Fri','6 months','Liza','Ada');
+    -- A far start date keeps these tests about the webhook alone: the Active rule (#345) has its own tests.
+    VALUES ('BR-EMP-0001',1,-1,'Maria Santos','maria.personal@example.test','Cashier','Cainta','2099-12-01',19000,'Full-time','Mon-Fri','6 months','Liza','Ada');
     INSERT INTO hrms_account_requests (employee_id,status,work_email,portal_role,access_needed_from,personal_email,requester_id,requester_name)
     VALUES (1,'requested','maria@brenraphaels.ph','HR Officer','2026-12-01','maria.personal@example.test','user-9','Ada Manager');
     INSERT INTO hrms_account_request_events (request_id,status,actor_name) VALUES (1,'requested','Ada Manager')`);

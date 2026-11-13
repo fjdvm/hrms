@@ -1,3 +1,4 @@
 {
-  "crons": [{ "path": "/api/cron/job-postings", "schedule": "0 0 * * *" }]
+  "crons": [{ "path": "/api/cron/job-postings", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/employee-activation", "schedule": "30 16 * * *" }]
 }

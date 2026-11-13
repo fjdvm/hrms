@@ -16,6 +16,7 @@ const MESSAGES: Record<AccountRequestError["reason"], string> = {
   validation: "Check the highlighted fields and try again.",
   "email-taken": "That work email is already in use.",
   conflict: "This person already has an active account request, or is no longer onboarding.",
+  "too-soon": "A reminder was already sent in the last 24 hours.",
   "not-found": "That Employee record no longer exists.",
   unavailable: "HRMS could not reach the Portal. Nothing was sent. Please try again in a moment.",
   denied: "", invalid: "",
