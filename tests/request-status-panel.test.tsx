@@ -3,8 +3,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const mocks = vi.hoisted(() => ({ load: vi.fn() }));
-vi.mock("@/app/(hrms)/employee-onboarding/actions", () => ({ loadAccountRequestStatus: mocks.load }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), remind: vi.fn(), cancel: vi.fn(), refresh: vi.fn(), success: vi.fn() }));
+vi.mock("@/app/(hrms)/employee-onboarding/actions", () => ({ loadAccountRequestStatus: mocks.load, remindAdmin: mocks.remind, cancelRequest: mocks.cancel }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
+vi.mock("sonner", () => ({ toast: { success: mocks.success } }));
 
 import { RequestStatusPanel } from "@/components/employees/request-status-panel";
 import { LIVE_EVENT } from "@/lib/live-events";
@@ -20,7 +22,7 @@ const base = {
     { key: "account_created", label: "Account created", done: false, at: null, actor: null },
     { key: "login_sent", label: "Login details sent to Rafael", done: false, at: null, actor: null },
   ],
-  overdue: true, daysSinceSeen: 1,
+  overdue: true, daysSinceSeen: 1, lastReminderAt: null,
 };
 const status = (over: Record<string, unknown> = {}) => ({ ...base, ...over });
 
@@ -87,4 +89,97 @@ it("says so when the request cannot be loaded", async () => {
   render(<RequestStatusPanel employee={employee} />);
   await userEvent.click(screen.getByRole("button", { name: "View request" }));
   expect((await screen.findByRole("alert")).textContent).toContain("could not be loaded");
+});
+
+const createdSteps = base.steps.map((s) => (s.key === "account_created" ? { ...s, done: true, at: "2026-11-13T01:00:00Z", actor: "IT Admin" } : s));
+
+it("offers Remind admin and Cancel request while the request is Requested or Seen, and neither once the account exists", async () => {
+  await open();
+  expect(screen.getByRole("button", { name: "Remind admin" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Cancel request" })).toBeTruthy();
+  cleanup();
+  mocks.load.mockResolvedValue({ ok: true, status: status({ status: "requested" }) });
+  await open();
+  expect(screen.getByRole("button", { name: "Remind admin" })).toBeTruthy();
+  cleanup();
+  for (const done of ["account_created", "login_sent"]) {
+    mocks.load.mockResolvedValue({ ok: true, status: status({ status: done, steps: createdSteps, overdue: false }) });
+    await open();
+    expect(screen.queryByRole("button", { name: "Remind admin" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel request" })).toBeNull();
+    cleanup();
+  }
+});
+
+it("removes both actions when a live update brings the account", async () => {
+  await open();
+  mocks.load.mockResolvedValue({ ok: true, status: status({ status: "account_created", steps: createdSteps, overdue: false }) });
+  await act(async () => { window.dispatchEvent(new Event(LIVE_EVENT)); });
+  await screen.findByText(/13 Nov, 9:00 AM · IT Admin/);
+  expect(screen.queryByRole("button", { name: "Remind admin" })).toBeNull();
+});
+
+it("reminds the admin, confirms, then says when the next reminder is allowed and waits", async () => {
+  mocks.remind.mockResolvedValue({ ok: true, remindedAt: new Date(Date.now() - 1000).toISOString() });
+  await open();
+  expect(screen.queryByText(/Reminder sent/)).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Remind admin" }));
+  expect(mocks.remind).toHaveBeenCalledWith("RQ-0033");
+  expect(await screen.findByText(/Reminder sent .*You can remind the admin again after /)).toBeTruthy();
+  expect(mocks.success).toHaveBeenCalledWith("Reminder sent to the admin");
+  expect((screen.getByRole("button", { name: "Remind admin" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("shows the last reminder on open, waiting inside 24 hours and allowed again after", async () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+  mocks.load.mockResolvedValue({ ok: true, status: status({ lastReminderAt: hoursAgo(2) }) });
+  await open();
+  expect(screen.getByText(/You can remind the admin again after /)).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Remind admin" }) as HTMLButtonElement).disabled).toBe(true);
+  cleanup();
+  mocks.load.mockResolvedValue({ ok: true, status: status({ lastReminderAt: hoursAgo(25) }) });
+  await open();
+  expect(screen.queryByText(/You can remind the admin again/)).toBeNull();
+  expect((screen.getByRole("button", { name: "Remind admin" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("a reminder refused as too soon shows the reason and when the next is allowed", async () => {
+  mocks.remind.mockResolvedValue({ ok: false, error: "The admin was reminded recently.", retryAt: new Date(Date.now() + 3600_000).toISOString() });
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Remind admin" }));
+  expect((await screen.findByText("The admin was reminded recently.")).getAttribute("role")).toBe("alert");
+  expect(screen.getByText(/You can remind the admin again after /)).toBeTruthy();
+  expect(mocks.success).not.toHaveBeenCalled();
+});
+
+it("asks before cancelling and sends nothing on Keep request", async () => {
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+  expect(screen.getByText("Cancel the account request for Rafael Santiago?")).toBeTruthy();
+  expect(screen.getByText(/withdraw RQ-0033, and Rafael goes back to Not requested/)).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Keep request" }));
+  expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(screen.queryByText("Cancel the account request for Rafael Santiago?")).toBeNull();
+});
+
+it("cancels on confirm: toasts, closes the panel and re-reads the list so the row is Not requested", async () => {
+  mocks.cancel.mockResolvedValue({ ok: true });
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+  await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel request" }));
+  expect(mocks.cancel).toHaveBeenCalledWith("RQ-0033");
+  await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+  expect(mocks.success).toHaveBeenCalledWith("Account request for Rafael Santiago cancelled");
+  expect(screen.queryByText("User account request")).toBeNull();
+});
+
+it("a cancel refused because the account just appeared says so and re-reads the request", async () => {
+  mocks.cancel.mockResolvedValue({ ok: false, error: "The account has just been created, so this request can no longer be changed.", status: "account_created" });
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+  mocks.load.mockResolvedValue({ ok: true, status: status({ status: "account_created", steps: createdSteps, overdue: false }) });
+  await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel request" }));
+  expect((await screen.findByText(/account has just been created/)).getAttribute("role")).toBe("alert");
+  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Remind admin" })).toBeNull());
+  expect(mocks.refresh).not.toHaveBeenCalled();
 });

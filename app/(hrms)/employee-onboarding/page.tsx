@@ -20,7 +20,6 @@ import { OnboardingSkeleton } from "./onboarding-skeleton";
 
 const TITLE = "Onboarding";
 const BADGE = { "Not requested": "secondary", Requested: "warning", "Account created": "success", "No account needed": "secondary" } as const;
-const BUTTON = "h-auto rounded-lg px-[12px] py-[6px] text-[13px]";
 
 /** Buttons are rendered where the read model offers the action. "View request" opens the status panel. */
 function Actions({ row, canAct }: { row: OnboardingRow; canAct: boolean }) {
