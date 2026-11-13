@@ -52,6 +52,18 @@ Answers: `200` for any valid delivery (including a repeat or out-of-order one, s
 
 Notifications: the requester is told once when the account is created, and once when the request is declined (with the reason), through `hrms_staff_notifications` and the existing gateway, so the live connection delivers them. A notification can name its recipients (`recipientIds` in the payload, removed before sending); the rest keep going to the holders of their area's Module. Not here: the Active rule (#345), remind and cancel (#342).
 
+## Remind admin and cancel (#342)
+
+`employeesFor(...).remindAccountRequest(reference)` and `.cancelAccountRequest(reference)` act on one Account request by its `RQ-####` reference. Both validate the `Employee Onboarding` Module, then require Super Admin or HRMS Manager (a refusal happens before the Portal is called), then require the request to be Requested or Seen. Once the account exists, or the request is cancelled or declined, they throw `AccountRequestError("conflict")` with `detail.status` set to the current status.
+
+**Remind** is allowed once per 24 hours per request (a reminder exactly 24 hours after the last one is allowed). The allowance is claimed in the database (`last_reminder_at`) before the Portal is called, so a double click sends one reminder; a second within the window throws `too-soon` with `detail.retryAt`. If the Portal cannot be told, the allowance is given back and the caller gets `unavailable`. A successful reminder is recorded as a `reminded` event (actor and time). Migration 0033 makes `reminded` the one event status that may repeat; the six contract statuses keep "one event per request and status", so the webhook's `ON CONFLICT` now names that partial index.
+
+**Cancel** tells the Portal first. If the Portal cannot be reached, nothing changes and the caller gets `unavailable`. On success HRMS records one `cancelled` event with the Staff member as actor, through the same rules as the Portal's own webhook, so the Portal's later echo changes nothing. The caller can then send a new request (new reference).
+
+**Races resolve to the Portal's answer.** The contract gives remind and cancel `409 { status }` when the account already exists. HRMS then takes the status the Portal reports (an `account_created` event with actor "Portal", and the requester's notification if it is the first time), gives back the reminder, and throws `conflict` with that status. If an admin's webhook lands between HRMS's check and its own cancel being recorded, an account that exists wins and the cancel is refused the same way.
+
+The Portal calls are in `lib/portal/account-requests.ts`: `POST /api/integrations/account-requests/<reference>/remind` and `.../cancel`. The contract names the calls but not their paths; these follow the existing paths from #332 and are an assumption to confirm with the Portal developer. The buttons are #344; the Portal's receiving side is #343.
+
 ## Automatic Active and "No account needed" (#345)
 
 A person becomes Active by themselves, never on a button: when they are still Onboarding, their start date (a Manila date) is today or earlier (the start date itself counts), and either their active request is `account_created` or `login_sent`, or "No account needed" is set. `lib/employee-activation.ts` holds the rule as one SQL statement (`activateDue(db, now, reference?)`): it switches the status, which the Employee audit trigger logs as a `status` change by "System", and queues one `employee.active` notification (id `employee.active:<employeeId>`, so it can never be sent twice) to the requester, or, with no request, to whoever set "No account needed". Running it again finds nothing to do.

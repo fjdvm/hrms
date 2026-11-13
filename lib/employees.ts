@@ -4,7 +4,8 @@ import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 import { DOCUMENT_COUNT, PRE_EMPLOYMENT_DOCUMENTS } from "./offer-documents";
 import { AccountRequestError, validateAccountRequest } from "./account-requests";
-import { fetchAccountRequestOptions, sendAccountRequest } from "./portal/account-requests";
+import { accountRequestStatusFor, PORTAL_STATUSES, type PortalStatus } from "./account-request-status";
+import { cancelAccountRequest, fetchAccountRequestOptions, remindAccountRequest, sendAccountRequest } from "./portal/account-requests";
 import { gatewayDocumentFiles, type DocumentFiles } from "./document-files";
 
 export const EMPTY_EMPLOYEE_SECTION = "Not provided yet";
@@ -195,7 +196,70 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
     const { rows } = await db.query<{ id: number }>(`SELECT id FROM public.hrms_employees WHERE id = $1`, [employeeId]);
     throw new AccountRequestError(rows[0] ? "conflict" : "not-found");
   }
+  const REMIND_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  type OpenRequest = { id: number; status: string; lastReminderAt: Date | null };
+  /** Remind and cancel apply to one request by its reference, only while it is Requested or Seen. */
+  async function openRequest(reference: unknown): Promise<OpenRequest> {
+    if (typeof reference !== "string" || !/^RQ-\d{4,9}$/.test(reference)) throw new AccountRequestError("validation");
+    const { rows } = await db.query<OpenRequest>(`SELECT id, status, last_reminder_at AS "lastReminderAt" FROM public.hrms_account_requests WHERE reference = $1`, [reference]);
+    if (!rows[0]) throw new AccountRequestError("not-found");
+    if (!["requested", "seen"].includes(rows[0].status)) throw new AccountRequestError("conflict", {}, { status: rows[0].status });
+    return rows[0];
+  }
+  /** The Portal said the request is no longer open: its answer wins, so HRMS takes the status it reports and tells the caller. */
+  async function portalWins(reference: string, said: string): Promise<never> {
+    const status = PORTAL_STATUSES.find((s): s is PortalStatus => s === said);
+    if (status) await accountRequestStatusFor(db, now).receive({ reference, status, actor: "Portal", occurredAt: now().toISOString() }).catch(() => {});
+    const { rows } = await db.query<{ status: string }>(`SELECT status FROM public.hrms_account_requests WHERE reference = $1`, [reference]);
+    throw new AccountRequestError("conflict", {}, { status: rows[0]?.status ?? said });
+  }
   return {
+    /**
+     * Nudges the Portal's administrators about an open request. Allowed only while Requested or Seen, once per 24 hours per request.
+     * The allowance is claimed in the database before the Portal is called, so a double click sends one reminder, and it is given back
+     * if the Portal could not be told.
+     */
+    async remindAccountRequest(reference: string) {
+      const staff = await authoriseActor();
+      const request = await openRequest(reference);
+      const at = now();
+      const earliest = new Date(at.getTime() - REMIND_INTERVAL_MS);
+      const { rows: claimed } = await db.query<{ id: number }>(`UPDATE public.hrms_account_requests SET last_reminder_at = $2
+        WHERE reference = $1 AND status IN ('requested','seen') AND (last_reminder_at IS NULL OR last_reminder_at <= $3) RETURNING id`, [reference, at.toISOString(), earliest.toISOString()]);
+      if (!claimed[0]) {
+        const { rows } = await db.query<{ status: string; lastReminderAt: Date | null }>(`SELECT status, last_reminder_at AS "lastReminderAt" FROM public.hrms_account_requests WHERE reference = $1`, [reference]);
+        if (!["requested", "seen"].includes(rows[0].status)) throw new AccountRequestError("conflict", {}, { status: rows[0].status });
+        throw new AccountRequestError("too-soon", {}, { retryAt: new Date(new Date(rows[0].lastReminderAt ?? request.lastReminderAt ?? at).getTime() + REMIND_INTERVAL_MS).toISOString() });
+      }
+      const sent = await remindAccountRequest(reference).catch((): { ok: false; reason: "unavailable" } => ({ ok: false, reason: "unavailable" }));
+      if (!sent.ok) {
+        await db.query(`UPDATE public.hrms_account_requests SET last_reminder_at = $2 WHERE reference = $1 AND last_reminder_at = $3`,
+          [reference, request.lastReminderAt ? new Date(request.lastReminderAt).toISOString() : null, at.toISOString()]);
+        if (sent.reason === "conflict") return portalWins(reference, sent.status);
+        throw new AccountRequestError("unavailable");
+      }
+      await db.query(`INSERT INTO public.hrms_account_request_events (request_id,status,actor_name,occurred_at) VALUES ($1,'reminded',$2,$3)`, [request.id, staff.name, at.toISOString()]);
+      return { reference, remindedAt: at.toISOString() };
+    },
+    /**
+     * Withdraws an open request. Allowed only while Requested or Seen. The Portal is told first; if it is unreachable nothing changes and the
+     * caller is told. If the Portal says the account already exists (a race with an admin), its answer wins: HRMS takes the status it reports
+     * and the cancel is refused.
+     */
+    async cancelAccountRequest(reference: string) {
+      const staff = await authoriseActor();
+      await openRequest(reference);
+      const sent = await cancelAccountRequest(reference).catch((): { ok: false; reason: "unavailable" } => ({ ok: false, reason: "unavailable" }));
+      if (!sent.ok) {
+        if (sent.reason === "conflict") return portalWins(reference, sent.status);
+        throw new AccountRequestError("unavailable");
+      }
+      // The same rules as the Portal's own webhook: one cancelled event with the Staff member as actor; an account that appeared meanwhile wins.
+      await accountRequestStatusFor(db, now).receive({ reference, status: "cancelled", actor: staff.name, occurredAt: now().toISOString() });
+      const { rows } = await db.query<{ status: string }>(`SELECT status FROM public.hrms_account_requests WHERE reference = $1`, [reference]);
+      if (rows[0]?.status !== "cancelled") throw new AccountRequestError("conflict", {}, { status: rows[0]?.status });
+      return { reference, status: "cancelled" as const };
+    },
     /** The Portal's Roles (with access-template Modules) and Modules per system, fetched on demand for the Request dialog. */
     async accountRequestOptions() {
       await authoriseActor();
