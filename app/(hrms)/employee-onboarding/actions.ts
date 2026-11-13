@@ -76,6 +76,10 @@ async function changeNoAccountNeeded(employeeId: number, change: "set" | "undo")
 }
 
 /** Marks an Onboarding person "No account needed" (Super Admin and HRMS Manager only, enforced by the employees module). */
-export const markNoAccountNeeded = (employeeId: number) => changeNoAccountNeeded(employeeId, "set");
+export async function markNoAccountNeeded(employeeId: number): Promise<NoAccountResult> {
+  return changeNoAccountNeeded(employeeId, "set");
+}
 /** Undoes "No account needed" until the person is Active. */
-export const undoNoAccountNeeded = (employeeId: number) => changeNoAccountNeeded(employeeId, "undo");
+export async function undoNoAccountNeeded(employeeId: number): Promise<NoAccountResult> {
+  return changeNoAccountNeeded(employeeId, "undo");
+}
