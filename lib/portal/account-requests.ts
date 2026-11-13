@@ -7,6 +7,8 @@ import { portalConfig } from "./config";
  */
 export const ACCOUNT_REQUEST_OPTIONS_PATH = "/api/integrations/account-requests/options";
 export const ACCOUNT_REQUESTS_PATH = "/api/integrations/account-requests";
+export const accountRequestActionPath = (reference: string, action: "remind" | "cancel") =>
+  `${ACCOUNT_REQUESTS_PATH}/${encodeURIComponent(reference)}/${action}`;
 
 export type PortalId = string | number;
 export type PortalRole = { id: PortalId; name: string; moduleIds: PortalId[] };
@@ -83,3 +85,22 @@ export async function sendAccountRequest(payload: AccountRequestPayload): Promis
   }
   return { ok: false, reason: "unavailable" };
 }
+
+/** The Portal's answer to a remind or cancel. `conflict` means the account already exists (or the request is closed): `status` is the Portal's own status, and it wins. */
+export type ActionResult = { ok: true } | { ok: false; reason: "unavailable" } | { ok: false; reason: "conflict"; status: string };
+
+async function act(reference: string, action: "remind" | "cancel"): Promise<ActionResult> {
+  const response = await call(accountRequestActionPath(reference, action), "POST", {});
+  if (!response) return { ok: false, reason: "unavailable" };
+  if (response.ok) return { ok: true };
+  if (response.status === 409) {
+    const body = (await response.json().catch(() => null)) as { status?: unknown } | null;
+    if (typeof body?.status === "string" && body.status.trim() !== "") return { ok: false, reason: "conflict", status: body.status };
+  }
+  return { ok: false, reason: "unavailable" };
+}
+
+/** Nudges the Portal's administrators about an open request. */
+export const remindAccountRequest = (reference: string) => act(reference, "remind");
+/** Withdraws an open request. */
+export const cancelAccountRequest = (reference: string) => act(reference, "cancel");

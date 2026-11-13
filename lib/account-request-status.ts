@@ -59,7 +59,7 @@ WITH req AS (
 ), step AS (
   INSERT INTO public.hrms_account_request_events (request_id, status, actor_name, reason, message, occurred_at)
   SELECT id, $2, $3, $5, $6, $4::timestamptz FROM plan WHERE records
-  ON CONFLICT (request_id, status) DO NOTHING
+  ON CONFLICT (request_id, status) WHERE status <> 'reminded' DO NOTHING
   RETURNING request_id
 ), moved AS (
   UPDATE public.hrms_account_requests r SET status = p.next_status,
@@ -89,7 +89,7 @@ SELECT (SELECT count(*) FROM req)::int AS found`;
 const RECORD_ONLY = `
 INSERT INTO public.hrms_account_request_events (request_id, status, actor_name, reason, message, occurred_at)
 SELECT id, $2, $3, $5, $6, $4::timestamptz FROM public.hrms_account_requests WHERE reference = $1
-ON CONFLICT (request_id, status) DO NOTHING`;
+ON CONFLICT (request_id, status) WHERE status <> 'reminded' DO NOTHING`;
 
 /** Applies the Portal's status deliveries. Idempotent and tolerant of out-of-order delivery. */
 export function accountRequestStatusFor(db: Database = database) {
