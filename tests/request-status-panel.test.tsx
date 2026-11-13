@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock("@/app/(hrms)/employee-onboarding/actions", () => ({ loadAccountRequestStatus: mocks.load }));
 
 import { RequestStatusPanel } from "@/components/employees/request-status-panel";
-import { LIVE_NOTIFICATION_EVENT } from "@/lib/live-events";
+import { LIVE_EVENT } from "@/lib/live-events";
 
 const employee = { id: 3, name: "Rafael Santiago", requestReference: "RQ-0033" };
 const base = {
@@ -69,14 +69,14 @@ it("shows the amber warning only when the start date has passed with no account"
 
 it("re-reads on a live notification only while open, never on a timer", async () => {
   render(<RequestStatusPanel employee={employee} />);
-  act(() => { window.dispatchEvent(new Event(LIVE_NOTIFICATION_EVENT)); });
+  act(() => { window.dispatchEvent(new Event(LIVE_EVENT)); });
   expect(mocks.load).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "View request" }));
   await screen.findByText("Modules requested");
   expect(mocks.load).toHaveBeenCalledTimes(1);
   const created = base.steps.map((s) => (s.key === "account_created" ? { ...s, done: true, at: "2026-11-13T01:00:00Z", actor: "IT Admin" } : s));
   mocks.load.mockResolvedValue({ ok: true, status: status({ status: "account_created", overdue: false, steps: created }) });
-  await act(async () => { window.dispatchEvent(new Event(LIVE_NOTIFICATION_EVENT)); });
+  await act(async () => { window.dispatchEvent(new Event(LIVE_EVENT)); });
   await screen.findByText(/13 Nov, 9:00 AM · IT Admin/);
   expect(mocks.load).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();

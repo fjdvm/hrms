@@ -112,3 +112,14 @@ it("shows an unavailable state, and does not retry the socket, when signed out",
   await user.click(screen.getByRole("button", { name: "Notifications" }));
   expect(screen.getByText("Notifications are unavailable right now.")).toBeTruthy();
 });
+
+it("tells the page a new Notification was pushed, so it can re-read its data, but not for a read receipt", async () => {
+  const pushed = vi.fn();
+  window.addEventListener("hrms:live-notification", pushed);
+  await renderBell();
+  act(() => sockets[0].onmessage?.({ data: JSON.stringify({ type: "notifications.read" }) }));
+  expect(pushed).not.toHaveBeenCalled();
+  act(() => sockets[0].onmessage?.({ data: JSON.stringify({ type: "notification.created" }) }));
+  expect(pushed).toHaveBeenCalledTimes(1);
+  window.removeEventListener("hrms:live-notification", pushed);
+});

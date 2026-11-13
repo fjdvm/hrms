@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CELL, HEAD, InfoNote, PAGE, PageHeader, PersonCell } from "@/components/hiring/parts";
 import { RequestAccountDialog } from "@/components/employees/request-account-dialog";
+import { NoAccountNeededButton, UndoNoAccountNeededButton } from "@/components/employees/no-account-needed-buttons";
+import { OnboardingLive } from "@/components/employees/onboarding-live";
 import { OnboardingSearch } from "@/components/employees/onboarding-search";
-import { OnboardingLiveRefresh } from "@/components/employees/onboarding-live-refresh";
 import { RequestStatusPanel } from "@/components/employees/request-status-panel";
 import { EmployeeError, type OnboardingRow } from "@/lib/employees";
 import { formatOfferDate } from "@/lib/offer-view";
@@ -22,15 +22,15 @@ const TITLE = "Onboarding";
 const BADGE = { "Not requested": "secondary", Requested: "warning", "Account created": "success", "No account needed": "secondary" } as const;
 const BUTTON = "h-auto rounded-lg px-[12px] py-[6px] text-[13px]";
 
-/** Buttons are rendered where the read model offers the action; they are wired in later slices. */
+/** Buttons are rendered where the read model offers the action. "View request" opens the status panel. */
 function Actions({ row, canAct }: { row: OnboardingRow; canAct: boolean }) {
   const has = (action: OnboardingRow["actions"][number]) => row.actions.includes(action);
   return (
     <div className="flex flex-wrap justify-end gap-[8px]">
-      {has("no-account-needed") && <Button type="button" variant="outline" size="sm" className={BUTTON}>No account needed</Button>}
+      {has("no-account-needed") && <NoAccountNeededButton employee={row} />}
       {has("request") && <RequestAccountDialog employee={row} />}
       {canAct && row.requestReference && (row.accountState === "Requested" || row.accountState === "Account created") && <RequestStatusPanel employee={row} />}
-      {has("undo-no-account-needed") && <Button type="button" variant="outline" size="sm" className={BUTTON}><Check aria-hidden />Undo</Button>}
+      {has("undo-no-account-needed") && <UndoNoAccountNeededButton employee={row} />}
     </div>
   );
 }
@@ -108,7 +108,6 @@ async function Listing({ tab, search }: { tab: OnboardingTab; search?: string })
   const filtered = tab !== "All" || search !== undefined;
   return (
     <>
-      <OnboardingLiveRefresh />
       <PageHeader title={TITLE} subtitle={formatOnboardingSubtitle({ hires: counts.all, needsAccount: summary.needsAccount })} />
       <div className="grid gap-[16px] sm:grid-cols-3">
         <SummaryCard label="Needs account" value={summary.needsAccount} tone="text-[#8a5a00]" />
@@ -150,6 +149,7 @@ export default async function Page({ searchParams }: PageProps<"/employee-onboar
   const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
   return (
     <div className={PAGE}>
+      <OnboardingLive />
       <Suspense fallback={<OnboardingSkeleton />}>
         <Listing tab={onboardingTabFromParam(first(status))} search={onboardingSearchFromParam(first(q))} />
       </Suspense>

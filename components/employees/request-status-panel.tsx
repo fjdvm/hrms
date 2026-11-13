@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { loadAccountRequestStatus } from "@/app/(hrms)/employee-onboarding/actions";
 import type { AccountRequestStatus, AccountRequestStep, OnboardingRow } from "@/lib/employees";
-import { LIVE_NOTIFICATION_EVENT } from "@/lib/live-events";
+import { LIVE_EVENT } from "@/lib/live-events";
 import { formatOfferDate } from "@/lib/offer-view";
 
 const BADGE = { requested: "warning", seen: "warning", account_created: "success", login_sent: "success" } as const;
@@ -111,8 +111,8 @@ export function RequestStatusPanel({ employee }: { employee: Pick<OnboardingRow,
 
   useEffect(() => {
     if (!open) return;
-    window.addEventListener(LIVE_NOTIFICATION_EVENT, load);
-    return () => window.removeEventListener(LIVE_NOTIFICATION_EVENT, load);
+    window.addEventListener(LIVE_EVENT, load);
+    return () => window.removeEventListener(LIVE_EVENT, load);
   }, [open, load]);
 
   const change = (next: boolean) => {
