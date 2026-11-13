@@ -1,12 +1,17 @@
 import { isValidDate } from "./offer-terms";
 import type { PortalId } from "./portal/account-requests";
 
-/** Why an Account request call was refused. `conflict` is an active request already, or a person who is no longer Onboarding. */
+/**
+ * Why an Account request call was refused. `conflict` is an active request already, a person who is no longer Onboarding, or (for remind
+ * and cancel) a request that is no longer open; `status` then carries the request's current status. `too-soon` is a second reminder within
+ * 24 hours; `retryAt` is when the next one is allowed.
+ */
 export class AccountRequestError extends Error {
   constructor(
-    public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict" | "email-taken",
+    public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict" | "email-taken" | "too-soon",
     /** Per-field messages for `validation`, `email-taken` and `conflict`, ready for the dialog. */
     public readonly problems: Partial<Record<"workEmail" | "roleId" | "moduleIds" | "neededFrom" | "note", string>> = {},
+    public readonly detail: { status?: string; retryAt?: string } = {},
   ) {
     super(`Account request: ${reason}`);
   }
