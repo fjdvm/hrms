@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { BackLink, PAGE } from "@/components/hiring/parts";
 import { EditTrainingDialog } from "@/components/training/edit-training-dialog";
 import { PrintScheduleDialog } from "@/components/training/print-schedule-dialog";
+import { SendReminderDialog } from "@/components/training/reminder-dialog";
+import { ReminderCard } from "@/components/training/reminder-card";
 import { AssignDialog } from "@/components/training/assign-dialog";
 import { CancelTrainingDialog } from "@/components/training/cancel-dialog";
 import { AssignedEmployees } from "@/components/training/assigned-employees";
@@ -66,6 +68,11 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
             <EditTrainingDialog trainingId={training.id}
               training={{ title: training.title, trainer: training.trainer, description: training.description, objectives: training.objectives, date: training.date, startTime: training.startTime, endTime: training.endTime, mode: training.mode, location: training.location, rescheduledFrom: training.rescheduledFrom }}
               assigned={training.assigned.map((person) => ({ name: person.name, email: person.email }))} lockedResults={training.recordedResults} />
+            {training.status === "Upcoming" && (
+              <SendReminderDialog trainingId={training.id} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`}
+                training={{ title: training.title, trainer: training.trainer, date: training.date, startTime: training.startTime, endTime: training.endTime, mode: training.mode, location: training.location }}
+                people={training.assigned.filter((person) => person.status === "Assigned").map((person) => ({ name: person.name, email: person.email }))} />
+            )}
             <CancelTrainingDialog trainingId={training.id} title={training.title} date={training.date} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`}
               people={training.assigned.filter((person) => person.status === "Assigned")} />
           </>
@@ -138,6 +145,10 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
         <div className="flex w-full shrink-0 flex-col gap-[16px] lg:w-[340px]">
           <MaterialsCard trainingId={training.id} initial={training.materials} />
           <NotificationLogPreview trainingId={training.id} events={preview} />
+          {training.status === "Upcoming" && (
+            <ReminderCard trainingDate={training.date} emailed={training.assigned.filter((person) => person.status === "Assigned" && person.email).length}
+              withoutEmail={training.assigned.filter((person) => person.status === "Assigned" && !person.email).length} />
+          )}
         </div>
       </div>
       <LaterCards />

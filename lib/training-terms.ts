@@ -247,6 +247,17 @@ export function readFeedback(raw: { rating?: unknown; comments?: unknown }): { f
   return ratingError || commentsError ? { feedback: null, ratingError, commentsError } : { feedback: { rating: rating as number, comments } };
 }
 
+// ── Reminders ─────────────────────────────────────────────────────────────
+
+/** The day before a "YYYY-MM-DD" date, when the automatic Reminder goes out. */
+export const dayBefore = (date: string) => new Date(new Date(`${date}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+/** The moment the automatic Reminder is due: 8:00 AM Manila time, 1 day before the Training. */
+export const reminderDueAt = (trainingDate: string) => new Date(`${dayBefore(trainingDate)}T08:00:00+08:00`);
+/** "Thu, 19 Nov at 8:00 AM" */
+export const reminderWhen = (trainingDate: string) => `${formatTrainingDate(dayBefore(trainingDate)).replace(/ \d{4}$/, "")} at 8:00 AM`;
+/** What a manual "Send reminder" did: queued for Employees with an email; the rest must be told another way. */
+export type ReminderResult = { queued: number; notEmailed: number };
+
 // ── Cancel ────────────────────────────────────────────────────────────────
 
 export const CANCEL_REASON_MAX = 500;

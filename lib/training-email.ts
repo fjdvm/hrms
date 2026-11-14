@@ -46,3 +46,20 @@ export function scheduleChangedEmail(employeeName: string, training: { title: st
     ].join("\n"),
   };
 }
+
+/** The Reminder email, sent automatically 1 day before and on demand. Names the Training, when and where. */
+export function reminderEmail(employeeName: string, training: NoticeTraining): { title: string; body: string } {
+  const day = formatTrainingDate(training.date);
+  return {
+    title: `Reminder: ${training.title} on ${day.replace(/ \d{4}$/, "")}`,
+    body: [
+      `Hi ${firstName(employeeName)},`,
+      "",
+      `This is a reminder about your training "${training.title}" on ${day}, ${formatTrainingTimes(training.startTime, training.endTime)}.`,
+      "",
+      training.mode === "Online" ? `Join online: ${training.location}` : `Venue: ${training.location}`,
+      "",
+      "Bren Raphael's HR",
+    ].join("\n"),
+  };
+}

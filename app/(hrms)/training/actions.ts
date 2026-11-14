@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, type PrintableTraining, type ScheduleSheet, materialProblem, readFeedback, readResultMarks, type TrainingFeedback, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, type PrintableTraining, type ScheduleSheet, materialProblem, readFeedback, readResultMarks, type TrainingFeedback, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type ReminderResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
@@ -254,4 +254,21 @@ function scheduleProblem(error: unknown): string {
   if (error instanceof TrainingError && error.reason === "conflict") return "A Cancelled training can't go on a schedule.";
   if (error instanceof TrainingError && error.reason === "not-found") return "One of those trainings no longer exists.";
   return problem(error);
+}
+
+export type ReminderState = { error?: string; result?: ReminderResult };
+
+/** Sends a reminder now; the caller has already shown the recipients and the email preview. */
+export async function sendTrainingReminder(trainingId: number): Promise<ReminderState> {
+  try {
+    const result = await (await trainingsForRequest()).sendReminder(trainingId);
+    // The emails go out straight away; anything that fails is retried by the scheduled job.
+    after(() => deliverTrainingNotices());
+    revalidatePath(`/training/${trainingId}`);
+    revalidatePath(`/training/${trainingId}/log`);
+    return { result };
+  } catch (error) {
+    if (error instanceof TrainingError && error.reason === "conflict") return { error: "Reminders can only be sent for an upcoming training." };
+    return { error: problem(error) };
+  }
 }

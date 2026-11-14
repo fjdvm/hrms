@@ -28,4 +28,4 @@ the Notification log then shows "Old date: <printed date>" beside a **Reprint sc
   the print window does not open.
 - Previewing never marks anyone.
 
-Migration `0040-training-printed.sql` adds `printed_at` and `printed_date` to `hrms_training_assignments`.
+Migration `0041-training-printed.sql` adds `printed_at` and `printed_date` to `hrms_training_assignments`.

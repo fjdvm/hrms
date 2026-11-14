@@ -1,12 +1,12 @@
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
-import { assignmentEmail, queueNotice, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
+import { assignmentEmail, queueNotice, reminderEmail, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
   TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
   HISTORY_TABS, MAX_SCHEDULE_TRAININGS, historyRowsFor, type PrintableTraining, type ScheduleItem, type ScheduleSheet, type HistoryEmployee, type HistoryRow, type HistoryTab, type TrainingHistory,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
-  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
+  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type ReminderResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
 export type TrainingListItem = {
@@ -423,6 +423,34 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       await db.query(`UPDATE public.hrms_training_assignments SET feedback_rating = $3, feedback_comments = $4, feedback_recorded_at = $5::timestamptz, feedback_recorded_by = $6
         WHERE training_id = $1 AND employee_id = $2`, [trainingId, employeeId, feedback.rating, feedback.comments, now().toISOString(), staff.username]);
       return feedback;
+    },
+    /**
+     * Sends a reminder now, on top of the automatic one: queued for every assigned Employee still marked Assigned who has an
+     * email. Employees without an email are never emailed (they are told with a printed schedule) and are counted in `notEmailed`.
+     * Only an Upcoming Training can be reminded about.
+     */
+    async sendReminder(trainingId: number): Promise<ReminderResult> {
+      await authorise();
+      const training = await requireTraining(trainingId);
+      if (training.cancelled) throw new TrainingError("conflict");
+      const { rows: details } = await db.query<NoticeTraining>(`
+        SELECT title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime", mode, location
+        FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
+      const at = now();
+      if (details[0].date < manilaToday(at)) throw new TrainingError("conflict");
+      const { rows: people } = await db.query<{ id: number; name: string; email: string | null }>(`
+        SELECT e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email
+        FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
+        WHERE a.training_id = $1 AND a.status = 'Assigned' ORDER BY a.assigned_at, e.id`, [trainingId]);
+      let queued = 0;
+      for (const person of people) {
+        const notice = queueNotice("Reminder", person, reminderEmail(person.name, details[0]));
+        if (!notice) continue;
+        queued += 1;
+        await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
+          VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), at.toISOString()]);
+      }
+      return { queued, notEmailed: people.length - queued };
     },
     /** Removes an Employee from a Training. */
     async unassign(trainingId: number, employeeId: number): Promise<void> {
