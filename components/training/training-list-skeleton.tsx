@@ -15,6 +15,7 @@ export function TrainingListSkeleton() {
         </div>
         <Skeleton className="h-[38px] w-[124px] rounded-lg" />
       </div>
+      <Skeleton className="h-[106px] w-full rounded-xl" />
       <div className="flex gap-xs">
         {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[36px] w-[88px] rounded-lg" />)}
       </div>

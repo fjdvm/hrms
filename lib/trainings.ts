@@ -3,9 +3,9 @@ import { accessFor } from "./portal/access";
 import { assignmentEmail, queueNotice, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
-  TRAINING_TABS, cancelledEmail, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
+  TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
-  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
+  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
 export type TrainingListItem = {
@@ -45,6 +45,12 @@ export type TrainingPage = {
   counts: Record<TrainingTab, number>;
   /** Trainings dated in the current month (Manila time), whatever their status. */
   thisMonth: number;
+  /** The month Training completion covers, e.g. "November 2026" (Manila time). */
+  month: string;
+  /** Null when no Training was held this month, so the card says "Nothing to show yet". */
+  completion: TrainingCompletion | null;
+  /** Trainings held this month with Assigned employees and no result recorded yet, oldest first. */
+  needResults: { id: number; title: string }[];
 };
 
 /** Everything the Training page shows. */
@@ -52,6 +58,8 @@ export type TrainingDetail = TrainingTerms & {
   id: number;
   status: TrainingStatus;
   rescheduledFrom: string | null;
+  /** Employees whose result is recorded (Completed or Did not attend). From the first one the date, time and venue are locked. */
+  recordedResults: number;
   /** Why Staff cancelled it; set only when the status is Cancelled. */
   cancelReason: string | null;
   /** Objectives, one per line, as a list. */
@@ -61,14 +69,14 @@ export type TrainingDetail = TrainingTerms & {
 };
 
 export class TrainingError extends Error {
-  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict") {
+  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict" | "locked" | "early") {
     super(`Training: ${reason}`);
   }
 }
 
 type Row = {
   id: number; title: string; trainer: string; date: string; startTime: string; endTime: string; mode: TrainingMode;
-  rescheduledFrom: string | null; cancelled: boolean; hasMaterials: boolean; assigned: number; completed: number; recorded: number;
+  rescheduledFrom: string | null; cancelled: boolean; hasMaterials: boolean; assigned: number; completed: number; recorded: number; due: number;
 };
 
 const SELECT = `
@@ -78,7 +86,8 @@ const SELECT = `
     EXISTS (SELECT 1 FROM public.hrms_training_materials m WHERE m.training_id = t.id AND m.status = 'Active') AS "hasMaterials",
     count(a.employee_id)::int AS assigned,
     (count(a.employee_id) FILTER (WHERE a.status = 'Completed'))::int AS completed,
-    (count(a.employee_id) FILTER (WHERE a.status NOT IN ('Assigned', 'Cancelled')))::int AS recorded
+    (count(a.employee_id) FILTER (WHERE a.status NOT IN ('Assigned', 'Cancelled')))::int AS recorded,
+    (count(a.employee_id) FILTER (WHERE a.status <> 'Cancelled'))::int AS due
   FROM public.hrms_trainings t
   LEFT JOIN public.hrms_training_assignments a ON a.training_id = t.id
   GROUP BY t.id`;
@@ -110,6 +119,12 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
     return rows[0];
   }
 
+  /** How many Employees have a recorded result (Completed or Did not attend). */
+  async function recordedResults(trainingId: number) {
+    const { rows } = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM public.hrms_training_assignments WHERE training_id = $1 AND status NOT IN ('Assigned', 'Cancelled')`, [trainingId]);
+    return rows[0].n;
+  }
+
   return {
     /** Every Training in one tab, with all tab counts from the same snapshot. */
     async list(tab: TrainingTab = "All"): Promise<TrainingPage> {
@@ -123,14 +138,23 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
           id: row.id, title: row.title, trainer: row.trainer, date: row.date, startTime: row.startTime, endTime: row.endTime,
           mode: row.mode, rescheduledFrom: row.rescheduledFrom, hasMaterials: row.hasMaterials,
           assigned: row.assigned, completed: row.completed,
-          resultsNotRecorded: status === "Completed" && row.assigned > 0 && row.recorded === 0, status,
+          resultsNotRecorded: status === "Completed" && row.due > 0 && row.recorded === 0, status,
         };
       });
       const counts: Record<TrainingTab, number> = { All: items.length, Upcoming: 0, Past: 0, Cancelled: 0 };
       for (const item of items) counts[tabOf(item.status)] += 1;
-      const month = manilaToday(clock).slice(0, 7);
+      const today = manilaToday(clock);
+      const month = today.slice(0, 7);
+      // Held = its date has passed (status Completed). Results due = Assigned employees who are not Cancelled.
+      const held = rows.filter((row, index) => row.date.startsWith(month) && items[index].status === "Completed");
+      const dueCount = held.reduce((sum, row) => sum + row.due, 0);
+      const completedCount = held.reduce((sum, row) => sum + row.completed, 0);
       return {
         counts,
+        month: formatMonth(today),
+        completion: completionOf(completedCount, dueCount),
+        needResults: items.filter((item) => item.date.startsWith(month) && item.resultsNotRecorded)
+          .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`) || a.id - b.id).map((item) => ({ id: item.id, title: item.title })),
         thisMonth: items.filter((item) => item.date.startsWith(month)).length,
         rows: items.filter((item) => tab === "All" || tabOf(item.status) === tab).sort(order),
       };
@@ -191,6 +215,8 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const changed = (Object.keys(terms) as (keyof TrainingTerms)[]).some((key) => terms[key] !== current[key]);
       if (!changed) return { changed: false, rescheduled: false, notified: 0, needPrintedSchedule: 0 };
       const rescheduled = scheduleDiffers(terms, current);
+      // Once any Employee has a recorded result the date, time, Mode and venue are history: Staff create a new Training instead.
+      if (rescheduled && (await recordedResults(id)) > 0) throw new TrainingError("locked");
       // Only a new date makes a "Rescheduled from" caption; a time or venue change keeps whatever was there.
       const rescheduledFrom = terms.date !== current.date ? current.date : current.rescheduledFrom;
       const at = now().toISOString();
@@ -242,7 +268,8 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 ORDER BY a.assigned_at, e.full_name, e.id`, [id]);
       const { cancelled, ...training } = found[0];
-      return { ...training, assigned: assigned.map((person) => ({ ...person, needsPrintedSchedule: !person.email })), status: trainingStatus({ date: training.date, cancelled }, now()), objectiveList: training.objectives.split("\n").filter(Boolean), materials };
+      const recordedResultCount = assigned.filter((person) => person.status === "Completed" || person.status === "Did not attend").length;
+      return { ...training, recordedResults: recordedResultCount, assigned: assigned.map((person) => ({ ...person, needsPrintedSchedule: !person.email })), status: trainingStatus({ date: training.date, cancelled }, now()), objectiveList: training.objectives.split("\n").filter(Boolean), materials };
     },
     /** Everyone the Assign dialog may offer: Employee records only, never Staff, with who is already on this Training. */
     async assignable(trainingId: number): Promise<AssignableEmployee[]> {
@@ -324,6 +351,32 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         }
       }
       return { cancelled: people.length, notified, needPrintedSchedule: people.filter((person) => !person.email).length };
+    },
+    /**
+     * Marks results from the paper sign-in sheet, one or many Employees at once: Completed (with a completion date),
+     * Did not attend, or back to Assigned. Cancelled Employees are set only by cancelling the Training and are never touched here.
+     * Allowed from the day of the Training. The first recorded result locks the Training's date, time and venue.
+     */
+    async markResults(trainingId: number, request: { marks: ResultMark[] }): Promise<MarkResultsResult> {
+      await authorise();
+      if (!validId(trainingId)) throw new TrainingError("not-found");
+      const { rows: found } = await db.query<{ date: string; cancelled: boolean }>(`SELECT training_date::text AS date, cancelled_at IS NOT NULL AS cancelled FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
+      if (!found[0]) throw new TrainingError("not-found");
+      if (found[0].cancelled) throw new TrainingError("conflict");
+      const today = manilaToday(now());
+      const { marks } = readResultMarks(request?.marks, { trainingDate: found[0].date, today });
+      if (!marks) throw new TrainingError("validation");
+      if (found[0].date > today) throw new TrainingError("early");
+      // Someone not assigned to this Training, or Cancelled, is refused up front rather than half-applied.
+      const ids = marks.map((mark) => mark.employeeId);
+      const { rows: eligible } = await db.query(`SELECT 1 FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = ANY($2::int[]) AND status <> 'Cancelled'`, [trainingId, ids]);
+      if (eligible.length !== ids.length) throw new TrainingError("validation");
+      await db.query(`
+        UPDATE public.hrms_training_assignments a SET status = m.status, completed_on = NULLIF(m.completed_on, '')::date
+        FROM unnest($2::int[], $3::text[], $4::text[]) AS m(employee_id, status, completed_on)
+        WHERE a.training_id = $1 AND a.employee_id = m.employee_id AND a.status <> 'Cancelled'`,
+      [trainingId, ids, marks.map((mark) => mark.status), marks.map((mark) => mark.completedOn ?? "")]);
+      return { marked: ids.length };
     },
     /** Removes an Employee from a Training. */
     async unassign(trainingId: number, employeeId: number): Promise<void> {

@@ -10,7 +10,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
     return new Response(null, { status: 307, headers: { Location: url, "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (!(error instanceof TrainingError)) throw error;
-    const status = { denied: 403, invalid: 401, unavailable: 503, validation: 400, "not-found": 404, conflict: 409 }[error.reason];
+    const status = { denied: 403, invalid: 401, unavailable: 503, validation: 400, "not-found": 404, conflict: 409, locked: 409, early: 409 }[error.reason];
     return Response.json({ error: error.reason }, { status, headers: { "Cache-Control": "private, no-store" } });
   }
 }
