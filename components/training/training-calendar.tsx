@@ -85,7 +85,7 @@ function Popover({ training, anchor, onClose }: { training: CalendarTraining; an
           : <p className={line}><MapPin /><span className="min-w-0">{training.location}</span></p>}
         <p className={line}><User />{training.trainer} (trainer) · {training.assigned} assigned</p>
       </div>
-      <Button variant="outline" asChild className="h-auto rounded-lg px-[12px] py-[8px] shadow-none"><Link href="/training">Open Trainings</Link></Button>
+      <Button variant="outline" asChild className="h-auto rounded-lg px-[12px] py-[8px] shadow-none"><Link href={`/training/${training.id}`}>Open training</Link></Button>
     </div>
   );
 }

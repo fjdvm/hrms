@@ -3,7 +3,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { trainingsFor, TrainingError } from "@/lib/trainings";
-import { formatTrainingDate, formatTrainingTimes, readTrainingForm, trainingStatus, type TrainingTerms } from "@/lib/training-terms";
+import type { MaterialFiles } from "@/lib/training-material-files";
+import { MATERIAL_MAX_BYTES, formatSize, materialProblem, formatTrainingDate, formatTrainingTimes, readTrainingForm, trainingStatus, type TrainingTerms } from "@/lib/training-terms";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
 
 let db: PGlite;
@@ -12,13 +13,23 @@ let handle: string;
 // 14 Nov 2026, 10:00 in Manila.
 let clock = new Date("2026-11-14T02:00:00Z");
 const staff = { name: "Ada Okafor", username: "ada", email: "ada@example.test", role: "HR Officer" };
-const trainings = (sessionHandle: string | undefined = handle) => trainingsFor(sessionHandle, db, () => clock);
+const files = {
+  requestUpload: vi.fn<MaterialFiles["requestUpload"]>(), confirm: vi.fn<MaterialFiles["confirm"]>(),
+  remove: vi.fn<MaterialFiles["remove"]>(), viewUrl: vi.fn<MaterialFiles["viewUrl"]>(),
+};
+let nextFile = 0;
+const trainings = (sessionHandle: string | undefined = handle) => trainingsFor(sessionHandle, db, () => clock, files);
 const terms = (overrides: Partial<TrainingTerms> = {}): TrainingTerms => ({
   title: "Food safety and hygiene refresher", trainer: "QA Manager", description: "", objectives: "", date: "2026-11-18",
   startTime: "09:00", endTime: "11:00", mode: "In person", location: "Main kitchen, Antipolo", ...overrides,
 });
 
 beforeEach(async () => {
+  nextFile = 0;
+  files.requestUpload.mockReset().mockImplementation(async () => ({ fileId: `file-${++nextFile}`, uploadUrl: "https://files.test/put" }));
+  files.confirm.mockReset().mockResolvedValue(undefined);
+  files.remove.mockReset().mockResolvedValue(undefined);
+  files.viewUrl.mockReset().mockResolvedValue("https://files.test/signed");
   clock = new Date("2026-11-14T02:00:00Z");
   db = new PGlite();
   await db.exec(await readFile(new URL("./fixtures/careers-job-postings.sql", import.meta.url), "utf8"));
@@ -193,5 +204,83 @@ describe("Training Calendar view state", () => {
   it("keeps links short", () => {
     expect(trainingCalendarHref({ mode: "month", date: "2026-11-14" }, now)).toBe("/training/calendar");
     expect(trainingCalendarHref({ mode: "week", date: "2026-11-20" }, now)).toBe("/training/calendar?mode=week&date=2026-11-20");
+  });
+});
+
+const pdf = { filename: "Handbook.pdf", contentType: "application/pdf", size: 2_400_000 };
+const upload = async (id: number | undefined, file = pdf) => {
+  const { fileId } = await trainings().requestMaterial(file, id);
+  return trainings().confirmMaterial(fileId);
+};
+
+describe("Training detail and materials", () => {
+  it("reads a Training with its schedule, objectives as a list and Active materials", async () => {
+    const id = await trainings().create(terms({ description: "How to count cash.", objectives: "Ring up sales\nCount cash" }));
+    await upload(id);
+    const detail = await trainings().read(id);
+    expect(detail).toMatchObject({ id, title: "Food safety and hygiene refresher", status: "Upcoming", mode: "In person", objectiveList: ["Ring up sales", "Count cash"] });
+    expect(detail.materials).toEqual([{ fileId: "file-1", filename: "Handbook.pdf", contentType: "application/pdf", size: 2_400_000 }]);
+    await expect(trainings().read(999)).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings().read(-1)).rejects.toMatchObject({ reason: "not-found" });
+  });
+
+  it("asks file-storage for a Private, Permanent File and shows the material only once confirmed", async () => {
+    const id = await trainings().create(terms());
+    const { fileId, uploadUrl } = await trainings().requestMaterial(pdf, id);
+    expect(uploadUrl).toBe("https://files.test/put");
+    expect(files.requestUpload).toHaveBeenCalledWith(pdf);
+    expect((await trainings().read(id)).materials).toEqual([]);
+    expect((await trainings().list()).rows[0].hasMaterials).toBe(false);
+    await trainings().confirmMaterial(fileId);
+    await trainings().confirmMaterial(fileId);
+    expect(files.confirm).toHaveBeenCalledTimes(1);
+    expect((await trainings().read(id)).materials).toHaveLength(1);
+    expect((await trainings().list()).rows[0].hasMaterials).toBe(true);
+  });
+
+  it("attaches files uploaded on the New training form when the Training is saved, and only this Staff member's", async () => {
+    const mine = (await upload(undefined)).fileId;
+    const unconfirmed = (await trainings().requestMaterial({ ...pdf, filename: "Draft.pdf" })).fileId;
+    const other = portal.signIn({ ...staff, username: "bea", name: "Bea" }, ["Training"]);
+    const { fileId: theirs } = await trainingsFor(other, db, () => clock, files).requestMaterial(pdf);
+    await trainingsFor(other, db, () => clock, files).confirmMaterial(theirs);
+    const id = await trainings().create(terms(), [mine, unconfirmed, theirs, "unknown"]);
+    expect((await trainings().read(id)).materials.map((m) => m.fileId)).toEqual([mine]);
+  });
+
+  it("deletes a material from file-storage and the Training, and keeps it when file-storage fails", async () => {
+    const id = await trainings().create(terms());
+    const { fileId } = await upload(id);
+    files.remove.mockRejectedValueOnce(new Error("offline"));
+    await expect(trainings().deleteMaterial(fileId)).rejects.toMatchObject({ reason: "unavailable" });
+    expect((await trainings().read(id)).materials).toHaveLength(1);
+    await trainings().deleteMaterial(fileId);
+    expect(files.remove).toHaveBeenLastCalledWith(fileId);
+    expect((await trainings().read(id)).materials).toEqual([]);
+    await expect(trainings().deleteMaterial("never-recorded")).rejects.toMatchObject({ reason: "not-found" });
+    expect(files.remove).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses files that are not PDF, Word, Excel or images, or are over 10 MB, before asking file-storage", async () => {
+    await expect(trainings().requestMaterial({ ...pdf, contentType: "application/zip" })).rejects.toMatchObject({ reason: "validation" });
+    await expect(trainings().requestMaterial({ ...pdf, size: MATERIAL_MAX_BYTES + 1 })).rejects.toMatchObject({ reason: "validation" });
+    await expect(trainings().requestMaterial(pdf, 999)).rejects.toMatchObject({ reason: "not-found" });
+    expect(files.requestUpload).not.toHaveBeenCalled();
+    expect(materialProblem({ ...pdf, size: MATERIAL_MAX_BYTES })).toBeNull();
+    expect(materialProblem({ ...pdf, filename: "<x>.pdf" })).not.toBeNull();
+    expect(formatSize(2_400_000)).toBe("2.3 MB");
+    expect(formatSize(92_160)).toBe("90 KB");
+  });
+
+  it("serves a signed address only for Active materials of a Training, and only to Staff with the Module", async () => {
+    const id = await trainings().create(terms());
+    const { fileId } = await upload(id);
+    const pending = (await trainings().requestMaterial(pdf, id)).fileId;
+    expect(await trainings().materialUrl(fileId)).toBe("https://files.test/signed");
+    await expect(trainings().materialUrl(pending)).rejects.toMatchObject({ reason: "not-found" });
+    const denied = portal.signIn(staff, ["Offers"]);
+    await expect(trainings(denied).materialUrl(fileId)).rejects.toMatchObject({ reason: "denied" });
+    await expect(trainings(denied).deleteMaterial(fileId)).rejects.toMatchObject({ reason: "denied" });
+    await expect(trainings(denied).requestMaterial(pdf)).rejects.toMatchObject({ reason: "denied" });
   });
 });

@@ -104,3 +104,40 @@ export function trainingTabFromParam(param: string | undefined): TrainingTab {
   return TRAINING_TABS.find((tab) => tab.toLowerCase() === param?.toLowerCase()) ?? "All";
 }
 export const trainingsHref = (tab: TrainingTab) => (tab === "All" ? "/training" : `/training?tab=${tab.toLowerCase()}`);
+
+// ── Materials ─────────────────────────────────────────────────────────────
+
+export const MATERIAL_MAX_BYTES = 10 * 1024 * 1024;
+/** PDF, Word, Excel or images: the file types Staff may attach, with the label each shows. */
+export const MATERIAL_TYPES: Record<string, string> = {
+  "application/pdf": "PDF",
+  "application/msword": "Word",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Word",
+  "application/vnd.ms-excel": "Excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Excel",
+  "image/png": "Image",
+  "image/jpeg": "Image",
+  "image/gif": "Image",
+  "image/webp": "Image",
+};
+export const MATERIAL_ACCEPT = Object.keys(MATERIAL_TYPES).join(",");
+
+export type MaterialRequest = { filename: string; contentType: string; size: number };
+export type TrainingMaterial = { fileId: string; filename: string; contentType: string; size: number };
+
+/** Why a file may not be attached, or null when it may. Used by the form (before uploading) and the server. */
+export function materialProblem(file: { filename?: unknown; contentType?: unknown; size?: unknown }): string | null {
+  const name = cleanLine(file.filename);
+  if (!name || name.length > 200 || !TEXT.test(name)) return "Give the file a name of up to 200 characters, without < or >.";
+  if (typeof file.contentType !== "string" || !(file.contentType in MATERIAL_TYPES)) return "Attach a PDF, Word, Excel or image file.";
+  if (!Number.isInteger(file.size) || (file.size as number) <= 0) return "That file is empty.";
+  if ((file.size as number) > MATERIAL_MAX_BYTES) return "Each file can be up to 10 MB.";
+  return null;
+}
+
+export const materialKind = (contentType: string) => MATERIAL_TYPES[contentType] ?? "File";
+/** "1.2 MB", "90 KB" */
+export function formatSize(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
