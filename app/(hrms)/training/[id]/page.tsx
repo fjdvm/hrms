@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BackLink, PAGE } from "@/components/hiring/parts";
 import { EditTrainingDialog } from "@/components/training/edit-training-dialog";
+import { PrintScheduleDialog } from "@/components/training/print-schedule-dialog";
 import { SendReminderDialog } from "@/components/training/reminder-dialog";
 import { ReminderCard } from "@/components/training/reminder-card";
 import { AssignDialog } from "@/components/training/assign-dialog";
@@ -76,6 +77,7 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
               people={training.assigned.filter((person) => person.status === "Assigned")} />
           </>
         )}
+        {training.status === "Upcoming" && <PrintScheduleDialog preselect={[training.id]} />}
         <AssignDialog trainingId={training.id} title={training.title} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`} disabled={training.status === "Cancelled"} />
       </header>
       {training.status === "Cancelled" && (
@@ -93,7 +95,8 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
       {reprint > 0 && training.rescheduledFrom && (
         <p role="status" className="flex items-center gap-[10px] rounded-lg bg-amber-50 px-[16px] py-[12px] text-sm text-amber-900">
           <AlertTriangle className="size-4 shrink-0" aria-hidden />
-          Reprint schedule: {reprint} {reprint === 1 ? "employee" : "employees"} without an email {reprint === 1 ? "has" : "have"} a printed schedule with the old date ({formatShortDate(training.rescheduledFrom).replace(/ \d{4}$/, "")}).
+          <span className="flex-1">Reprint schedule: {reprint} {reprint === 1 ? "employee" : "employees"} without an email {reprint === 1 ? "has" : "have"} a printed schedule with the old date ({formatShortDate(training.rescheduledFrom).replace(/ \d{4}$/, "")}).</span>
+          {training.status === "Upcoming" && <PrintScheduleDialog preselect={[training.id]} triggerLabel="Reprint schedule" />}
         </p>
       )}
       <div className="flex flex-col items-start gap-[16px] lg:flex-row">

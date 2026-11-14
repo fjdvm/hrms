@@ -318,6 +318,10 @@ export type LogRow = {
   state: LogNoticeState;
   /** When it was sent, last tried or (no email) assigned. ISO. */
   at: string;
+  /** For a no-email Employee: when their printed schedule was last produced, the date on it, and whether it is out of date. */
+  printedAt?: string | null;
+  printedDate?: string | null;
+  reprintNeeded?: boolean;
   /** Failed sends so far, for "Try 2 of 3" and "3 tries". */
   attempts: number;
   /** When the next try is due, while Retrying. ISO. */
@@ -402,3 +406,69 @@ export const historyHref = (employeeId: number, tab: HistoryTab) =>
 /** Which rows a tab shows. */
 export const historyRowsFor = (rows: HistoryRow[], tab: HistoryTab) =>
   rows.filter((row) => tab === "All" || (tab === "Upcoming" ? row.upcoming : row.result === tab));
+
+// ── Printing and exporting a schedule ─────────────────────────────────────
+
+/** A Training Staff may put on a printed schedule: one still to come. */
+export type PrintableTraining = { id: number; title: string; trainer: string; date: string; startTime: string; endTime: string; mode: TrainingMode };
+/** One Training on the sheet. `assigned` is the list of names, or null when the sheet is printed without names. */
+export type ScheduleItem = PrintableTraining & { location: string; assignedCount: number; assigned: string[] | null };
+export type ScheduleSheet = {
+  /** Manila day "YYYY-MM-DD" it was produced. */
+  printedOn: string;
+  printedBy: string;
+  items: ScheduleItem[];
+  includeNames: boolean;
+  /** Employees on these Trainings who have no email, so only a printed schedule reaches them. */
+  needPrinted: { employeeId: number; name: string }[];
+};
+export const SCHEDULE_FORMATS = ["A4 print", "PDF", "Excel"] as const;
+export type ScheduleFormat = (typeof SCHEDULE_FORMATS)[number];
+export const MAX_SCHEDULE_TRAININGS = 60;
+/** Trainings that fit on one A4 page, with and without the names listed under each. */
+export const PER_PAGE = { names: 5, plain: 8 };
+
+const LONG_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/** "16 – 21 November 2026", "28 November – 3 December 2026", or the single day. Empty for no Trainings. */
+export function scheduleRangeLabel(dates: string[]): string {
+  if (dates.length === 0) return "";
+  const sorted = [...dates].sort();
+  const [from, to] = [sorted[0], sorted[sorted.length - 1]];
+  const part = (day: string) => ({ d: Number(day.slice(8)), m: LONG_MONTHS[Number(day.slice(5, 7)) - 1], y: day.slice(0, 4) });
+  const a = part(from), b = part(to);
+  if (from === to) return `${a.d} ${a.m} ${a.y}`;
+  if (a.m === b.m && a.y === b.y) return `${a.d} – ${b.d} ${b.m} ${b.y}`;
+  return a.y === b.y ? `${a.d} ${a.m} – ${b.d} ${b.m} ${b.y}` : `${a.d} ${a.m} ${a.y} – ${b.d} ${b.m} ${b.y}`;
+}
+export const schedulePageCount = (sheet: Pick<ScheduleSheet, "items" | "includeNames">) =>
+  Math.max(1, Math.ceil(sheet.items.length / (sheet.includeNames ? PER_PAGE.names : PER_PAGE.plain)));
+export const schedulePage = <T,>(items: T[], includeNames: boolean, page: number): T[] => {
+  const size = includeNames ? PER_PAGE.names : PER_PAGE.plain;
+  return items.slice(page * size, page * size + size);
+};
+/** "Mylene Santos, Joel Ramirez and Mark Lopez" */
+export function nameList(names: string[]): string {
+  return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+export function needPrintedWarning(people: { name: string }[]): string | null {
+  if (people.length === 0) return null;
+  return `${people.length} ${people.length === 1 ? "employee" : "employees"} on these trainings ${people.length === 1 ? "needs" : "need"} a printed schedule: ${nameList(people.map((p) => p.name))}.`;
+}
+
+// Spreadsheet apps run a cell that starts with these as a formula; prefix it so exported text stays text.
+const csvCell = (value: string) => {
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+};
+/** The schedule as CSV (opens in Excel): one row per Training, the names joined with "; " when they are included. */
+export function scheduleCsv(sheet: ScheduleSheet): string {
+  const head = ["Training", "Date", "Start time", "End time", "Mode", "Venue or meeting link", "Trainer", "Assigned"];
+  if (sheet.includeNames) head.push("Assigned employees");
+  const rows = sheet.items.map((item) => {
+    const row = [item.title, item.date, item.startTime, item.endTime, item.mode, item.location, item.trainer, String(item.assignedCount)];
+    if (sheet.includeNames) row.push((item.assigned ?? []).join("; "));
+    return row;
+  });
+  return `${[head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
+}
+export const scheduleFileName = (sheet: Pick<ScheduleSheet, "printedOn">, extension: string) => `training-schedule-${sheet.printedOn}.${extension}`;

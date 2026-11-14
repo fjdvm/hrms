@@ -4,7 +4,7 @@ import { assignmentEmail, queueNotice, reminderEmail, scheduleChangedEmail, type
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
   TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
-  HISTORY_TABS, historyRowsFor, type HistoryEmployee, type HistoryRow, type HistoryTab, type TrainingHistory,
+  HISTORY_TABS, MAX_SCHEDULE_TRAININGS, historyRowsFor, type PrintableTraining, type ScheduleItem, type ScheduleSheet, type HistoryEmployee, type HistoryRow, type HistoryTab, type TrainingHistory,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
   type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type ReminderResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
@@ -112,6 +112,28 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
 
   const validId = (id: unknown) => Number.isInteger(id) && (id as number) > 0 && (id as number) <= 2_147_483_647;
   const unavailable = (error: unknown): never => { throw error instanceof TrainingError ? error : new TrainingError("unavailable"); };
+
+  async function buildSchedule(trainingIds: number[], includeNames: boolean, printedBy: string): Promise<ScheduleSheet> {
+    const ids = [...new Set(trainingIds)];
+    if (ids.length === 0 || ids.length > MAX_SCHEDULE_TRAININGS || !ids.every(validId)) throw new TrainingError("validation");
+    const { rows } = await db.query<Omit<ScheduleItem, "assigned" | "assignedCount"> & { cancelled: boolean }>(`
+      SELECT id, title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime",
+        mode, location, cancelled_at IS NOT NULL AS cancelled
+      FROM public.hrms_trainings WHERE id = ANY($1::int[]) ORDER BY training_date, start_time, id`, [ids]);
+    if (rows.length !== ids.length) throw new TrainingError("not-found");
+    if (rows.some((row) => row.cancelled)) throw new TrainingError("conflict");
+    const { rows: people } = await db.query<{ trainingId: number; employeeId: number; name: string; email: string | null }>(`
+      SELECT a.training_id AS "trainingId", e.id AS "employeeId", e.full_name AS name, NULLIF(btrim(e.email), '') AS email
+      FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
+      WHERE a.training_id = ANY($1::int[]) AND a.status <> 'Cancelled' ORDER BY e.full_name, e.id`, [ids]);
+    const items: ScheduleItem[] = rows.map(({ cancelled, ...row }) => {
+      void cancelled;
+      const names = people.filter((person) => person.trainingId === row.id).map((person) => person.name);
+      return { ...row, assignedCount: names.length, assigned: includeNames ? names : null };
+    });
+    const needPrinted = [...new Map(people.filter((person) => !person.email).map((person) => [person.employeeId, { employeeId: person.employeeId, name: person.name }])).values()];
+    return { printedOn: manilaToday(now()), printedBy, items, includeNames, needPrinted };
+  }
 
   async function requireTraining(id: number) {
     if (!validId(id)) throw new TrainingError("not-found");
@@ -266,6 +288,7 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const { rows: assigned } = await db.query<Omit<AssignedEmployee, "needsPrintedSchedule" | "feedback"> & { feedbackRating: number | null; feedbackComments: string }>(`
         SELECT e.id AS "employeeId", e.full_name AS name, e.position, e.branch, NULLIF(btrim(e.email), '') AS email,
           a.status, a.completed_on::text AS "completedOn", a.reprint_needed AS "reprintNeeded",
+          a.printed_at AS "printedAt", a.printed_date::text AS "printedDate",
           a.feedback_rating AS "feedbackRating", a.feedback_comments AS "feedbackComments"
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 ORDER BY a.assigned_at, e.full_name, e.id`, [id]);
@@ -474,6 +497,42 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const counts = Object.fromEntries(HISTORY_TABS.map((tab) => [tab, historyRowsFor(history, tab as HistoryTab).length])) as Record<HistoryTab, number>;
       return { employee: found[0], rows: history, counts };
     },
+    /** Trainings Staff may put on a schedule: not Cancelled, today or later (Manila), soonest first. */
+    async printable(): Promise<PrintableTraining[]> {
+      await authorise();
+      const { rows } = await db.query<PrintableTraining>(`
+        SELECT id, title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime", mode
+        FROM public.hrms_trainings WHERE cancelled_at IS NULL AND training_date >= $1::date
+        ORDER BY training_date, start_time, id LIMIT ${MAX_SCHEDULE_TRAININGS}`, [manilaToday(now())]);
+      return rows;
+    },
+    /**
+     * The schedule for the chosen Trainings, in date order, with the names under each when asked. Read-only: the preview
+     * uses it. Unknown or Cancelled Trainings are refused rather than left out silently.
+     */
+    async schedule(trainingIds: number[], { includeNames }: { includeNames: boolean }): Promise<ScheduleSheet> {
+      const staff = await authorise();
+      return buildSchedule(trainingIds, includeNames, staff.name);
+    },
+    /**
+     * Produces the schedule to print or export. When it lists the names, every no-email Employee on these Trainings is marked
+     * printed (when, and the Training date on the sheet) and "Reprint needed" is cleared. Without the names the sheet does
+     * not say who it is for, so nothing is marked.
+     */
+    async printSchedule(trainingIds: number[], { includeNames }: { includeNames: boolean }): Promise<{ sheet: ScheduleSheet; marked: number }> {
+      const staff = await authorise();
+      const sheet = await buildSchedule(trainingIds, includeNames, staff.name);
+      if (!includeNames || sheet.needPrinted.length === 0) return { sheet, marked: 0 };
+      const { rows } = await db.query<{ n: number }>(`
+        WITH marked AS (
+          UPDATE public.hrms_training_assignments a SET printed_at = $2::timestamptz, printed_date = t.training_date, reprint_needed = false
+          FROM public.hrms_trainings t, public.hrms_employees e
+          WHERE a.training_id = ANY($1::int[]) AND t.id = a.training_id AND e.id = a.employee_id AND a.status <> 'Cancelled'
+            AND NULLIF(btrim(e.email), '') IS NULL
+          RETURNING a.employee_id
+        ) SELECT count(*)::int AS n FROM marked`, [sheet.items.map((item) => item.id), now().toISOString()]);
+      return { sheet, marked: rows[0].n };
+    },
     /** The Notification log: a row per Employee notice, the Not reached list and the Needs printed schedule list. */
     async log(trainingId: number): Promise<NotificationLog> {
       await authorise();
@@ -486,7 +545,8 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         WHERE n.training_id = $1`, [trainingId]);
       const { rows: noEmail } = await db.query<LogRow & { at: Date | string }>(`
         SELECT NULL::bigint AS "noticeId", e.id AS "employeeId", e.full_name AS "employeeName", e.position, e.branch, 'Assignment' AS kind,
-          NULL::text AS email, 'Needs printed schedule' AS state, a.assigned_at AS at, 0 AS attempts, NULL::timestamptz AS "nextAttemptAt"
+          NULL::text AS email, 'Needs printed schedule' AS state, a.assigned_at AS at, 0 AS attempts, NULL::timestamptz AS "nextAttemptAt",
+          a.printed_at AS "printedAt", a.printed_date::text AS "printedDate", a.reprint_needed AS "reprintNeeded"
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 AND NULLIF(btrim(e.email), '') IS NULL`, [trainingId]);
       const iso = (value: Date | string | null) => (value === null ? null : new Date(value).toISOString());
