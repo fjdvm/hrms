@@ -4,7 +4,10 @@ import { PAGE } from "@/components/hiring/parts";
 import { EmployeeProfile } from "@/components/employees/employee-profile";
 import { EmployeeError, employeesFor, type EmployeeDetail } from "@/lib/employees";
 import { employeesForRequest } from "@/lib/portal/employees";
-import { requireModule } from "@/lib/portal/staff";
+import { requireModule, staffWithModule } from "@/lib/portal/staff";
+import { ProfileTrainingHistory } from "@/components/training/training-history";
+import { trainingsForRequest } from "@/lib/portal/trainings";
+import { TrainingError } from "@/lib/trainings";
 import { EmployeeSkeleton } from "./employee-skeleton";
 
 async function Employee({ id }: { id: number }) {
@@ -16,7 +19,17 @@ async function Employee({ id }: { id: number }) {
     if (error instanceof EmployeeError && (error.reason === "not-found" || error.reason === "validation")) notFound();
     throw error;
   }
-  return <EmployeeProfile employee={employee} history={history} activity={activity} />;
+  // Training history is Training Module data: only Staff who hold that Module get the tab, and a failure there never hides the profile.
+  let trainingHistory: Awaited<ReturnType<Awaited<ReturnType<typeof trainingsForRequest>>["history"]>> | null = null;
+  if (await staffWithModule("Training")) {
+    try {
+      trainingHistory = await (await trainingsForRequest()).history(id);
+    } catch (error) {
+      if (!(error instanceof TrainingError)) throw error;
+    }
+  }
+  const training = trainingHistory ? <ProfileTrainingHistory history={trainingHistory} /> : undefined;
+  return <EmployeeProfile employee={employee} history={history} activity={activity} training={training} />;
 }
 
 export default async function Page({ params }: PageProps<"/employee-information/[id]">) {

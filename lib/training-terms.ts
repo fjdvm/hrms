@@ -332,3 +332,41 @@ export function scheduleDiffers(a: { date: string; startTime: string; endTime: s
   return a.date !== b.date || a.startTime !== b.startTime || a.endTime !== b.endTime || a.mode !== b.mode || a.location !== b.location;
 }
 export type UpdateResult = { changed: boolean; rescheduled: boolean; notified: number; needPrintedSchedule: number };
+
+// ── Training history ──────────────────────────────────────────────────────
+
+export const HISTORY_TABS = ["All", "Upcoming", "Completed", "Did not attend", "Cancelled"] as const;
+export type HistoryTab = (typeof HISTORY_TABS)[number];
+
+/** One Training an Employee was assigned to. `result` is their status on it; a Cancelled Training reads Cancelled. */
+export type HistoryRow = {
+  trainingId: number;
+  title: string;
+  trainer: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  mode: TrainingMode;
+  result: AssignmentStatus;
+  /** The day Staff recorded they completed it; null until then. */
+  completedOn: string | null;
+  /** The Training's date has passed and Staff have not marked this Employee's result yet. */
+  resultsNotRecorded: boolean;
+  /** The Training is still to come and this Employee is assigned to it. */
+  upcoming: boolean;
+};
+export type HistoryEmployee = { id: number; name: string; employeeNumber: string; position: string; branch: string; status: string };
+export type TrainingHistory = {
+  employee: HistoryEmployee;
+  /** Most recent first. */
+  rows: HistoryRow[];
+  counts: Record<HistoryTab, number>;
+};
+
+export const historyTabFromParam = (param: string | undefined): HistoryTab =>
+  HISTORY_TABS.find((tab) => tab.toLowerCase().replace(/ /g, "-") === param?.toLowerCase()) ?? "All";
+export const historyHref = (employeeId: number, tab: HistoryTab) =>
+  `/training/history?employee=${employeeId}${tab === "All" ? "" : `&tab=${tab.toLowerCase().replace(/ /g, "-")}`}`;
+/** Which rows a tab shows. */
+export const historyRowsFor = (rows: HistoryRow[], tab: HistoryTab) =>
+  rows.filter((row) => tab === "All" || (tab === "Upcoming" ? row.upcoming : row.result === tab));
