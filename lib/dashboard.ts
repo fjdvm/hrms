@@ -66,13 +66,26 @@ export interface ActivityEvent {
   at: string;
 }
 
+/**
+ * One line of the Upcoming Events Widget. Holidays and leave belong to Attendance; a Training belongs to Training and
+ * Development. Each Staff member sees only the kinds of the Modules they hold.
+ */
 export type UpcomingEvent = {
   id: string;
   title: string;
   /** "YYYY-MM-DD"; the start date for multi-day leave. */
   date: string;
   description: string;
-} & ({ kind: "holiday" } | { kind: "leave"; status: "approved" | "pending" });
+} & (
+  | { kind: "holiday" }
+  | { kind: "leave"; status: "approved" | "pending" }
+  /** `startTime` is "HH:mm" Manila; `link` opens the Training. */
+  | { kind: "training"; startTime: string; link: string }
+);
+
+/** The Module pages that own Upcoming Events items. Attendance has no HRMS page yet, so only Training holders see the Widget today. */
+export const ATTENDANCE_PAGE = "/attendance";
+export const TRAINING_PAGE = "/training";
 
 export interface KeySummaryCard {
   label: string;
@@ -286,7 +299,7 @@ export function rangeSearch(range: DashboardRange): string {
 type CardRow = "hiring" | "people";
 
 /** Who sees a card or Widget: holders of any of these Modules' pages, or every Dashboard holder when it has no owning Module. */
-type Audience = readonly Module["href"][] | "everyone";
+type Audience = readonly string[] | "everyone";
 
 /** Whether the Staff member, holding these pages, is in the audience. Every Dashboard holder is in "everyone". */
 const sees = (audience: Audience, permittedPages: readonly string[]) =>
@@ -670,13 +683,17 @@ function recentActivity(summary: DashboardSummary, now: Date): ActivityItem[] | 
   return items.length > 0 ? items : null;
 }
 
-function upcomingEvents(summary: DashboardSummary, now: Date): UpcomingEvent[] | null {
+function upcomingEvents(summary: DashboardSummary, now: Date, permittedPages: readonly string[] = []): UpcomingEvent[] | null {
   const from = dayNumber(now);
   const day = (e: UpcomingEvent) => dayNumber(new Date(`${e.date}T00:00`));
+  const time = (e: UpcomingEvent) => (e.kind === "training" ? e.startTime : "");
+  // Each Module's items go only to its holders: holidays and leave to Attendance, Trainings to Training and Development.
+  const owns = (e: UpcomingEvent) => permittedPages.includes(e.kind === "training" ? TRAINING_PAGE : ATTENDANCE_PAGE);
   const items = (summary.upcomingEvents ?? [])
-    .filter((e) => e.kind === "holiday" || e.status === "approved")
+    .filter(owns)
+    .filter((e) => e.kind === "holiday" || e.kind === "training" || e.status === "approved")
     .filter((e) => day(e) >= from && day(e) <= from + EVENT_WINDOW_DAYS)
-    .sort((a, b) => day(a) - day(b))
+    .sort((a, b) => day(a) - day(b) || time(a).localeCompare(time(b)))
     .slice(0, EVENT_LIMIT);
   return items.length > 0 ? items : null;
 }
@@ -901,7 +918,7 @@ function applicantsByJob(summary: DashboardSummary, range: DashboardRange): Appl
 
 interface DetailWidgetSpec {
   audience: Audience;
-  build: (summary: DashboardSummary, now: Date) => DetailWidget;
+  build: (summary: DashboardSummary, now: Date, permittedPages: readonly string[]) => DetailWidget;
 }
 
 const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
@@ -933,12 +950,13 @@ const DETAIL_WIDGETS: readonly DetailWidgetSpec[] = [
     }),
   },
   {
-    audience: "everyone",
-    build: (s, now) => ({
+    // Shown to a holder of at least one of the Modules that supply it, with only that Module's items.
+    audience: [ATTENDANCE_PAGE, TRAINING_PAGE],
+    build: (s, now, pages) => ({
       id: "upcoming-events",
       label: "Upcoming Events",
       module: null,
-      data: upcomingEvents(s, now),
+      data: upcomingEvents(s, now, pages),
     }),
   },
 ];
@@ -949,8 +967,8 @@ const widgetFor = (
   summary: DashboardSummary,
   now: Date,
 ): DetailWidget | null => {
-  const spec = DETAIL_WIDGETS.find((w) => w.build({}, now).id === id)!;
-  return sees(spec.audience, permittedPages) ? spec.build(summary, now) : null;
+  const spec = DETAIL_WIDGETS.find((w) => w.build({}, now, []).id === id)!;
+  return sees(spec.audience, permittedPages) ? spec.build(summary, now, permittedPages) : null;
 };
 
 /** The left half of the People block: its cards side by side, Recent Activity below. */

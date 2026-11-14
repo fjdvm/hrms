@@ -7,7 +7,7 @@ import { dashboardLayoutFor, dashboardRange } from "@/lib/dashboard";
 afterEach(cleanup);
 
 const NOW = new Date("2026-10-28T12:05:00Z");
-const ALL = ["/dashboard", "/job-postings", "/applicants", "/interviews", "/offers", "/employee-information"];
+const ALL = ["/dashboard", "/job-postings", "/applicants", "/interviews", "/offers", "/employee-information", "/training"];
 
 /** What the Dashboard draws, top to bottom, with each card and widget reduced to its label or id. */
 function drawnOrder(pages: string[]): string[] {
