@@ -164,6 +164,8 @@ export type AssignedEmployee = {
   completedOn: string | null;
   /** The Training moved after this Employee was handed a printed schedule, so it needs printing again. */
   reprintNeeded: boolean;
+  /** Typed by Staff from the paper feedback form; only an employee marked Completed has it. */
+  feedback: TrainingFeedback | null;
 };
 /** An Employee the Assign dialog offers. */
 export type AssignableEmployee = {
@@ -225,6 +227,25 @@ export const completionOf = (completed: number, due: number): TrainingCompletion
 /** "November 2026" from a Manila "YYYY-MM-DD" date. */
 export const formatMonth = (day: string) =>
   new Date(`${day.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
+// ── Feedback ──────────────────────────────────────────────────────────────
+
+/** A rating from 1 to 5 stars and optional comments, typed by Staff from the paper feedback form. */
+export type TrainingFeedback = { rating: number; comments: string };
+export const FEEDBACK_RATINGS = [1, 2, 3, 4, 5] as const;
+export const FEEDBACK_LABELS: Record<number, string> = { 1: "Poor", 2: "Fair", 3: "Average", 4: "Good", 5: "Excellent" };
+export const FEEDBACK_COMMENTS_MAX = 1000;
+export const feedbackLabel = (rating: number) => `${rating} of 5 · ${FEEDBACK_LABELS[rating]}`;
+
+/** Normalises and checks feedback. `feedback` is set only when there is no error; comments are rejected for markup, not stripped. */
+export function readFeedback(raw: { rating?: unknown; comments?: unknown }): { feedback: TrainingFeedback | null; ratingError?: string; commentsError?: string } {
+  const rating = raw?.rating;
+  const comments = cleanLines(raw?.comments);
+  const ratingError = typeof rating === "number" && Number.isInteger(rating) && rating >= 1 && rating <= 5 ? undefined : "Choose a rating from 1 to 5 stars.";
+  const commentsError = comments.length > FEEDBACK_COMMENTS_MAX || !TEXT.test(comments.replace(/\n/g, " "))
+    ? `Use up to ${FEEDBACK_COMMENTS_MAX} characters for the comments, without < or >.` : undefined;
+  return ratingError || commentsError ? { feedback: null, ratingError, commentsError } : { feedback: { rating: rating as number, comments } };
+}
 
 // ── Cancel ────────────────────────────────────────────────────────────────
 

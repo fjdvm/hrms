@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { saveResults } from "@/app/(hrms)/training/actions";
-import { type AssignedEmployee, type ResultMark, type ResultStatus } from "@/lib/training-terms";
+import { FeedbackDialog } from "@/components/training/feedback-dialog";
+import { formatShortDate, type AssignedEmployee, type ResultMark, type ResultStatus, type TrainingFeedback } from "@/lib/training-terms";
 import { cn } from "@/lib/utils";
 
 type Row = { status: ResultStatus; completedOn: string };
@@ -20,10 +21,12 @@ const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 
  * "Training · Mark results": set each Assigned employee's result from the paper sign-in sheet, one by one or in bulk, then save.
  * Cancelled employees were set automatically and are left out. The wording is "results", never "attendance".
  */
-export function MarkResults({ trainingId, trainingDate, today, people }: { trainingId: number; trainingDate: string; today: string; people: AssignedEmployee[] }) {
+export function MarkResults({ trainingId, trainingTitle, trainingDate, today, people }: { trainingId: number; trainingTitle: string; trainingDate: string; today: string; people: AssignedEmployee[] }) {
   const markable = people.filter((person) => person.status !== "Cancelled");
   const start = (): Record<number, Row> => Object.fromEntries(markable.map((person) => [person.employeeId, { status: person.status as ResultStatus, completedOn: person.completedOn ?? "" }]));
   const [saved, setSaved] = useState(start);
+  // Feedback typed from the paper form; only an employee whose Completed result is saved can have it.
+  const [feedback, setFeedback] = useState<Record<number, TrainingFeedback | null>>(() => Object.fromEntries(markable.map((person) => [person.employeeId, person.feedback])));
   const [rows, setRows] = useState(start);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkDate, setBulkDate] = useState(trainingDate <= today ? trainingDate : today);
@@ -57,6 +60,7 @@ export function MarkResults({ trainingId, trainingDate, today, people }: { train
       const result = await saveResults(trainingId, marks);
       if (result.error) { setError(result.error); return; }
       setSaved(rows);
+      setFeedback((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, rows[Number(id)]?.status === "Completed" ? value : null])));
       setDone(`Results saved for ${marks.length} ${marks.length === 1 ? "employee" : "employees"}.`);
     });
   }
@@ -99,9 +103,9 @@ export function MarkResults({ trainingId, trainingDate, today, people }: { train
       <Card className="flex flex-col gap-[14px] rounded-xl p-[20px] shadow-none">
         {markable.length === 0 ? <p className="py-lg text-center text-sm text-muted-foreground">No one is assigned to mark. Assign employees from the training page.</p> : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-sm">
+            <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-[#efebf4]"><th className={cn(HEAD, "w-[36px]")}><span className="sr-only">Select</span></th><th className={cn(HEAD, "w-[260px]")}>Employee</th><th className={cn(HEAD, "w-[330px]")}>Result</th><th className={HEAD}>Completion date</th></tr>
+                <tr className="border-b border-[#efebf4]"><th className={cn(HEAD, "w-[36px]")}><span className="sr-only">Select</span></th><th className={cn(HEAD, "w-[260px]")}>Employee</th><th className={cn(HEAD, "w-[330px]")}>Result</th><th className={cn(HEAD, "w-[170px]")}>Completion date</th><th className={HEAD}>Feedback</th></tr>
               </thead>
               <tbody>
                 {markable.map((person) => {
@@ -131,6 +135,12 @@ export function MarkResults({ trainingId, trainingDate, today, people }: { train
                         </div>
                       </td>
                       <td className="py-[10px]">{row.status === "Completed" ? dateInput(row.completedOn, (next) => change(person.employeeId, { completedOn: next }), `Completion date for ${person.name}`) : <span className="text-sm text-zinc-400">—</span>}</td>
+                      <td className="py-[10px]">
+                        {saved[person.employeeId].status === "Completed" && row.status === "Completed"
+                          ? <FeedbackDialog trainingId={trainingId} employeeId={person.employeeId} employeeName={person.name} trainingTitle={trainingTitle} trainingDate={formatShortDate(trainingDate)}
+                              feedback={feedback[person.employeeId]} onSaved={(next) => setFeedback((current) => ({ ...current, [person.employeeId]: next }))} />
+                          : <span className="text-sm text-zinc-400">—</span>}
+                      </td>
                     </tr>
                   );
                 })}

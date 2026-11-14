@@ -90,7 +90,7 @@ it("a text-only edit shows no Notify section", async () => {
 });
 
 it("flags a no-email Employee 'Reprint needed' in the Assigned employees table", () => {
-  const person = (id: number, name: string, email: string | null, reprintNeeded: boolean) => ({ employeeId: id, name, position: "Cashier", branch: "Taytay", email, needsPrintedSchedule: !email, status: "Assigned" as const, completedOn: null, reprintNeeded });
+  const person = (id: number, name: string, email: string | null, reprintNeeded: boolean) => ({ employeeId: id, name, position: "Cashier", branch: "Taytay", email, needsPrintedSchedule: !email, status: "Assigned" as const, completedOn: null, reprintNeeded, feedback: null });
   render(<AssignedEmployees trainingId={7} title="POS" date="d" people={[person(1, "Mylene Santos", null, true), person(2, "Joel Ramirez", null, false)]} />);
   expect(screen.getAllByText("Needs printed schedule")).toHaveLength(2);
   expect(screen.getAllByText("Reprint needed")).toHaveLength(1);

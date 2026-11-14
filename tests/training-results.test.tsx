@@ -12,7 +12,7 @@ vi.mock("@/app/(hrms)/training/actions", () => actions);
 
 const person = (id: number, name: string, extra: Partial<AssignedEmployee> = {}): AssignedEmployee => ({
   employeeId: id, name, position: "Production Staff", branch: "Main kitchen", email: `${name.split(" ")[0].toLowerCase()}@example.test`,
-  needsPrintedSchedule: false, status: "Assigned", completedOn: null, reprintNeeded: false, ...extra,
+  needsPrintedSchedule: false, status: "Assigned", completedOn: null, reprintNeeded: false, feedback: null, ...extra,
 });
 const PEOPLE = [
   person(1, "Noel Garcia", { status: "Completed", completedOn: "2026-11-10" }),
@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); Object.values(actions).forEach((fn) => fn.mockReset()); vi.unstubAllGlobals(); });
 
-const view = () => render(<MarkResults trainingId={7} trainingDate="2026-11-10" today="2026-11-14" people={PEOPLE} />);
+const view = () => render(<MarkResults trainingId={7} trainingTitle="Safe lifting and ergonomics" trainingDate="2026-11-10" today="2026-11-14" people={PEOPLE} />);
 
 it("counts marked results as 'X of Y' and leaves Cancelled employees out", () => {
   view();
@@ -84,7 +84,8 @@ it("saves only what changed and says so", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Save results" }));
   expect(actions.saveResults).toHaveBeenCalledWith(7, [{ employeeId: 3, status: "Completed", completedOn: "2026-11-10" }]);
   expect((await screen.findByRole("status")).textContent).toBe("Results saved for 1 employee.");
-  expect((screen.getByRole("button", { name: "Save results" }) as HTMLButtonElement).disabled).toBe(true);
+  // The label returns from "Saving…" a moment after the message appears.
+  await waitFor(() => expect((screen.getByRole("button", { name: "Save results" }) as HTMLButtonElement).disabled).toBe(true));
 });
 
 it("shows the server's message when saving fails and keeps the changes", async () => {
@@ -94,7 +95,7 @@ it("shows the server's message when saving fails and keeps the changes", async (
   await userEvent.click(screen.getByRole("button", { name: "Save results" }));
   expect((await screen.findByRole("alert")).textContent).toMatch(/was cancelled/);
   expect(screen.getByText("3 of 4")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "Save results" }) as HTMLButtonElement).disabled).toBe(false);
+  await waitFor(() => expect((screen.getByRole("button", { name: "Save results" }) as HTMLButtonElement).disabled).toBe(false));
 });
 
 it("checks marks like the server does", () => {

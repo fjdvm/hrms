@@ -40,7 +40,7 @@ export default async function Page({ params }: PageProps<"/training/[id]/results
         <p className="text-sm text-muted-foreground">{training.title} · {formatTrainingDate(training.date)} · {formatTrainingTimes(training.startTime, training.endTime)} · from the paper sign-in sheet</p>
       </header>
       {held
-        ? <MarkResults trainingId={training.id} trainingDate={training.date} today={today} people={training.assigned} />
+        ? <MarkResults trainingId={training.id} trainingTitle={training.title} trainingDate={training.date} today={today} people={training.assigned} />
         : <Card className="rounded-xl shadow-none"><p role="status" className="p-xl text-center text-muted-foreground">Results can be marked from the day of the training, {formatTrainingDate(training.date)}.</p></Card>}
     </div>
   );
