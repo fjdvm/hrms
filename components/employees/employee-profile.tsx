@@ -12,7 +12,7 @@ import { ONBOARDING_ROW_URL, headerSubtitle, submittedCount } from "@/lib/employ
 import { EmployeeTabs } from "./employee-tabs";
 import { Contract, DocumentsCard, DocumentsTable, EmergencyContact, Employment, GovernmentIdsSection, PersonalInformation } from "./employee-sections";
 
-export function EmployeeProfile({ employee, history, activity }: { employee: EmployeeDetail; history: EmployeeHistory[]; activity: EmployeeAudit[] }) {
+export function EmployeeProfile({ employee, history, activity, training }: { employee: EmployeeDetail; history: EmployeeHistory[]; activity: EmployeeAudit[]; training?: React.ReactNode }) {
   const { personal, employment, documents, canEdit } = employee;
   const edit = (section: Parameters<typeof initialValues>[0], allowed = true) => allowed
     ? <EditSectionButton employeeId={employee.id} section={section} initial={initialValues(section, employee)} /> : undefined;
@@ -44,6 +44,7 @@ export function EmployeeProfile({ employee, history, activity }: { employee: Emp
         documents={<DocumentsTable employeeId={employee.id} documents={documents} />}
         history={<EmploymentHistory history={history} />}
         activity={<EmployeeActivity activity={activity} />}
+        training={training}
       />
     </>
   );
