@@ -1,8 +1,10 @@
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
+import { assignmentEmail, queueNotice, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
   TRAINING_TABS, manilaToday, materialProblem, readTrainingForm, tabOf, trainingStatus,
+  type LogEvent, type LogRow, type LogTab, type NotificationLog,
   type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
@@ -206,8 +208,8 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (byDepartment ? typeof request.department !== "string" || request.department.trim() === "" : !Array.isArray(request.employeeIds) || request.employeeIds.length === 0 || !request.employeeIds.every(validId)) {
         throw new TrainingError("validation");
       }
-      const { rows: chosen } = await db.query<{ id: number; email: string | null; assigned: boolean }>(`
-        SELECT e.id, NULLIF(btrim(e.email), '') AS email,
+      const { rows: chosen } = await db.query<{ id: number; name: string; email: string | null; assigned: boolean }>(`
+        SELECT e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email,
           EXISTS (SELECT 1 FROM public.hrms_training_assignments a WHERE a.training_id = $1 AND a.employee_id = e.id) AS assigned
         FROM public.hrms_employees e
         WHERE ${byDepartment ? "e.department = $2" : "e.id = ANY($2::int[])"}`,
@@ -218,6 +220,16 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (fresh.length > 0) {
         await db.query(`INSERT INTO public.hrms_training_assignments (training_id, employee_id, assigned_by)
           SELECT $1, unnest($2::int[]), $3 ON CONFLICT DO NOTHING`, [trainingId, fresh.map((person) => person.id), staff.username]);
+        // Everyone with an email gets the Assignment email; no-email Employees get none and are listed as Needs printed schedule.
+        const { rows: details } = await db.query<NoticeTraining>(`
+          SELECT title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime", mode, location
+          FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
+        for (const person of fresh) {
+          const notice = queueNotice("Assignment", person, assignmentEmail(person.name, details[0]));
+          if (!notice) continue;
+          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), now().toISOString()]);
+        }
       }
       return { added: fresh.length, alreadyAssigned: chosen.length - fresh.length, needPrintedSchedule: fresh.filter((person) => !person.email).length };
     },
@@ -228,6 +240,62 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (!validId(employeeId)) throw new TrainingError("not-found");
       const { rows } = await db.query(`DELETE FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = $2 RETURNING 1`, [trainingId, employeeId]);
       if (!rows[0]) throw new TrainingError("not-found");
+      // Notices not yet delivered stop with the assignment; delivered and failed ones stay in the log.
+      await db.query(`DELETE FROM public.hrms_training_notices WHERE training_id = $1 AND employee_id = $2 AND state IN ('Queued', 'Retrying')`, [trainingId, employeeId]);
+    },
+    /** The Notification log: a row per Employee notice, the Not reached list and the Needs printed schedule list. */
+    async log(trainingId: number): Promise<NotificationLog> {
+      await authorise();
+      await requireTraining(trainingId);
+      const { rows: stored } = await db.query<LogRow & { at: Date | string; nextAttemptAt: Date | string | null }>(`
+        SELECT n.id AS "noticeId", e.id AS "employeeId", e.full_name AS "employeeName", e.position, e.branch, n.kind, n.email,
+          CASE n.state WHEN 'Queued' THEN 'Sending' ELSE n.state END AS state,
+          COALESCE(n.last_attempt_at, n.created_at) AS at, n.attempts, n.next_attempt_at AS "nextAttemptAt"
+        FROM public.hrms_training_notices n JOIN public.hrms_employees e ON e.id = n.employee_id
+        WHERE n.training_id = $1`, [trainingId]);
+      const { rows: noEmail } = await db.query<LogRow & { at: Date | string }>(`
+        SELECT NULL::bigint AS "noticeId", e.id AS "employeeId", e.full_name AS "employeeName", e.position, e.branch, 'Assignment' AS kind,
+          NULL::text AS email, 'Needs printed schedule' AS state, a.assigned_at AS at, 0 AS attempts, NULL::timestamptz AS "nextAttemptAt"
+        FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
+        WHERE a.training_id = $1 AND NULLIF(btrim(e.email), '') IS NULL`, [trainingId]);
+      const iso = (value: Date | string | null) => (value === null ? null : new Date(value).toISOString());
+      const rows: LogRow[] = [...stored, ...noEmail]
+        .map((row) => ({ ...row, noticeId: row.noticeId === null ? null : Number(row.noticeId), at: iso(row.at)!, nextAttemptAt: iso(row.nextAttemptAt) }))
+        .sort((a, b) => b.at.localeCompare(a.at) || (b.noticeId ?? 0) - (a.noticeId ?? 0));
+      const notReached = rows.filter((row) => row.state === "Failed");
+      const needsPrinted = rows.filter((row) => row.state === "Needs printed schedule");
+      const counts: Record<LogTab, number> = { "All notices": rows.length, "Not reached": notReached.length, "Needs printed schedule": needsPrinted.length };
+      return { rows, notReached, needsPrinted, counts };
+    },
+    /** The latest notice events for the detail page, each with how many were sent, retrying, failed or need a printed schedule. */
+    async logPreview(trainingId: number, limit = 3): Promise<LogEvent[]> {
+      const { rows } = await this.log(trainingId);
+      const { rows: created } = await db.query<{ kind: string; createdAt: Date | string; state: string }>(
+        `SELECT kind, created_at AS "createdAt", state FROM public.hrms_training_notices WHERE training_id = $1`, [trainingId]);
+      const events = new Map<string, LogEvent>();
+      const at = (value: Date | string) => new Date(value).toISOString();
+      const bucket = (kind: string, when: string) => {
+        const key = `${kind}|${when.slice(0, 16)}`;
+        if (!events.has(key)) events.set(key, { kind, at: when, sent: 0, retrying: 0, failed: 0, needPrinted: 0 });
+        return events.get(key)!;
+      };
+      for (const row of created) {
+        const event = bucket(row.kind, at(row.createdAt));
+        if (row.state === "Sent") event.sent += 1; else if (row.state === "Failed") event.failed += 1; else event.retrying += 1;
+      }
+      for (const row of rows.filter((item) => item.state === "Needs printed schedule")) bucket(row.kind, row.at).needPrinted += 1;
+      return [...events.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+    },
+    /** Puts a Not reached notice back in the queue; it gets the full three retries again. */
+    async retryNotice(trainingId: number, noticeId: number): Promise<void> {
+      await authorise();
+      await requireTraining(trainingId);
+      if (!Number.isInteger(noticeId) || noticeId <= 0) throw new TrainingError("not-found");
+      const { rows } = await db.query<{ state: string }>(`SELECT state FROM public.hrms_training_notices WHERE id = $1 AND training_id = $2`, [noticeId, trainingId]);
+      if (!rows[0]) throw new TrainingError("not-found");
+      if (rows[0].state !== "Failed") throw new TrainingError("conflict");
+      await db.query(`UPDATE public.hrms_training_notices SET state = 'Retrying', attempts = 0, next_attempt_at = $2::timestamptz
+        WHERE id = $1 AND state = 'Failed'`, [noticeId, now().toISOString()]);
     },
     /** Asks file-storage for an upload address. The file is Pending, and uploaded by this Staff member, until confirmed. */
     async requestMaterial(file: MaterialRequest, trainingId?: number): Promise<{ fileId: string; uploadUrl: string }> {

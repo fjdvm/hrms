@@ -179,3 +179,51 @@ export function noEmailWarning(people: { name: string; email: string | null }[])
   const names = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} and ${missing[missing.length - 1]}`;
   return `${names} ${missing.length === 1 ? "has" : "have"} no email, so ${missing.length === 1 ? "they" : "they"} won’t get the Assignment email. Print the schedule from the training page.`;
 }
+
+// ── Notification log ──────────────────────────────────────────────────────
+
+export type LogNoticeState = "Sending" | "Sent" | "Retrying" | "Failed" | "Needs printed schedule";
+export type LogTab = "All notices" | "Not reached" | "Needs printed schedule";
+export const LOG_TABS: LogTab[] = ["All notices", "Not reached", "Needs printed schedule"];
+
+/** One row of the log: a stored notice, or (for an Employee with no email) the Assignment that could not be emailed. */
+export type LogRow = {
+  /** Set for stored notices; null for a no-email Employee's "Needs printed schedule" row. */
+  noticeId: number | null;
+  employeeId: number;
+  employeeName: string;
+  position: string;
+  branch: string;
+  kind: string;
+  email: string | null;
+  state: LogNoticeState;
+  /** When it was sent, last tried or (no email) assigned. ISO. */
+  at: string;
+  /** Failed sends so far, for "Try 2 of 3" and "3 tries". */
+  attempts: number;
+  /** When the next try is due, while Retrying. ISO. */
+  nextAttemptAt: string | null;
+};
+export type NotificationLog = {
+  rows: LogRow[];
+  notReached: LogRow[];
+  needsPrinted: LogRow[];
+  counts: Record<LogTab, number>;
+};
+/** One line of the detail page's preview: a notice event with how it went. */
+export type LogEvent = { kind: string; at: string; sent: number; retrying: number; failed: number; needPrinted: number };
+
+export const logTabFromParam = (param: string | undefined): LogTab =>
+  LOG_TABS.find((tab) => tab.toLowerCase().replace(/ /g, "-") === param?.toLowerCase()) ?? "All notices";
+export const logHref = (trainingId: number, tab: LogTab) =>
+  tab === "All notices" ? `/training/${trainingId}/log` : `/training/${trainingId}/log?tab=${tab.toLowerCase().replace(/ /g, "-")}`;
+
+/** "11 Nov, 4:55 PM" in Manila time. */
+export function formatNoticeTime(iso: string) {
+  const date = new Date(iso);
+  const day = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Manila" });
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" });
+  return `${day}, ${time}`;
+}
+/** "4:40 PM" in Manila time. */
+export const formatClock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" });

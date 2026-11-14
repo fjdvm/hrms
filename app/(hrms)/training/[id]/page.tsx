@@ -6,12 +6,13 @@ import { BackLink, PAGE } from "@/components/hiring/parts";
 import { AssignDialog } from "@/components/training/assign-dialog";
 import { AssignedEmployees } from "@/components/training/assigned-employees";
 import { LaterCards } from "@/components/training/later-cards";
+import { NotificationLogPreview } from "@/components/training/notification-log-preview";
 import { MaterialsCard } from "@/components/training/materials";
 import { TrainingNoAccess } from "@/components/training/no-access";
 import { staffWithModule } from "@/lib/portal/staff";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError, type TrainingDetail } from "@/lib/trainings";
-import { formatShortDate, formatTrainingDate, formatTrainingTimes, type TrainingStatus } from "@/lib/training-terms";
+import { type LogEvent, formatShortDate, formatTrainingDate, formatTrainingTimes, type TrainingStatus } from "@/lib/training-terms";
 
 const BADGE: Record<TrainingStatus, "success" | "secondary"> = { Upcoming: "success", Completed: "success", Cancelled: "secondary" };
 const LABEL = "text-xs text-muted-foreground";
@@ -22,8 +23,10 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
   if (!/^\d+$/.test(id)) notFound();
 
   let training: TrainingDetail;
+  let preview: LogEvent[];
   try {
-    training = await (await trainingsForRequest()).read(Number(id));
+    const trainings = await trainingsForRequest();
+    [training, preview] = await Promise.all([trainings.read(Number(id)), trainings.logPreview(Number(id))]);
   } catch (error) {
     if (!(error instanceof TrainingError)) throw error;
     if (error.reason === "not-found") notFound();
@@ -91,6 +94,7 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
         </div>
         <div className="flex w-full shrink-0 flex-col gap-[16px] lg:w-[340px]">
           <MaterialsCard trainingId={training.id} initial={training.materials} />
+          <NotificationLogPreview trainingId={training.id} events={preview} />
         </div>
       </div>
       <LaterCards />
