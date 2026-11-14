@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, materialProblem, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, materialProblem, readResultMarks, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
@@ -16,6 +16,8 @@ const MESSAGES: Record<TrainingError["reason"], string> = {
   "not-found": "That training no longer exists.",
   conflict: "This training was cancelled, so no one can be assigned to it.",
   unavailable: "HRMS could not reach the Portal or database. Please try again in a moment.",
+  locked: "Date, time and venue can’t change after results are recorded. Create a new training instead.",
+  early: "Results can be marked from the day of the training.",
   invalid: "",
   denied: "",
 };
@@ -175,6 +177,27 @@ export async function cancelTraining(trainingId: number, reason: string, notify:
   } catch (error) {
     if (error instanceof TrainingError && error.reason === "conflict") return { error: "This training was already cancelled or has results recorded, so it can't be cancelled." };
     if (error instanceof TrainingError && error.reason === "validation") return { reasonError: "Check the reason and try again." };
+    return { error: problem(error) };
+  }
+}
+
+export type ResultsState = { error?: string; result?: MarkResultsResult };
+
+/** Saves results marked from the paper sign-in sheet: one or many Employees, each Completed (with a date), Did not attend or back to Assigned. */
+export async function saveResults(trainingId: number, marks: ResultMark[]): Promise<ResultsState> {
+  try {
+    const trainings = await trainingsForRequest();
+    const training = await trainings.read(trainingId);
+    const checked = readResultMarks(marks, { trainingDate: training.date, today: manilaToday() });
+    if (!checked.marks) return { error: checked.error };
+    const result = await trainings.markResults(trainingId, { marks: checked.marks });
+    revalidatePath(`/training/${trainingId}`);
+    revalidatePath(`/training/${trainingId}/results`);
+    revalidatePath("/training");
+    return { result };
+  } catch (error) {
+    if (error instanceof TrainingError && error.reason === "conflict") return { error: "This training was cancelled, so results can't be marked." };
+    if (error instanceof TrainingError && error.reason === "validation") return { error: "Check the employees and completion dates, then try again." };
     return { error: problem(error) };
   }
 }

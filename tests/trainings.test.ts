@@ -445,3 +445,164 @@ describe("Cancelling a Training", () => {
     expect((await trainings().list()).rows[0]).toMatchObject({ status: "Cancelled", completed: 0 });
   });
 });
+
+/** A Training whose date has passed (create() refuses past dates, so the row is moved back), with these Employees assigned. */
+async function heldTraining(date: string, people: string[], overrides: Partial<TrainingTerms> = {}) {
+  const id = await trainings().create(terms(overrides));
+  await db.query(`UPDATE public.hrms_trainings SET training_date = $2 WHERE id = $1`, [id, date]);
+  const ids: number[] = [];
+  for (const name of people) ids.push(await employee(name));
+  if (ids.length > 0) await trainings().assign(id, { employeeIds: ids });
+  return { id, ids };
+}
+const result = async (id: number) => (await trainings().read(id)).assigned.map((person) => [person.name, person.status, person.completedOn]);
+
+describe("Marking results", () => {
+  it("sets Completed with a completion date, Did not attend, and back to Assigned, one or many at a time", async () => {
+    const { id, ids } = await heldTraining("2026-11-10", ["Ana Dizon", "Liza Manalo", "Rhea Bautista"]);
+    expect(await trainings().markResults(id, { marks: [
+      { employeeId: ids[0], status: "Completed", completedOn: "2026-11-10" },
+      { employeeId: ids[1], status: "Did not attend" },
+    ] })).toEqual({ marked: 2 });
+    expect(await result(id)).toEqual([["Ana Dizon", "Completed", "2026-11-10"], ["Liza Manalo", "Did not attend", null], ["Rhea Bautista", "Assigned", null]]);
+    expect((await trainings().read(id)).recordedResults).toBe(2);
+    // Corrected from the sheet: Ana back to Assigned, Liza Completed later in the week.
+    await trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Assigned" }, { employeeId: ids[1], status: "Completed", completedOn: "2026-11-12" }] });
+    expect(await result(id)).toEqual([["Ana Dizon", "Assigned", null], ["Liza Manalo", "Completed", "2026-11-12"], ["Rhea Bautista", "Assigned", null]]);
+  });
+
+  it("allows marking on the day of the Training but not before it", async () => {
+    const today = await heldTraining("2026-11-14", ["Ana Dizon"]);
+    await expect(trainings().markResults(today.id, { marks: [{ employeeId: today.ids[0], status: "Completed", completedOn: "2026-11-14" }] })).resolves.toEqual({ marked: 1 });
+    const later = await heldTraining("2026-11-15", ["Liza Manalo"]);
+    await expect(trainings().markResults(later.id, { marks: [{ employeeId: later.ids[0], status: "Did not attend" }] })).rejects.toMatchObject({ reason: "early" });
+    expect(await result(later.id)).toEqual([["Liza Manalo", "Assigned", null]]);
+  });
+
+  it("needs a real completion date between the Training's date and today for everyone marked Completed, and applies nothing otherwise", async () => {
+    const { id, ids } = await heldTraining("2026-11-10", ["Ana Dizon", "Liza Manalo"]);
+    const bad = (completedOn: string | undefined) => trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Did not attend" }, { employeeId: ids[1], status: "Completed", completedOn }] });
+    for (const date of [undefined, "", "2026-13-40", "2026-11-09", "2026-11-15", "10 Nov 2026"]) await expect(bad(date)).rejects.toMatchObject({ reason: "validation" });
+    expect(await result(id)).toEqual([["Ana Dizon", "Assigned", null], ["Liza Manalo", "Assigned", null]]);
+  });
+
+  it("refuses an empty request, a duplicate, an unknown status, and Employees who are not assigned", async () => {
+    const { id, ids } = await heldTraining("2026-11-10", ["Ana Dizon"]);
+    const stranger = await employee("Not Assigned");
+    for (const marks of [[], [{ employeeId: ids[0], status: "Completed", completedOn: "2026-11-10" }, { employeeId: ids[0], status: "Did not attend" }],
+      [{ employeeId: ids[0], status: "Cancelled" }], [{ employeeId: stranger, status: "Did not attend" }], [{ employeeId: ids[0], status: "Did not attend" }, { employeeId: stranger, status: "Did not attend" }]]) {
+      await expect(trainings().markResults(id, { marks: marks as never })).rejects.toMatchObject({ reason: "validation" });
+    }
+    expect(await result(id)).toEqual([["Ana Dizon", "Assigned", null]]);
+  });
+
+  it("never touches a Cancelled employee and refuses a Cancelled Training", async () => {
+    const { id, ids } = await heldTraining("2026-11-10", ["Ana Dizon", "Liza Manalo"]);
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Cancelled' WHERE employee_id = $1`, [ids[1]]);
+    await expect(trainings().markResults(id, { marks: [{ employeeId: ids[1], status: "Did not attend" }] })).rejects.toMatchObject({ reason: "validation" });
+    expect(await result(id)).toEqual([["Ana Dizon", "Assigned", null], ["Liza Manalo", "Cancelled", null]]);
+    await db.query(`UPDATE public.hrms_trainings SET cancelled_at = now() WHERE id = $1`, [id]);
+    await expect(trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Did not attend" }] })).rejects.toMatchObject({ reason: "conflict" });
+  });
+
+  it("refuses an unknown Training and anyone without the Training Module", async () => {
+    const { id, ids } = await heldTraining("2026-11-10", ["Ana Dizon"]);
+    await expect(trainings().markResults(999, { marks: [{ employeeId: ids[0], status: "Did not attend" }] })).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings(portal.signIn(staff, ["Offers"])).markResults(id, { marks: [{ employeeId: ids[0], status: "Did not attend" }] })).rejects.toMatchObject({ reason: "denied" });
+  });
+});
+
+describe("The date lock", () => {
+  const edit = (id: number, detail: Awaited<ReturnType<ReturnType<typeof trainings>["read"]>>, change: Partial<TrainingTerms>) =>
+    trainings().update(id, { title: detail.title, trainer: detail.trainer, description: detail.description, objectives: detail.objectives, date: detail.date, startTime: detail.startTime, endTime: detail.endTime, mode: detail.mode, location: detail.location, ...change }, { notify: false });
+
+  it("locks date, time, Mode and venue once any Employee has a recorded result, but still lets the text change", async () => {
+    const { id, ids } = await heldTraining("2026-11-14", ["Ana Dizon", "Liza Manalo"]);
+    const before = await trainings().read(id);
+    await trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Did not attend" }] });
+    for (const change of [{ date: "2026-11-20" }, { startTime: "10:00" }, { endTime: "12:00" }, { location: "Another venue" }, { mode: "Online", location: "https://meet.example.test/x" }] as Partial<TrainingTerms>[]) {
+      await expect(edit(id, before, change)).rejects.toMatchObject({ reason: "locked" });
+    }
+    await expect(edit(id, before, { title: "Renamed", description: "New text" })).resolves.toMatchObject({ changed: true, rescheduled: false });
+    expect(await trainings().read(id)).toMatchObject({ title: "Renamed", date: "2026-11-14", recordedResults: 1 });
+  });
+
+  it("is not locked by Assigned or Cancelled employees, and unlocks when every result is put back to Assigned", async () => {
+    const { id, ids } = await heldTraining("2026-11-14", ["Ana Dizon"]);
+    const detail = await trainings().read(id);
+    expect(detail.recordedResults).toBe(0);
+    await expect(edit(id, detail, { date: "2026-11-20" })).resolves.toMatchObject({ rescheduled: true });
+    await db.query(`UPDATE public.hrms_trainings SET training_date = '2026-11-14', rescheduled_from = NULL WHERE id = $1`, [id]);
+    await trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Completed", completedOn: "2026-11-14" }] });
+    await expect(edit(id, detail, { date: "2026-11-21" })).rejects.toMatchObject({ reason: "locked" });
+    await trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Assigned" }] });
+    await expect(edit(id, detail, { date: "2026-11-21" })).resolves.toMatchObject({ rescheduled: true });
+  });
+});
+
+describe("Training completion", () => {
+  const mark = (id: number, ids: number[], statuses: ("Completed" | "Did not attend" | "Assigned")[]) =>
+    trainings().markResults(id, { marks: ids.map((employeeId, index) => ({ employeeId, status: statuses[index], completedOn: statuses[index] === "Completed" ? "2026-11-10" : null })) });
+
+  it("is the Completed share of results due for Trainings held this month, as a whole percent with 'X of Y completed'", async () => {
+    const a = await heldTraining("2026-11-10", ["Ana Dizon", "Liza Manalo", "Rhea Bautista"]);
+    await mark(a.id, a.ids, ["Completed", "Completed", "Did not attend"]);
+    const page = await trainings().list();
+    expect(page.month).toBe("November 2026");
+    expect(page.completion).toEqual({ percent: 67, completed: 2, due: 3 });
+  });
+
+  it("rounds to a whole percent and adds up across Trainings", async () => {
+    const a = await heldTraining("2026-11-03", ["Ana Dizon", "Liza Manalo", "Rhea Bautista"]);
+    await mark(a.id, a.ids, ["Completed", "Assigned", "Did not attend"]);
+    expect((await trainings().list()).completion).toEqual({ percent: 33, completed: 1, due: 3 });
+    const b = await heldTraining("2026-11-04", ["Carla Mendoza"]);
+    await mark(b.id, b.ids, ["Completed"]);
+    expect((await trainings().list()).completion).toEqual({ percent: 50, completed: 2, due: 4 });
+  });
+
+  it("leaves out Cancelled employees, Cancelled Trainings, Trainings not yet held and Trainings of other months", async () => {
+    const held = await heldTraining("2026-11-10", ["Ana Dizon", "Liza Manalo"]);
+    await mark(held.id, [held.ids[0]], ["Completed"]);
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Cancelled' WHERE employee_id = $1`, [held.ids[1]]);
+    await heldTraining("2026-11-14", ["Today Person"]);
+    await heldTraining("2026-11-25", ["Future Person"]);
+    await heldTraining("2026-10-28", ["Last Month Person"]);
+    const cancelled = await heldTraining("2026-11-08", ["Gone Person"]);
+    await trainings().cancel(cancelled.id, { reason: "Typhoon", notify: false });
+    expect((await trainings().list()).completion).toEqual({ percent: 100, completed: 1, due: 1 });
+  });
+
+  it("is empty, never 0%, when no Training was held this month or none has anyone to count", async () => {
+    expect((await trainings().list()).completion).toBeNull();
+    await heldTraining("2026-11-10", []);
+    await heldTraining("2026-10-10", ["Ana Dizon"]);
+    await trainings().create(terms());
+    expect((await trainings().list()).completion).toBeNull();
+    const held = await heldTraining("2026-11-09", ["Liza Manalo"]);
+    expect((await trainings().list()).completion).toEqual({ percent: 0, completed: 0, due: 1 });
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Cancelled' WHERE training_id = $1`, [held.id]);
+    expect((await trainings().list()).completion).toBeNull();
+  });
+
+  it("follows the Manila month, not UTC, and does not depend on the tab chosen", async () => {
+    // 30 Nov 2026 17:00 UTC is 1 Dec 01:00 in Manila.
+    clock = new Date("2026-11-30T17:00:00Z");
+    const november = await heldTraining("2026-11-20", ["Ana Dizon"], { date: "2026-12-20" });
+    expect((await trainings().list()).completion).toBeNull();
+    clock = new Date("2026-11-30T15:00:00Z");
+    await trainings().markResults(november.id, { marks: [{ employeeId: november.ids[0], status: "Completed", completedOn: "2026-11-25" }] });
+    for (const tab of ["All", "Upcoming", "Past", "Cancelled"] as const) expect((await trainings().list(tab)).completion).toEqual({ percent: 100, completed: 1, due: 1 });
+    expect((await trainings().list()).month).toBe("November 2026");
+  });
+
+  it("lists held Trainings of the month that still need results, oldest first, until a result is recorded", async () => {
+    const late = await heldTraining("2026-11-10", ["Ana Dizon"], { title: "Later one" });
+    const early = await heldTraining("2026-11-03", ["Liza Manalo"], { title: "Earlier one" });
+    await heldTraining("2026-10-03", ["Last Month"], { title: "Other month" });
+    await heldTraining("2026-11-04", [], { title: "Nobody assigned" });
+    expect((await trainings().list()).needResults).toEqual([{ id: early.id, title: "Earlier one" }, { id: late.id, title: "Later one" }]);
+    await mark(early.id, early.ids, ["Did not attend"]);
+    expect((await trainings().list()).needResults).toEqual([{ id: late.id, title: "Later one" }]);
+  });
+});

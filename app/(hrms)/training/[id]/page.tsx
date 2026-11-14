@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, Check } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BackLink, PAGE } from "@/components/hiring/parts";
 import { EditTrainingDialog } from "@/components/training/edit-training-dialog";
@@ -14,7 +16,7 @@ import { TrainingNoAccess } from "@/components/training/no-access";
 import { staffWithModule } from "@/lib/portal/staff";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError, type TrainingDetail } from "@/lib/trainings";
-import { type LogEvent, formatShortDate, formatTrainingDate, formatTrainingTimes, type TrainingStatus } from "@/lib/training-terms";
+import { type LogEvent, formatShortDate, formatTrainingDate, formatTrainingTimes, manilaToday, type TrainingStatus } from "@/lib/training-terms";
 
 const BADGE: Record<TrainingStatus, "success" | "secondary"> = { Upcoming: "success", Completed: "success", Cancelled: "secondary" };
 const LABEL = "text-xs text-muted-foreground";
@@ -41,6 +43,11 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
   }
   const online = training.mode === "Online";
   const reprint = training.assigned.filter((person) => person.reprintNeeded).length;
+  // Results are marked from the day of the session, for Employees who are not Cancelled.
+  const resultsDue = training.assigned.filter((person) => person.status !== "Cancelled").length;
+  const canMark = training.status !== "Cancelled" && training.date <= manilaToday() && resultsDue > 0;
+  const notRecorded = training.status === "Completed" && training.recordedResults === 0 && resultsDue > 0;
+  const MARK = "h-auto gap-[6px] rounded-lg px-[12px] py-[6px] text-[13px] font-medium shadow-none";
 
   return (
     <div className={PAGE}>
@@ -57,7 +64,7 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
           <>
             <EditTrainingDialog trainingId={training.id}
               training={{ title: training.title, trainer: training.trainer, description: training.description, objectives: training.objectives, date: training.date, startTime: training.startTime, endTime: training.endTime, mode: training.mode, location: training.location, rescheduledFrom: training.rescheduledFrom }}
-              assigned={training.assigned.map((person) => ({ name: person.name, email: person.email }))} />
+              assigned={training.assigned.map((person) => ({ name: person.name, email: person.email }))} lockedResults={training.recordedResults} />
             <CancelTrainingDialog trainingId={training.id} title={training.title} date={training.date} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`}
               people={training.assigned.filter((person) => person.status === "Assigned")} />
           </>
@@ -67,6 +74,13 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
       {training.status === "Cancelled" && (
         <p role="status" className="rounded-lg bg-[#f7f5fa] px-[14px] py-[12px] text-sm text-[#6e6680]">
           <span className="font-medium text-foreground">This training was cancelled.</span>{training.cancelReason ? ` Reason: ${training.cancelReason}` : ""}
+        </p>
+      )}
+      {notRecorded && (
+        <p role="status" className="flex items-center gap-[10px] rounded-lg bg-[#fdf1d8] px-[14px] py-[12px] text-sm font-medium text-[#8a5a00]">
+          <AlertTriangle className="size-4 shrink-0" aria-hidden />
+          <span className="flex-1">Results not recorded. This training was on {formatShortDate(training.date).replace(/ \d{4}$/, "")}. Mark results from the paper sign-in sheet.</span>
+          <Button asChild variant="outline" className={`${MARK} border-[#e6e1ee] bg-white text-[#1f1a2e]`}><Link href={`/training/${training.id}/results`}><ClipboardCheck className="size-[14px]" aria-hidden />Mark results</Link></Button>
         </p>
       )}
       {reprint > 0 && training.rescheduledFrom && (
@@ -97,6 +111,9 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
           <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">
             <div className="flex items-center gap-sm">
               <h2 className="flex-1 text-[15px] font-semibold text-zinc-900">Assigned employees · {training.assigned.length}</h2>
+              {training.status !== "Cancelled" && (canMark
+                ? <Button asChild variant="outline" className={`${MARK} border-[#e6e1ee] bg-white text-[#1f1a2e]`}><Link href={`/training/${training.id}/results`}><ClipboardCheck className="size-[14px]" aria-hidden />Mark results</Link></Button>
+                : <Button disabled title="Results can be marked from the day of the training" className={`${MARK} bg-[#f4f4f5] text-[#a1a1aa]`}><ClipboardCheck className="size-[14px]" aria-hidden />Mark results</Button>)}
             </div>
             <AssignedEmployees trainingId={training.id} title={training.title} date={formatTrainingDate(training.date)} people={training.assigned} />
           </Card>

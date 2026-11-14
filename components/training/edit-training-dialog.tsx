@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { ArrowRight, Calendar, Clock, Link2, Mail, MapPin, Pencil, Video, X } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowRight, Calendar, Clock, Link2, Lock, Mail, MapPin, Pencil, Video, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -29,10 +30,13 @@ type Props = {
   training: TrainingTerms & { rescheduledFrom: string | null };
   /** The assigned Employees, for the Notify line and the email preview. */
   assigned: { name: string; email: string | null }[];
+  /** How many Employees have a recorded result. From the first one the date, time, Mode and venue are locked. */
+  lockedResults?: number;
 };
 
 /** Edit a Training. A change to the date, time, Mode or venue shows Before and After and offers to notify the assigned Employees. */
-export function EditTrainingDialog({ trainingId, training, assigned }: Props) {
+export function EditTrainingDialog({ trainingId, training, assigned, lockedResults = 0 }: Props) {
+  const locked = lockedResults > 0;
   const [open, setOpen] = useState(false);
   // Closes once an edit has been saved; the page behind refreshes from the server action's revalidation.
   const [state, submit, pending] = useActionState(async (previous: EditTrainingState, data: FormData) => {
@@ -44,7 +48,10 @@ export function EditTrainingDialog({ trainingId, training, assigned }: Props) {
   const [notify, setNotify] = useState(true);
   const errors = state.fieldErrors ?? {};
   const set = (name: keyof TrainingTerms) => (event: { target: { value: string } }) => setValues((current) => ({ ...current, [name]: event.target.value }) as TrainingTerms);
-  const box = (name: keyof typeof errors) => cn(BOX, errors[name] ? "border-destructive" : "border-zinc-200");
+  const box = (name: keyof typeof errors) => cn(BOX, errors[name] ? "border-destructive" : "border-zinc-200", locked && ["date", "startTime", "endTime", "location"].includes(name) && "bg-[#fafafa] text-zinc-400");
+  const lock = locked && <Lock className="size-4 text-zinc-400" aria-label="Locked" />;
+  // A disabled input is not submitted, so a locked schedule travels in hidden fields and the server confirms nothing changed.
+  const named = (name: string) => (locked ? undefined : name);
 
   function onOpenChange(next: boolean) {
     setOpen(next);
@@ -75,6 +82,14 @@ export function EditTrainingDialog({ trainingId, training, assigned }: Props) {
             <DialogClose aria-label="Close" className="cursor-pointer text-zinc-500 hover:text-foreground"><X className="size-[18px]" /></DialogClose>
           </div>
           <div className="flex flex-col gap-[16px] overflow-y-auto px-[24px] py-[20px]">
+            {locked && (
+              <div role="note" className="flex items-start gap-[8px] rounded-lg bg-[#fdf1d8] px-[12px] py-[10px] text-[13px] leading-[19px] text-[#8a5a00]">
+                <AlertTriangle className="mt-[2px] size-4 shrink-0" aria-hidden />
+                <p className="flex-1">The date is locked because results are recorded for {lockedResults} {lockedResults === 1 ? "employee" : "employees"}. To run it on another date, create a new training.</p>
+                <Link href="/training/new" className="shrink-0 font-semibold text-primary hover:underline">Create new training</Link>
+              </div>
+            )}
+            {locked && (["date", "startTime", "endTime", "mode", "location"] as const).map((name) => <input key={name} type="hidden" name={name} value={values[name]} />)}
             <Field label="Title" htmlFor="edit-title" required error={errors.title}>
               <div className={box("title")}><input id="edit-title" name="title" value={values.title} onChange={set("title")} maxLength={120} className={INPUT} /></div>
             </Field>
@@ -89,21 +104,21 @@ export function EditTrainingDialog({ trainingId, training, assigned }: Props) {
             </Field>
             <div className="flex flex-col gap-[16px] sm:flex-row">
               <Field label="Date" htmlFor="edit-date" required error={errors.date}>
-                <div className={box("date")}><input id="edit-date" name="date" type="date" min={values.date < manilaToday() ? values.date : manilaToday()} value={values.date} onChange={set("date")} className={INPUT} /><Calendar className="size-4 text-zinc-500" aria-hidden /></div>
+                <div className={box("date")}><input id="edit-date" name={named("date")} type="date" min={values.date < manilaToday() ? values.date : manilaToday()} value={values.date} onChange={set("date")} disabled={locked} className={INPUT} />{lock || <Calendar className="size-4 text-zinc-500" aria-hidden />}</div>
               </Field>
               <Field label="Start time" htmlFor="edit-start" required error={errors.startTime}>
-                <div className={box("startTime")}><input id="edit-start" name="startTime" type="time" value={values.startTime} onChange={set("startTime")} className={INPUT} /><Clock className="size-4 text-zinc-500" aria-hidden /></div>
+                <div className={box("startTime")}><input id="edit-start" name={named("startTime")} type="time" value={values.startTime} onChange={set("startTime")} disabled={locked} className={INPUT} />{lock || <Clock className="size-4 text-zinc-500" aria-hidden />}</div>
               </Field>
               <Field label="End time" htmlFor="edit-end" required error={errors.endTime}>
-                <div className={box("endTime")}><input id="edit-end" name="endTime" type="time" value={values.endTime} onChange={set("endTime")} className={INPUT} /><Clock className="size-4 text-zinc-500" aria-hidden /></div>
+                <div className={box("endTime")}><input id="edit-end" name={named("endTime")} type="time" value={values.endTime} onChange={set("endTime")} disabled={locked} className={INPUT} />{lock || <Clock className="size-4 text-zinc-500" aria-hidden />}</div>
               </Field>
             </div>
             <fieldset className="flex flex-col gap-[8px]">
               <legend className="mb-[8px] flex gap-[3px] text-[13px] font-medium text-zinc-800">Mode<span className="text-red-600">*</span></legend>
               <div className="flex gap-[10px]">
                 {TRAINING_MODES.map((option) => (
-                  <label key={option} className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-[10px] rounded-[10px] border px-[14px] py-[10px] text-sm font-medium text-zinc-900", completeFor(option))}>
-                    <input type="radio" name="mode" value={option} checked={values.mode === option} onChange={set("mode")} className="size-4 accent-[#5b2a86]" />
+                  <label key={option} className={cn("flex min-w-0 flex-1 items-center gap-[10px] rounded-[10px] border px-[14px] py-[10px] text-sm font-medium text-zinc-900", locked ? "cursor-not-allowed opacity-60" : "cursor-pointer", completeFor(option))}>
+                    <input type="radio" name={named("mode")} value={option} checked={values.mode === option} onChange={set("mode")} disabled={locked} className="size-4 accent-[#5b2a86]" />
                     {option === "Online" ? <Video className="size-4 text-zinc-600" aria-hidden /> : <MapPin className="size-4 text-zinc-600" aria-hidden />}{option}
                   </label>
                 ))}
@@ -112,8 +127,9 @@ export function EditTrainingDialog({ trainingId, training, assigned }: Props) {
             <Field label={place} htmlFor="edit-location" required error={errors.location}>
               <div className={box("location")}>
                 {values.mode === "Online" ? <Link2 className="size-4 text-zinc-500" aria-hidden /> : <MapPin className="size-4 text-zinc-500" aria-hidden />}
-                <input id="edit-location" name="location" value={values.location} onChange={set("location")} maxLength={300} className={INPUT} />
+                <input id="edit-location" name={named("location")} value={values.location} onChange={set("location")} maxLength={300} disabled={locked} className={INPUT} />
               </div>
+              {locked && <p className="text-xs text-zinc-500">Date, time and venue can’t change after results are recorded.</p>}
             </Field>
 
             {moved && (
@@ -150,7 +166,7 @@ export function EditTrainingDialog({ trainingId, training, assigned }: Props) {
           </div>
           <div className="flex items-center gap-sm border-t border-[#ebebeb] px-[24px] py-[14px]">
             <p className="flex-1 text-xs text-zinc-500">
-              {moved && values.date !== training.date ? `Status stays Upcoming. The list shows “Rescheduled from ${formatShortDate(training.date)}”.` : "Status is set automatically from the date."}
+              {locked ? "Only the title, trainer, description, objectives and materials can change." : moved && values.date !== training.date ? `Status stays Upcoming. The list shows “Rescheduled from ${formatShortDate(training.date)}”.` : "Status is set automatically from the date."}
             </p>
             <DialogClose asChild><Button type="button" variant="outline" className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] text-sm font-medium shadow-none">Cancel</Button></DialogClose>
             <Button type="submit" disabled={pending} className="h-auto rounded-lg px-[16px] py-[9px] text-sm font-medium shadow-none">{pending ? "Saving…" : "Save changes"}</Button>

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CELL, HEAD, InfoNote, PAGE, PageHeader } from "@/components/hiring/parts";
+import { TrainingCompletionCard } from "@/components/training/completion-card";
 import { TrainingNoAccess } from "@/components/training/no-access";
 import { TrainingRetry } from "@/components/training/training-retry";
 import { staffWithModule } from "@/lib/portal/staff";
@@ -39,7 +40,7 @@ export default async function Page({ searchParams }: PageProps<"/training">) {
       </div>
     );
   }
-  const { rows, counts, thisMonth } = result;
+  const { rows, counts, thisMonth, month, completion, needResults } = result;
 
   return (
     <div className={PAGE}>
@@ -48,6 +49,7 @@ export default async function Page({ searchParams }: PageProps<"/training">) {
           <Link href="/training/new"><Plus className="size-4" aria-hidden />New training</Link>
         </Button>
       </PageHeader>
+      <TrainingCompletionCard month={month} completion={completion} needResults={needResults} />
       <nav aria-label="Status" className="flex flex-wrap gap-xs">
         {TRAINING_TABS.map((name) => (
           <Link

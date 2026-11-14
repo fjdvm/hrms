@@ -37,8 +37,12 @@ export function trainingStatus(training: { date: string; cancelled: boolean }, n
 /** The tab a status counts under. */
 export const tabOf = (status: TrainingStatus): Exclude<TrainingTab, "All"> => (status === "Completed" ? "Past" : status);
 
-const isDate = (value: unknown): value is string =>
-  typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
+export const isDate = (value: unknown): value is string => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  // An impossible date such as 2026-13-40 is an Invalid Date, whose toISOString throws.
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
+};
 const isTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 // Letters, digits, spaces and the punctuation titles and names use; control characters and markup are rejected, not stripped.
 const TEXT = /^[^\p{Cc}<>]*$/u;
@@ -182,6 +186,45 @@ export function noEmailWarning(people: { name: string; email: string | null }[])
   const names = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} and ${missing[missing.length - 1]}`;
   return `${names} ${missing.length === 1 ? "has" : "have"} no email, so ${missing.length === 1 ? "they" : "they"} won’t get the Assignment email. Print the schedule from the training page.`;
 }
+
+// ── Results ───────────────────────────────────────────────────────────────
+
+/** What Staff can set from the paper sign-in sheet. Cancelled is automatic (the Training was cancelled) and cannot be chosen. */
+export const RESULT_STATUSES = ["Assigned", "Completed", "Did not attend"] as const;
+export type ResultStatus = (typeof RESULT_STATUSES)[number];
+/** One Employee's result. A Completed result needs a completion date; the others carry none. */
+export type ResultMark = { employeeId: number; status: ResultStatus; completedOn?: string | null };
+export type MarkResultsResult = { marked: number };
+export const RESULT_MAX_MARKS = 500;
+
+/** Normalises and checks marks from the Mark results screen. `marks` is set only when there is no `error`. */
+export function readResultMarks(raw: unknown, { trainingDate, today }: { trainingDate: string; today: string }): { marks: ResultMark[] | null; error?: string } {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > RESULT_MAX_MARKS) return { marks: null, error: "Choose at least one employee's result." };
+  const seen = new Set<number>();
+  const marks: ResultMark[] = [];
+  for (const item of raw as Partial<ResultMark>[]) {
+    const id = item?.employeeId;
+    if (!Number.isInteger(id) || (id as number) <= 0 || (id as number) > 2_147_483_647 || seen.has(id as number)) return { marks: null, error: "Check the employees and try again." };
+    if (!RESULT_STATUSES.includes(item.status as ResultStatus)) return { marks: null, error: "Choose Completed or Did not attend." };
+    seen.add(id as number);
+    if (item.status !== "Completed") { marks.push({ employeeId: id as number, status: item.status as ResultStatus, completedOn: null }); continue; }
+    const date = typeof item.completedOn === "string" ? item.completedOn.trim() : "";
+    if (!isDate(date)) return { marks: null, error: "Enter a completion date for everyone marked Completed." };
+    if (date < trainingDate) return { marks: null, error: `A completion date can't be before the training (${formatShortDate(trainingDate)}).` };
+    if (date > today) return { marks: null, error: "A completion date can't be in the future." };
+    marks.push({ employeeId: id as number, status: "Completed", completedOn: date });
+  }
+  return { marks };
+}
+
+/** Training completion: Assigned employees marked Completed as a whole percent of the results due. */
+export type TrainingCompletion = { percent: number; completed: number; due: number };
+/** Null when nothing is due, so the card says "Nothing to show yet" and never 0%. */
+export const completionOf = (completed: number, due: number): TrainingCompletion | null =>
+  due > 0 ? { percent: Math.round((completed / due) * 100), completed, due } : null;
+/** "November 2026" from a Manila "YYYY-MM-DD" date. */
+export const formatMonth = (day: string) =>
+  new Date(`${day.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
 // ── Cancel ────────────────────────────────────────────────────────────────
 
