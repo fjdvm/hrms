@@ -16,7 +16,7 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { sidebarFor } from "./sidebar-nav";
+import { activeHref, sidebarFor } from "./sidebar-nav";
 import { usePermittedPages } from "./staff-context";
 import { SidebarProfileFooter } from "./sidebar-profile-footer";
 import { SidebarNavSkeleton } from "./sidebar-nav-skeleton";
@@ -29,6 +29,7 @@ export function Sidebar() {
   const mounted = useMounted();
   const permittedPages = usePermittedPages();
   const sections = sidebarFor(permittedPages);
+  const active = activeHref(pathname, sections);
 
   const isOpen = isMobile ? openMobile : open;
 
@@ -70,7 +71,7 @@ export function Sidebar() {
                       {section.items.map((item) => {
                         const ItemIcon = item.icon;
                         const { href } = item;
-                        const isActive = pathname === href || pathname.startsWith(href + "/");
+                        const isActive = href === active;
 
                         return (
                           <SidebarMenuItem key={item.name}>

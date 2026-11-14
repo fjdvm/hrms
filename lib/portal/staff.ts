@@ -46,6 +46,16 @@ export async function requireModule(module: string): Promise<Staff> {
   return result.staff;
 }
 
+/**
+ * Like `requireModule`, but a Staff member without the Module gets `null` instead of a redirect, so the page can show
+ * its own in-shell "No access" screen. Sign-in and Portal problems still stop the request.
+ */
+export async function staffWithModule(module: string): Promise<Staff | null> {
+  const result = await proceed(await (await requestAccess()).check(module));
+
+  return result.decision === "denied" ? null : result.staff;
+}
+
 /** The Staff member and the pages they may open, for the shell. No Module at all means no access. */
 export async function getShell(): Promise<{ staff: Staff; permittedPages: string[] }> {
   const result = await proceed(await (await requestAccess()).overview());
