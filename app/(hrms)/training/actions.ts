@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, materialProblem, readResultMarks, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, materialProblem, readFeedback, readResultMarks, type TrainingFeedback, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
@@ -198,6 +198,25 @@ export async function saveResults(trainingId: number, marks: ResultMark[]): Prom
   } catch (error) {
     if (error instanceof TrainingError && error.reason === "conflict") return { error: "This training was cancelled, so results can't be marked." };
     if (error instanceof TrainingError && error.reason === "validation") return { error: "Check the employees and completion dates, then try again." };
+    return { error: problem(error) };
+  }
+}
+
+export type FeedbackState = { error?: string; ratingError?: string; commentsError?: string; feedback?: TrainingFeedback };
+
+/** Saves feedback typed from the paper feedback form for one Completed employee. Invalid input comes back beside the field. */
+export async function saveFeedback(trainingId: number, employeeId: number, rating: number, comments: string): Promise<FeedbackState> {
+  const checked = readFeedback({ rating, comments });
+  if (!checked.feedback) return { ratingError: checked.ratingError, commentsError: checked.commentsError };
+  try {
+    const feedback = await (await trainingsForRequest()).recordFeedback(trainingId, employeeId, checked.feedback);
+    revalidatePath(`/training/${trainingId}`);
+    revalidatePath(`/training/${trainingId}/results`);
+    return { feedback };
+  } catch (error) {
+    if (error instanceof TrainingError && error.reason === "conflict") return { error: "Feedback can be recorded once the employee is marked Completed." };
+    if (error instanceof TrainingError && error.reason === "not-found") return { error: "That employee is no longer assigned to this training." };
+    if (error instanceof TrainingError && error.reason === "validation") return { error: "Check the rating and comments, then try again." };
     return { error: problem(error) };
   }
 }

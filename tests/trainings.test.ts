@@ -606,3 +606,55 @@ describe("Training completion", () => {
     expect((await trainings().list()).needResults).toEqual([{ id: late.id, title: "Later one" }]);
   });
 });
+
+describe("Recording feedback", () => {
+  const feedbackOf = async (id: number) => (await trainings().read(id)).assigned.map((person) => [person.name, person.feedback]);
+  const completed = async (names: string[]) => {
+    const held = await heldTraining("2026-11-10", names);
+    await trainings().markResults(held.id, { marks: held.ids.map((employeeId) => ({ employeeId, status: "Completed" as const, completedOn: "2026-11-10" })) });
+    return held;
+  };
+
+  it("stores a rating and comments per Completed employee and shows them on the Training", async () => {
+    const { id, ids } = await completed(["Ana Dizon", "Liza Manalo"]);
+    expect(await feedbackOf(id)).toEqual([["Ana Dizon", null], ["Liza Manalo", null]]);
+    await expect(trainings().recordFeedback(id, ids[0], { rating: 4, comments: "  Clear demo.   Wants a refresher.  " })).resolves.toEqual({ rating: 4, comments: "Clear demo. Wants a refresher." });
+    await trainings().recordFeedback(id, ids[1], { rating: 5 });
+    expect(await feedbackOf(id)).toEqual([["Ana Dizon", { rating: 4, comments: "Clear demo. Wants a refresher." }], ["Liza Manalo", { rating: 5, comments: "" }]]);
+  });
+
+  it("replaces earlier feedback when it is recorded again", async () => {
+    const { id, ids } = await completed(["Ana Dizon"]);
+    await trainings().recordFeedback(id, ids[0], { rating: 2, comments: "Too fast." });
+    await trainings().recordFeedback(id, ids[0], { rating: 4 });
+    expect(await feedbackOf(id)).toEqual([["Ana Dizon", { rating: 4, comments: "" }]]);
+  });
+
+  it("needs a whole rating from 1 to 5, and rejects markup and over-long comments without saving anything", async () => {
+    const { id, ids } = await completed(["Ana Dizon"]);
+    for (const input of [{ rating: 0 }, { rating: 6 }, { rating: 3.5 }, { rating: "4" as unknown as number }, {} as { rating: number }, { rating: 4, comments: "<b>great</b>" }, { rating: 4, comments: "x".repeat(1001) }]) {
+      await expect(trainings().recordFeedback(id, ids[0], input)).rejects.toMatchObject({ reason: "validation" });
+    }
+    expect(await feedbackOf(id)).toEqual([["Ana Dizon", null]]);
+  });
+
+  it("only an employee marked Completed has feedback; anyone else, unassigned or unknown is refused", async () => {
+    const held = await heldTraining("2026-11-10", ["Ana Dizon", "Liza Manalo", "Rhea Bautista"]);
+    await trainings().markResults(held.id, { marks: [{ employeeId: held.ids[1], status: "Did not attend" }] });
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Cancelled' WHERE employee_id = $1`, [held.ids[2]]);
+    for (const employeeId of held.ids) await expect(trainings().recordFeedback(held.id, employeeId, { rating: 4 })).rejects.toMatchObject({ reason: "conflict" });
+    await expect(trainings().recordFeedback(held.id, await employee("Not Assigned"), { rating: 4 })).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings().recordFeedback(999, held.ids[0], { rating: 4 })).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings().recordFeedback(held.id, -1, { rating: 4 })).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings(portal.signIn(staff, ["Offers"])).recordFeedback(held.id, held.ids[0], { rating: 4 })).rejects.toMatchObject({ reason: "denied" });
+  });
+
+  it("is cleared when the employee leaves Completed, and kept when only the completion date changes", async () => {
+    const { id, ids } = await completed(["Ana Dizon", "Liza Manalo"]);
+    for (const employeeId of ids) await trainings().recordFeedback(id, employeeId, { rating: 5, comments: "Great." });
+    await trainings().markResults(id, { marks: [{ employeeId: ids[0], status: "Completed", completedOn: "2026-11-12" }, { employeeId: ids[1], status: "Did not attend" }] });
+    expect(await feedbackOf(id)).toEqual([["Ana Dizon", { rating: 5, comments: "Great." }], ["Liza Manalo", null]]);
+    await trainings().markResults(id, { marks: [{ employeeId: ids[1], status: "Completed", completedOn: "2026-11-11" }] });
+    expect(await feedbackOf(id)).toEqual([["Ana Dizon", { rating: 5, comments: "Great." }], ["Liza Manalo", null]]);
+  });
+});

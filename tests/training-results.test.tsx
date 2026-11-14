@@ -12,7 +12,7 @@ vi.mock("@/app/(hrms)/training/actions", () => actions);
 
 const person = (id: number, name: string, extra: Partial<AssignedEmployee> = {}): AssignedEmployee => ({
   employeeId: id, name, position: "Production Staff", branch: "Main kitchen", email: `${name.split(" ")[0].toLowerCase()}@example.test`,
-  needsPrintedSchedule: false, status: "Assigned", completedOn: null, reprintNeeded: false, ...extra,
+  needsPrintedSchedule: false, status: "Assigned", completedOn: null, reprintNeeded: false, feedback: null, ...extra,
 });
 const PEOPLE = [
   person(1, "Noel Garcia", { status: "Completed", completedOn: "2026-11-10" }),
@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); Object.values(actions).forEach((fn) => fn.mockReset()); vi.unstubAllGlobals(); });
 
-const view = () => render(<MarkResults trainingId={7} trainingDate="2026-11-10" today="2026-11-14" people={PEOPLE} />);
+const view = () => render(<MarkResults trainingId={7} trainingTitle="Safe lifting and ergonomics" trainingDate="2026-11-10" today="2026-11-14" people={PEOPLE} />);
 
 it("counts marked results as 'X of Y' and leaves Cancelled employees out", () => {
   view();

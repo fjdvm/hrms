@@ -3,9 +3,9 @@ import { accessFor } from "./portal/access";
 import { assignmentEmail, queueNotice, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
-  TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
+  TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
-  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
+  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
 export type TrainingListItem = {
@@ -262,14 +262,15 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const { rows: materials } = await db.query<TrainingMaterial>(`
         SELECT file_id AS "fileId", filename, content_type AS "contentType", size FROM public.hrms_training_materials
         WHERE training_id = $1 AND status = 'Active' ORDER BY created_at, file_id`, [id]);
-      const { rows: assigned } = await db.query<Omit<AssignedEmployee, "needsPrintedSchedule">>(`
+      const { rows: assigned } = await db.query<Omit<AssignedEmployee, "needsPrintedSchedule" | "feedback"> & { feedbackRating: number | null; feedbackComments: string }>(`
         SELECT e.id AS "employeeId", e.full_name AS name, e.position, e.branch, NULLIF(btrim(e.email), '') AS email,
-          a.status, a.completed_on::text AS "completedOn", a.reprint_needed AS "reprintNeeded"
+          a.status, a.completed_on::text AS "completedOn", a.reprint_needed AS "reprintNeeded",
+          a.feedback_rating AS "feedbackRating", a.feedback_comments AS "feedbackComments"
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 ORDER BY a.assigned_at, e.full_name, e.id`, [id]);
       const { cancelled, ...training } = found[0];
       const recordedResultCount = assigned.filter((person) => person.status === "Completed" || person.status === "Did not attend").length;
-      return { ...training, recordedResults: recordedResultCount, assigned: assigned.map((person) => ({ ...person, needsPrintedSchedule: !person.email })), status: trainingStatus({ date: training.date, cancelled }, now()), objectiveList: training.objectives.split("\n").filter(Boolean), materials };
+      return { ...training, recordedResults: recordedResultCount, assigned: assigned.map(({ feedbackRating, feedbackComments, ...person }) => ({ ...person, needsPrintedSchedule: !person.email, feedback: feedbackRating === null ? null : { rating: feedbackRating, comments: feedbackComments } })), status: trainingStatus({ date: training.date, cancelled }, now()), objectiveList: training.objectives.split("\n").filter(Boolean), materials };
     },
     /** Everyone the Assign dialog may offer: Employee records only, never Staff, with who is already on this Training. */
     async assignable(trainingId: number): Promise<AssignableEmployee[]> {
@@ -372,11 +373,32 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const { rows: eligible } = await db.query(`SELECT 1 FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = ANY($2::int[]) AND status <> 'Cancelled'`, [trainingId, ids]);
       if (eligible.length !== ids.length) throw new TrainingError("validation");
       await db.query(`
-        UPDATE public.hrms_training_assignments a SET status = m.status, completed_on = NULLIF(m.completed_on, '')::date
+        UPDATE public.hrms_training_assignments a SET status = m.status, completed_on = NULLIF(m.completed_on, '')::date,
+          feedback_rating = CASE WHEN m.status = 'Completed' THEN a.feedback_rating END,
+          feedback_comments = CASE WHEN m.status = 'Completed' THEN a.feedback_comments ELSE '' END,
+          feedback_recorded_at = CASE WHEN m.status = 'Completed' THEN a.feedback_recorded_at END,
+          feedback_recorded_by = CASE WHEN m.status = 'Completed' THEN a.feedback_recorded_by END
         FROM unnest($2::int[], $3::text[], $4::text[]) AS m(employee_id, status, completed_on)
         WHERE a.training_id = $1 AND a.employee_id = m.employee_id AND a.status <> 'Cancelled'`,
       [trainingId, ids, marks.map((mark) => mark.status), marks.map((mark) => mark.completedOn ?? "")]);
       return { marked: ids.length };
+    },
+    /**
+     * Records, or replaces, the feedback typed from an Employee's paper feedback form: a 1 to 5 rating and optional comments.
+     * Only an employee whose result is Completed has feedback. Moving them off Completed clears it.
+     */
+    async recordFeedback(trainingId: number, employeeId: number, input: { rating: number; comments?: string }): Promise<TrainingFeedback> {
+      const staff = await authorise();
+      await requireTraining(trainingId);
+      if (!validId(employeeId)) throw new TrainingError("not-found");
+      const { feedback } = readFeedback(input);
+      if (!feedback) throw new TrainingError("validation");
+      const { rows } = await db.query<{ status: string }>(`SELECT status FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = $2`, [trainingId, employeeId]);
+      if (!rows[0]) throw new TrainingError("not-found");
+      if (rows[0].status !== "Completed") throw new TrainingError("conflict");
+      await db.query(`UPDATE public.hrms_training_assignments SET feedback_rating = $3, feedback_comments = $4, feedback_recorded_at = $5::timestamptz, feedback_recorded_by = $6
+        WHERE training_id = $1 AND employee_id = $2`, [trainingId, employeeId, feedback.rating, feedback.comments, now().toISOString(), staff.username]);
+      return feedback;
     },
     /** Removes an Employee from a Training. */
     async unassign(trainingId: number, employeeId: number): Promise<void> {

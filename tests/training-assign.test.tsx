@@ -72,7 +72,7 @@ it("keeps Assign off until someone is chosen and shows a server error", async ()
 });
 
 const assigned = (id: number, name: string, email: string | null): AssignedEmployee => ({
-  employeeId: id, name, position: "Branch Cashier", branch: "Cainta branch", email, needsPrintedSchedule: !email, status: "Assigned", completedOn: null, reprintNeeded: false,
+  employeeId: id, name, position: "Branch Cashier", branch: "Cainta branch", email, needsPrintedSchedule: !email, status: "Assigned", completedOn: null, reprintNeeded: false, feedback: null,
 });
 
 it("shows each assigned Employee with email or Needs printed schedule and a status badge", () => {
