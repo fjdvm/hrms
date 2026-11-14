@@ -4,6 +4,7 @@ import { assignmentEmail, queueNotice, scheduleChangedEmail, type NoticeTraining
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
   TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
+  HISTORY_TABS, historyRowsFor, type HistoryEmployee, type HistoryRow, type HistoryTab, type TrainingHistory,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
   type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
@@ -409,6 +410,41 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (!rows[0]) throw new TrainingError("not-found");
       // Notices not yet delivered stop with the assignment; delivered and failed ones stay in the log.
       await db.query(`DELETE FROM public.hrms_training_notices WHERE training_id = $1 AND employee_id = $2 AND state IN ('Queued', 'Retrying')`, [trainingId, employeeId]);
+    },
+    /** The Employees the Training history picker offers: Employee records only, by name. */
+    async historyEmployees(): Promise<{ id: number; name: string; employeeNumber: string }[]> {
+      await authorise();
+      const { rows } = await db.query<{ id: number; name: string; employeeNumber: string }>(
+        `SELECT id, full_name AS name, employee_number AS "employeeNumber" FROM public.hrms_employees ORDER BY full_name, id`);
+      return rows;
+    },
+    /** The Trainings one Employee was assigned to, with their result and completion date, and counts for each tab. */
+    async history(employeeId: number): Promise<TrainingHistory> {
+      await authorise();
+      if (!validId(employeeId)) throw new TrainingError("not-found");
+      const { rows: found } = await db.query<HistoryEmployee>(`
+        SELECT id, full_name AS name, employee_number AS "employeeNumber", position, branch, status FROM public.hrms_employees WHERE id = $1`, [employeeId]);
+      if (!found[0]) throw new TrainingError("not-found");
+      const { rows } = await db.query<{
+        trainingId: number; title: string; trainer: string; date: string; startTime: string; endTime: string; mode: TrainingMode;
+        cancelled: boolean; status: HistoryRow["result"]; completedOn: string | null;
+      }>(`
+        SELECT t.id AS "trainingId", t.title, t.trainer, t.training_date::text AS date, to_char(t.start_time, 'HH24:MI') AS "startTime",
+          to_char(t.end_time, 'HH24:MI') AS "endTime", t.mode, t.cancelled_at IS NOT NULL AS cancelled, a.status, a.completed_on::text AS "completedOn"
+        FROM public.hrms_training_assignments a JOIN public.hrms_trainings t ON t.id = a.training_id
+        WHERE a.employee_id = $1 ORDER BY t.training_date DESC, t.start_time DESC, t.id DESC`, [employeeId]);
+      const clock = now();
+      const history: HistoryRow[] = rows.map((row) => {
+        const status = trainingStatus(row, clock);
+        const result = row.cancelled ? "Cancelled" : row.status;
+        return {
+          trainingId: row.trainingId, title: row.title, trainer: row.trainer, date: row.date, startTime: row.startTime, endTime: row.endTime, mode: row.mode,
+          result, completedOn: result === "Completed" ? row.completedOn : null,
+          resultsNotRecorded: result === "Assigned" && status === "Completed", upcoming: result === "Assigned" && status === "Upcoming",
+        };
+      });
+      const counts = Object.fromEntries(HISTORY_TABS.map((tab) => [tab, historyRowsFor(history, tab as HistoryTab).length])) as Record<HistoryTab, number>;
+      return { employee: found[0], rows: history, counts };
     },
     /** The Notification log: a row per Employee notice, the Not reached list and the Needs printed schedule list. */
     async log(trainingId: number): Promise<NotificationLog> {
