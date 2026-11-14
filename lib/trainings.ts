@@ -22,6 +22,21 @@ export type TrainingListItem = {
   resultsNotRecorded: boolean;
   status: TrainingStatus;
 };
+export type CalendarTraining = {
+  id: number;
+  title: string;
+  trainer: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  /** Tells Online from In person apart on the Calendar. */
+  mode: TrainingMode;
+  /** A meeting link when Online, a venue when In person. */
+  location: string;
+  rescheduledFrom: string | null;
+  assigned: number;
+  status: TrainingStatus;
+};
 export type TrainingPage = {
   rows: TrainingListItem[];
   counts: Record<TrainingTab, number>;
@@ -92,6 +107,25 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         thisMonth: items.filter((item) => item.date.startsWith(month)).length,
         rows: items.filter((item) => tab === "All" || tabOf(item.status) === tab).sort(order),
       };
+    },
+    /** Trainings dated in [from, to), both "YYYY-MM-DD" in Manila, soonest first. Cancelled ones are included, marked by status. */
+    async calendar(range: { from: string; to: string }): Promise<CalendarTraining[]> {
+      await authorise();
+      const day = /^\d{4}-\d{2}-\d{2}$/;
+      if (!day.test(range.from) || !day.test(range.to) || range.to <= range.from) throw new TrainingError("validation");
+      const clock = now();
+      const { rows } = await db.query<Row & { location: string }>(`
+        SELECT t.id, t.title, t.trainer, t.training_date::text AS date, to_char(t.start_time, 'HH24:MI') AS "startTime",
+          to_char(t.end_time, 'HH24:MI') AS "endTime", t.mode, t.location, t.rescheduled_from::text AS "rescheduledFrom",
+          t.cancelled_at IS NOT NULL AS cancelled,
+          (SELECT count(*)::int FROM public.hrms_training_assignments a WHERE a.training_id = t.id) AS assigned
+        FROM public.hrms_trainings t
+        WHERE t.training_date >= $1 AND t.training_date < $2
+        ORDER BY t.training_date, t.start_time, t.id`, [range.from, range.to]);
+      return rows.map((row) => ({
+        id: row.id, title: row.title, trainer: row.trainer, date: row.date, startTime: row.startTime, endTime: row.endTime,
+        mode: row.mode, location: row.location, rescheduledFrom: row.rescheduledFrom, assigned: row.assigned, status: trainingStatus(row, clock),
+      }));
     },
     /** Saves a new Training from the form's raw values; an invalid form is refused, not repaired. */
     async create(terms: TrainingTerms): Promise<number> {
