@@ -1,0 +1,34 @@
+name: Training notice retries
+
+# Sends Training notices that are due: new Assignment emails and failed ones waiting for their retry.
+# Runs on GitHub Actions, not as a Vercel cron, because Vercel limits some plans to daily crons.
+# See docs/training-notices.md.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: training-notices
+  cancel-in-progress: false
+
+jobs:
+  send-training-notices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Send due Training notices
+        env:
+          HRMS_URL: ${{ vars.HRMS_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$HRMS_URL" ]; then echo "::error::HRMS_URL repository variable is not set"; exit 1; fi
+          if [ -z "$CRON_SECRET" ]; then echo "::error::CRON_SECRET repository secret is not set"; exit 1; fi
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 90 \
+            --retry 2 --retry-delay 10 --retry-all-errors \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "${HRMS_URL%/}/api/cron/training-notices"

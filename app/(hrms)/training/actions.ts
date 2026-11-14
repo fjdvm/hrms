@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { deliverTrainingNotices } from "@/lib/training-notices";
 import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
@@ -93,7 +95,10 @@ export async function loadAssignable(trainingId: number): Promise<{ error?: stri
 export async function assignEmployees(trainingId: number, request: AssignRequest): Promise<AssignState> {
   try {
     const result = await (await trainingsForRequest()).assign(trainingId, request);
+    // The Assignment emails go out straight away; anything that fails is retried by the scheduled job.
+    after(() => deliverTrainingNotices());
     revalidatePath(`/training/${trainingId}`);
+    revalidatePath(`/training/${trainingId}/log`);
     revalidatePath("/training");
     return { result };
   } catch (error) {
@@ -110,5 +115,19 @@ export async function removeAssignedEmployee(trainingId: number, employeeId: num
   }
   revalidatePath(`/training/${trainingId}`);
   revalidatePath("/training");
+  return {};
+}
+
+/** Retry on a Not reached Employee: queues the notice again, with its full set of retries. */
+export async function retryTrainingNotice(trainingId: number, noticeId: number): Promise<{ error?: string }> {
+  try {
+    await (await trainingsForRequest()).retryNotice(trainingId, noticeId);
+  } catch (error) {
+    if (error instanceof TrainingError && error.reason === "conflict") return { error: "That notice is already on its way." };
+    return { error: problem(error) };
+  }
+  after(() => deliverTrainingNotices());
+  revalidatePath(`/training/${trainingId}`);
+  revalidatePath(`/training/${trainingId}/log`);
   return {};
 }
