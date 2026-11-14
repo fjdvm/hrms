@@ -2,8 +2,9 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Initials } from "@/components/hiring/parts";
+import { PrintScheduleDialog } from "@/components/training/print-schedule-dialog";
 import { RetryNoticeButton } from "@/components/training/retry-notice-button";
-import { LOG_TABS, formatClock, formatNoticeTime, logHref, type LogRow, type LogTab, type NotificationLog } from "@/lib/training-terms";
+import { LOG_TABS, formatShortDate, formatClock, formatNoticeTime, logHref, type LogRow, type LogTab, type NotificationLog } from "@/lib/training-terms";
 import { MAX_RETRIES } from "@/lib/training-notices";
 import { scheduleLine } from "@/lib/training-email";
 import { cn } from "@/lib/utils";
@@ -79,13 +80,23 @@ export function NotificationLogView({ trainingId, log, tab }: { trainingId: numb
           )}
           {log.needsPrinted.length > 0 && (
             <Card className="flex flex-col gap-[12px] rounded-xl px-[20px] py-[18px] shadow-none">
-              <div className="flex flex-col gap-[2px]">
-                <h2 className="text-[15px] font-semibold text-zinc-900">Needs printed schedule · {log.needsPrinted.length}</h2>
-                <p className="text-xs text-muted-foreground">No email address, so never emailed. Print the schedule for them from the training page.</p>
+              <div className="flex items-start gap-sm">
+                <div className="flex flex-1 flex-col gap-[2px]">
+                  <h2 className="text-[15px] font-semibold text-zinc-900">Needs printed schedule · {log.needsPrinted.length}</h2>
+                  <p className="text-xs text-muted-foreground">No email address, so never emailed. Print the schedule after any change.</p>
+                </div>
+                <PrintScheduleDialog preselect={[trainingId]} />
               </div>
               <ul className="flex flex-col">
                 {log.needsPrinted.map((row) => (
-                  <li key={row.employeeId} className="border-b border-[#efebf4] py-[10px]"><Person row={row} sub={`${row.position} · ${row.branch}`} /></li>
+                  <li key={row.employeeId} className="flex items-center gap-sm border-b border-[#efebf4] py-[10px]">
+                    <div className="min-w-0 flex-1"><Person row={row} sub={`${row.position} · ${row.branch}`} /></div>
+                    <div className="flex flex-col items-end gap-[2px] text-xs">
+                      <span className="text-foreground">{row.printedAt ? `Printed ${formatNoticeTime(row.printedAt).split(",")[0]}` : "Not printed yet"}</span>
+                      {row.reprintNeeded && row.printedDate && <span className="text-amber-700">Old date: {formatShortDate(row.printedDate).replace(/ \d{4}$/, "")}</span>}
+                      {row.reprintNeeded && <span className={PILL}>Reprint schedule</span>}
+                    </div>
+                  </li>
                 ))}
               </ul>
             </Card>

@@ -6,7 +6,7 @@ import { NotificationLogView } from "@/components/training/notification-log";
 import { NotificationLogPreview, eventSummary } from "@/components/training/notification-log-preview";
 import { LOG_TABS, logTabFromParam, type LogRow, type NotificationLog } from "@/lib/training-terms";
 
-const actions = vi.hoisted(() => ({ retryTrainingNotice: vi.fn() }));
+const actions = vi.hoisted(() => ({ retryTrainingNotice: vi.fn(), loadPrintable: vi.fn(), loadSchedule: vi.fn(), recordSchedulePrinted: vi.fn() }));
 vi.mock("@/app/(hrms)/training/actions", () => actions);
 
 const row = (extra: Partial<LogRow>): LogRow => ({
@@ -36,6 +36,14 @@ it("lists a row per notice with its state, Try N of 3 and the next time, and No 
   expect(screen.getAllByText("Needs printed schedule").length).toBeGreaterThan(0);
 });
 
+it("shows when a no-email Employee's schedule was printed, the old date and the Reprint schedule flag after a reschedule", () => {
+  const printed = row({ noticeId: null, employeeId: 6, employeeName: "Joel Ramirez", email: null, kind: "Assignment", state: "Needs printed schedule", printedAt: "2026-11-09T02:00:00Z", printedDate: "2026-11-13", reprintNeeded: true });
+  render(<NotificationLogView trainingId={7} log={log([printed])} tab="Needs printed schedule" />);
+  expect(screen.getByText(/Printed 9 Nov/)).toBeTruthy();
+  expect(screen.getByText("Old date: 13 Nov")).toBeTruthy();
+  expect(screen.getByText("Reprint schedule")).toBeTruthy();
+});
+
 it("shows the three tabs with counts, linking to each", () => {
   render(<NotificationLogView trainingId={7} log={log(ROWS)} tab="All notices" />);
   expect(screen.getByRole("link", { name: "All notices 4" }).getAttribute("href")).toBe("/training/7/log");
@@ -52,10 +60,12 @@ it("lists Not reached Employees with Retry, and retries on click", async () => {
   await waitFor(() => expect(actions.retryTrainingNotice).toHaveBeenCalledWith(7, 4));
 });
 
-it("lists the Needs printed schedule Employees separately, with no Retry", () => {
+it("lists the Needs printed schedule Employees separately, with Print schedule but no Retry", () => {
   render(<NotificationLogView trainingId={7} log={log([ROWS[3]])} tab="Needs printed schedule" />);
   expect(screen.getByText("Needs printed schedule · 1")).toBeTruthy();
-  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Print schedule" })).toBeTruthy();
+  expect(screen.getByText("Not printed yet")).toBeTruthy();
 });
 
 it("says there are no notices yet on an empty log", () => {

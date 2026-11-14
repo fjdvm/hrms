@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, materialProblem, readFeedback, readResultMarks, type TrainingFeedback, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, type PrintableTraining, type ScheduleSheet, materialProblem, readFeedback, readResultMarks, type TrainingFeedback, type MarkResultsResult, type ResultMark, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
@@ -219,4 +219,39 @@ export async function saveFeedback(trainingId: number, employeeId: number, ratin
     if (error instanceof TrainingError && error.reason === "validation") return { error: "Check the rating and comments, then try again." };
     return { error: problem(error) };
   }
+}
+
+/** The Trainings the Print or export dialog offers, loaded when it opens. */
+export async function loadPrintable(): Promise<{ error?: string; trainings?: PrintableTraining[] }> {
+  try {
+    return { trainings: await (await trainingsForRequest()).printable() };
+  } catch (error) {
+    return { error: problem(error) };
+  }
+}
+
+/** The preview: the sheet for the chosen Trainings. Changes nothing. */
+export async function loadSchedule(trainingIds: number[], includeNames: boolean): Promise<{ error?: string; sheet?: ScheduleSheet }> {
+  try {
+    return { sheet: await (await trainingsForRequest()).schedule(trainingIds, { includeNames }) };
+  } catch (error) {
+    return { error: scheduleProblem(error) };
+  }
+}
+
+/** Pressing Print: marks the no-email Employees printed (when the names are on the sheet) before the browser's print dialog opens. */
+export async function recordSchedulePrinted(trainingIds: number[], includeNames: boolean): Promise<{ error?: string; marked?: number }> {
+  try {
+    const { marked } = await (await trainingsForRequest()).printSchedule(trainingIds, { includeNames });
+    for (const id of trainingIds) { revalidatePath(`/training/${id}`); revalidatePath(`/training/${id}/log`); }
+    return { marked };
+  } catch (error) {
+    return { error: scheduleProblem(error) };
+  }
+}
+
+function scheduleProblem(error: unknown): string {
+  if (error instanceof TrainingError && error.reason === "conflict") return "A Cancelled training can't go on a schedule.";
+  if (error instanceof TrainingError && error.reason === "not-found") return "One of those trainings no longer exists.";
+  return problem(error);
 }
