@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Paperclip, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -90,8 +90,11 @@ export default async function Page({ searchParams }: PageProps<"/training">) {
                 <TableRow key={training.id} className="relative border-border-subtle">
                   <TableCell className={CELL}>
                     <div className="flex flex-col gap-[2px]">
-                      <span className={cn("text-sm font-medium", training.status === "Cancelled" ? "text-muted-foreground" : "text-primary")}>{training.title}</span>
-                      <span className="text-xs text-muted-foreground">{training.trainer}</span>
+                      <Link href={`/training/${training.id}`} className={cn("text-sm font-medium after:absolute after:inset-0 hover:underline", training.status === "Cancelled" ? "text-muted-foreground" : "text-primary")}>{training.title}</Link>
+                      <span className="flex items-center gap-[6px] text-xs text-muted-foreground">
+                        {training.trainer}
+                        {training.hasMaterials && <><span aria-hidden className="text-zinc-400">·</span><Paperclip className="size-3" aria-hidden />Materials attached</>}
+                      </span>
                     </div>
                   </TableCell>
                   <TableCell className={CELL}>
