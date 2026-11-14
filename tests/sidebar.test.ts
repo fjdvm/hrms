@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sidebarFor, sidebarSections } from "@/components/layout/sidebar-nav";
+import { activeHref, sidebarFor, sidebarSections } from "@/components/layout/sidebar-nav";
 import { MODULES } from "@/lib/modules";
 
 const ALL_PAGES = MODULES.map((m) => m.href);
@@ -13,12 +13,13 @@ const layout = (pages: string[]) =>
   }));
 
 describe("sidebar", () => {
-  it("lists Dashboard, RECRUITMENT, HIRING, then the EMPLOYEE section", () => {
+  it("lists Dashboard, RECRUITMENT, HIRING, EMPLOYEE, then the TRAINING section", () => {
     expect(layout(ALL_PAGES)).toEqual([
       { label: undefined, items: ["Dashboard"] },
       { label: "RECRUITMENT", items: ["Job Postings", "Applicants"] },
       { label: "HIRING", items: ["Interviews", "Offers"] },
       { label: "EMPLOYEE", items: ["Information", "Onboarding"] },
+      { label: "TRAINING", items: ["Trainings", "Calendar", "Training history"] },
     ]);
   });
 
@@ -29,15 +30,17 @@ describe("sidebar", () => {
     expect(layout(["/offers"])).toEqual([{ label: "HIRING", items: ["Offers"] }]);
     expect(layout(["/employee-information"])).toEqual([{ label: "EMPLOYEE", items: ["Information"] }]);
     expect(layout(["/employee-onboarding"])).toEqual([{ label: "EMPLOYEE", items: ["Onboarding"] }]);
+    expect(layout(["/training"])).toEqual([{ label: "TRAINING", items: ["Trainings", "Calendar", "Training history"] }]);
   });
 
-  it("hides the groups whose Modules are not held, and lists no tab for Training or Performance yet", () => {
+  it("hides the groups whose Modules are not held, and lists no TRAINING group without the Training Module", () => {
     const pages = ALL_PAGES.filter((href) => !["/job-postings", "/applicants", "/interviews", "/offers"].includes(href));
 
-    expect(layout(pages).flatMap((s) => s.items)).toEqual(["Dashboard", "Information", "Onboarding"]);
+    expect(layout(pages).flatMap((s) => s.items)).toEqual(["Dashboard", "Information", "Onboarding", "Trainings", "Calendar", "Training history"]);
     expect(layout(pages).map((s) => s.label)).not.toContain("RECRUITMENT");
     expect(layout(pages).map((s) => s.label)).not.toContain("HIRING");
-    expect(layout(["/training", "/performance"])).toEqual([]);
+    expect(layout(["/performance"])).toEqual([]);
+    expect(layout(pages.filter((href) => href !== "/training")).map((s) => s.label)).not.toContain("TRAINING");
   });
 
   it("retires the Hired page and redirects its URL to Employee Information", async () => {
@@ -93,5 +96,15 @@ describe("System links in the sidebar", () => {
     const urls = await load({});
     expect(urls["Point of Sale"]).toBe("https://web-pos-alpha-vert.vercel.app/");
     expect(urls["IMS - Inventory Management System"]).toBe("https://br-sims.vercel.app/");
+  });
+
+  it("marks one item active: Trainings for its detail pages, Calendar for its own", () => {
+    const sections = sidebarFor(ALL_PAGES);
+
+    expect(activeHref("/training", sections)).toBe("/training");
+    expect(activeHref("/training/new", sections)).toBe("/training");
+    expect(activeHref("/training/calendar", sections)).toBe("/training/calendar");
+    expect(activeHref("/training/history", sections)).toBe("/training/history");
+    expect(activeHref("/offers/3", sections)).toBe("/offers");
   });
 });

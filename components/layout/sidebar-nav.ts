@@ -4,6 +4,7 @@ import {
   Briefcase,
   FileText,
   CalendarClock,
+  CalendarDays,
   UserSearch,
   LayoutDashboard,
   LayoutGrid,
@@ -11,6 +12,8 @@ import {
   Users,
   UserCheck,
   Users2,
+  GraduationCap,
+  History,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MODULES, type Module } from "@/lib/modules";
@@ -39,7 +42,7 @@ export interface NavSection {
   items: NavItem[];
 }
 
-/** The sidebar, top to bottom. Training and Performance have Modules but no HRMS pages to list yet. */
+/** The sidebar, top to bottom. Performance has a Module but no HRMS pages to list yet. */
 export const sidebarSections: NavSection[] = [
   {
     items: [
@@ -67,7 +70,23 @@ export const sidebarSections: NavSection[] = [
       { name: "Onboarding", href: "/employee-onboarding", icon: UserCheck, module: "Employee Onboarding" },
     ],
   },
+  {
+    label: "TRAINING",
+    items: [
+      { name: "Trainings", href: "/training", icon: GraduationCap, module: "Training" },
+      { name: "Calendar", href: "/training/calendar", icon: CalendarDays, module: "Training" },
+      { name: "Training history", href: "/training/history", icon: History, module: "Training" },
+    ],
+  },
 ];
+
+/** The item a path belongs to: the longest href that is the path or a parent of it, so Calendar is not also Trainings. */
+export function activeHref(pathname: string, sections: NavSection[]): string | undefined {
+  return sections
+    .flatMap((section) => section.items.map((item) => item.href))
+    .filter((href) => pathname === href || pathname.startsWith(href + "/"))
+    .sort((a, b) => b.length - a.length)[0];
+}
 
 /** The sections a Staff member sees, given the Module pages they may open; empty sections drop out. */
 export function sidebarFor(permittedPages: string[]): NavSection[] {
