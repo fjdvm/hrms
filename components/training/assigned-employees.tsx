@@ -48,7 +48,12 @@ export function AssignedEmployees({ trainingId, title, date, people }: { trainin
             {people.map((person) => (
               <tr key={person.employeeId} className="border-b border-[#efebf4] align-middle">
                 <td className="py-[10px] pr-[12px]"><div className="flex flex-col"><span className="font-medium text-foreground">{person.name}</span><span className="text-xs text-muted-foreground">{person.position} · {person.branch}</span></div></td>
-                <td className="py-[10px] pr-[12px]">{person.email ?? <span className={NEEDS_PRINTED}>Needs printed schedule</span>}</td>
+                <td className="py-[10px] pr-[12px]">{person.email ?? (
+                  <div className="flex flex-col items-start gap-[2px]">
+                    <span className={NEEDS_PRINTED}>Needs printed schedule</span>
+                    {person.reprintNeeded && <span className="text-xs text-amber-700">Reprint needed</span>}
+                  </div>
+                )}</td>
                 <td className="py-[10px] pr-[12px]"><Badge variant={BADGE[person.status]}>{person.status}</Badge></td>
                 <td className="py-[10px] text-right">
                   <button type="button" onClick={() => { setError(undefined); setRemoving(person); }} aria-label={`Remove ${person.name}`} className="rounded-md p-[6px] text-zinc-500 hover:bg-zinc-100 hover:text-destructive"><X className="size-4" aria-hidden /></button>

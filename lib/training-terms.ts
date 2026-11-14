@@ -51,7 +51,7 @@ export const cleanLines = (value: unknown) =>
   typeof value === "string" ? value.split(/\r?\n/).map((line) => line.replace(/[ \t]+/g, " ").trim()).filter(Boolean).join("\n") : "";
 
 /** Normalises what the form sent, then reports every problem. `terms` is set only when there is none. */
-export function readTrainingForm(raw: Record<string, string>, today = manilaToday()): { terms: TrainingTerms | null; errors: TrainingFormErrors } {
+export function readTrainingForm(raw: Record<string, string>, today = manilaToday(), { currentDate }: { currentDate?: string } = {}): { terms: TrainingTerms | null; errors: TrainingFormErrors } {
   const terms: TrainingTerms = {
     title: cleanLine(raw.title),
     trainer: cleanLine(raw.trainer),
@@ -71,7 +71,8 @@ export function readTrainingForm(raw: Record<string, string>, today = manilaToda
   if (terms.description.length > 2000 || !TEXT.test(terms.description.replace(/\n/g, " "))) errors.description = "Use up to 2000 characters, without < or >.";
   if (terms.objectives.length > 2000 || !TEXT.test(terms.objectives.replace(/\n/g, " "))) errors.objectives = "Use up to 2000 characters, without < or >.";
   if (!isDate(terms.date)) errors.date = "Choose a date.";
-  else if (terms.date < today) errors.date = "The date can't be in the past.";
+  // Editing may keep a date that has since passed (to fix a typo afterwards); moving to a new date must be today or later.
+  else if (terms.date < today && terms.date !== currentDate) errors.date = "The date can't be in the past.";
   if (!isTime(terms.startTime)) errors.startTime = "Choose a start time.";
   if (!isTime(terms.endTime)) errors.endTime = "Choose an end time.";
   else if (isTime(terms.startTime) && terms.endTime <= terms.startTime) errors.endTime = "The end time must be after the start time.";
@@ -157,6 +158,8 @@ export type AssignedEmployee = {
   needsPrintedSchedule: boolean;
   status: AssignmentStatus;
   completedOn: string | null;
+  /** The Training moved after this Employee was handed a printed schedule, so it needs printing again. */
+  reprintNeeded: boolean;
 };
 /** An Employee the Assign dialog offers. */
 export type AssignableEmployee = {
@@ -245,14 +248,24 @@ export type LogRow = {
   /** When the next try is due, while Retrying. ISO. */
   nextAttemptAt: string | null;
 };
+/** A reschedule: what the schedule was and became, and whether Employees were told. */
+export type ScheduleChange = {
+  at: string;
+  from: { date: string; startTime: string; endTime: string; mode: TrainingMode; location: string };
+  to: { date: string; startTime: string; endTime: string; mode: TrainingMode; location: string };
+  notified: boolean;
+  notifiedCount: number;
+  needsPrinted: number;
+};
 export type NotificationLog = {
   rows: LogRow[];
+  scheduleChanges: ScheduleChange[];
   notReached: LogRow[];
   needsPrinted: LogRow[];
   counts: Record<LogTab, number>;
 };
 /** One line of the detail page's preview: a notice event with how it went. */
-export type LogEvent = { kind: string; at: string; sent: number; retrying: number; failed: number; needPrinted: number };
+export type LogEvent = { kind: string; at: string; sent: number; retrying: number; failed: number; needPrinted: number; /** False when a reschedule was saved with Notify off. */ notified?: boolean };
 
 export const logTabFromParam = (param: string | undefined): LogTab =>
   LOG_TABS.find((tab) => tab.toLowerCase().replace(/ /g, "-") === param?.toLowerCase()) ?? "All notices";
@@ -268,3 +281,11 @@ export function formatNoticeTime(iso: string) {
 }
 /** "4:40 PM" in Manila time. */
 export const formatClock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" });
+
+// ── Editing ───────────────────────────────────────────────────────────────
+
+/** Whether an edit moves the Training: its date, time, Mode or venue or link. Title and text changes are not a reschedule. */
+export function scheduleDiffers(a: { date: string; startTime: string; endTime: string; mode: string; location: string }, b: { date: string; startTime: string; endTime: string; mode: string; location: string }) {
+  return a.date !== b.date || a.startTime !== b.startTime || a.endTime !== b.endTime || a.mode !== b.mode || a.location !== b.location;
+}
+export type UpdateResult = { changed: boolean; rescheduled: boolean; notified: number; needPrintedSchedule: number };

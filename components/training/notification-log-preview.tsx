@@ -5,6 +5,7 @@ import { formatNoticeTime, logHref, type LogEvent } from "@/lib/training-terms";
 /** "3 sent · 1 retrying · 1 failed · 2 need printed schedule" */
 export function eventSummary(event: LogEvent) {
   return [
+    event.notified === false && "Employees not notified",
     event.sent > 0 && `${event.sent} sent`,
     event.retrying > 0 && `${event.retrying} retrying`,
     event.failed > 0 && `${event.failed} failed`,

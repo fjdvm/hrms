@@ -14,7 +14,7 @@ const row = (extra: Partial<LogRow>): LogRow => ({
   state: "Sent", at: "2026-11-11T08:10:00Z", attempts: 0, nextAttemptAt: null, ...extra,
 });
 const log = (rows: LogRow[]): NotificationLog => ({
-  rows, notReached: rows.filter((r) => r.state === "Failed"), needsPrinted: rows.filter((r) => r.state === "Needs printed schedule"),
+  rows, scheduleChanges: [], notReached: rows.filter((r) => r.state === "Failed"), needsPrinted: rows.filter((r) => r.state === "Needs printed schedule"),
   counts: { "All notices": rows.length, "Not reached": rows.filter((r) => r.state === "Failed").length, "Needs printed schedule": rows.filter((r) => r.state === "Needs printed schedule").length },
 });
 const ROWS = [

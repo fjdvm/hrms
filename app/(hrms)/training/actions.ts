@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, materialProblem, readCancelReason, readTrainingForm, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, materialProblem, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
@@ -130,6 +130,31 @@ export async function retryTrainingNotice(trainingId: number, noticeId: number):
   revalidatePath(`/training/${trainingId}`);
   revalidatePath(`/training/${trainingId}/log`);
   return {};
+}
+
+export type EditTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; result?: UpdateResult; attempt?: number };
+
+/** Saves an edit. Invalid input comes back as messages beside the fields; a reschedule emails the assigned Employees when Notify is on. */
+export async function updateTraining(trainingId: number, previous: EditTrainingState, data: FormData): Promise<EditTrainingState> {
+  const values = Object.fromEntries(TERM_FIELDS.map((name) => [name, (data.get(name) as string | null) ?? ""]));
+  const attempt = (previous.attempt ?? 0) + 1;
+  const notify = data.get("notify") !== "0";
+  try {
+    const trainings = await trainingsForRequest();
+    const current = await trainings.read(trainingId);
+    const { terms, errors } = readTrainingForm(values, manilaToday(), { currentDate: current.date });
+    if (!terms) return { fieldErrors: errors, values, attempt };
+    const result = await trainings.update(trainingId, terms, { notify });
+    if (result.notified > 0) after(() => deliverTrainingNotices());
+    revalidatePath(`/training/${trainingId}`);
+    revalidatePath(`/training/${trainingId}/log`);
+    revalidatePath("/training");
+    revalidatePath("/training/calendar");
+    return { result, values, attempt };
+  } catch (error) {
+    if (error instanceof TrainingError && error.reason === "conflict") return { error: "This training was cancelled, so it can't be edited.", values, attempt };
+    return { error: problem(error), values, attempt };
+  }
 }
 
 export type CancelState = { error?: string; reasonError?: string; result?: CancelResult };

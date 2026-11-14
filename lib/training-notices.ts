@@ -1,6 +1,5 @@
 import { database, type Database } from "./database";
 import { notificationsApp } from "./notifications/config";
-import { formatTrainingDate, formatTrainingTimes, type TrainingMode } from "./training-terms";
 
 export const NOTICE_KINDS = ["Assignment", "Schedule changed", "Cancelled", "Reminder"] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -11,28 +10,7 @@ export type NoticeState = "Queued" | "Sent" | "Retrying" | "Failed";
 export const MAX_RETRIES = 3;
 export const RETRY_AFTER_MS = 15 * 60 * 1000;
 
-export type NoticeTraining = { title: string; trainer: string; date: string; startTime: string; endTime: string; mode: TrainingMode; location: string };
-
-/** The Assignment email. Names the Training, when and where, and nothing the Employee would need to sign in for. */
-export function assignmentEmail(employeeName: string, training: NoticeTraining): { title: string; body: string } {
-  const first = employeeName.trim().split(/\s+/)[0] || employeeName;
-  const place = training.mode === "Online" ? `Meeting link: ${training.location}` : `Venue: ${training.location}`;
-  return {
-    title: `Training assigned: ${training.title}`,
-    body: [
-      `Hi ${first},`,
-      "",
-      `You have been assigned to the training "${training.title}" with ${training.trainer}.`,
-      "",
-      `Date: ${formatTrainingDate(training.date)}`,
-      `Time: ${formatTrainingTimes(training.startTime, training.endTime)}`,
-      `Mode: ${training.mode}`,
-      place,
-      "",
-      "Bren Raphael's",
-    ].join("\n"),
-  };
-}
+export { assignmentEmail, scheduleChangedEmail, type NoticeTraining } from "./training-email";
 
 /** The mailer boundary: one email through the notifications gateway. Throws when it was not accepted. */
 export type SendEmail = (email: { id: string; payload: unknown }) => Promise<void>;
