@@ -1,5 +1,6 @@
 import { database, type Database } from "./database";
 import { TAKES_PLACE } from "./interview-booking";
+import { formatTrainingTimes } from "./training-terms";
 import { manilaToday, manilaWeek, type DashboardRange, type DashboardSummary } from "./dashboard";
 
 /** Open Job Postings, read from the shared database: how many, their openings in total and their distinct locations. */
@@ -156,6 +157,24 @@ export async function upcomingInterviewsSummary(now: Date, db: Database = databa
 }
 
 /**
+ * Trainings still to come, for Upcoming Events: today and the next 30 days (Manila time), Cancelled ones left out. Each
+ * carries its time, Mode and trainer and a link to the Training. The Widget keeps its own limit and window.
+ */
+export async function upcomingTrainingsSummary(now: Date, db: Database = database): Promise<NonNullable<DashboardSummary["upcomingEvents"]>> {
+  const { rows } = await db.query<{ id: number; title: string; trainer: string; date: string; startTime: string; endTime: string; mode: string }>(
+    `SELECT id, title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime", mode
+     FROM public.hrms_trainings
+     WHERE cancelled_at IS NULL AND training_date >= $1::date AND training_date <= $1::date + 30
+     ORDER BY training_date, start_time, id LIMIT 50`,
+    [manilaToday(now)],
+  );
+  return rows.map((r) => ({
+    kind: "training" as const, id: `training:${r.id}`, title: r.title, date: r.date, startTime: r.startTime,
+    description: `${formatTrainingTimes(r.startTime, r.endTime)} · ${r.mode} · ${r.trainer}`, link: `/training/${r.id}`,
+  }));
+}
+
+/**
  * Decided offers by decision date, in the range and in its Previous period. An Application that reached Offer is
  * decided once it reaches Hired (accepted) or Rejected (not accepted) at or after that; the first such Stage is
  * its decision. Offers still waiting are in neither number.
@@ -235,7 +254,7 @@ export async function dashboardSummaryFor(
 ): Promise<DashboardSummary> {
   const holds = (...pages: string[]) => pages.some((page) => permittedPages.includes(page));
   const when = <T>(allowed: boolean, read: () => Promise<T>): Promise<T | undefined> => (allowed ? read() : Promise.resolve(undefined));
-  const [openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire, recentActivity] = await Promise.all([
+  const [openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire, recentActivity, upcomingEvents] = await Promise.all([
     when(holds("/job-postings"), () => openJobsSummary(db)),
     when(holds("/applicants"), () => applicantsSummary(range, db)),
     when(holds("/applicants", "/interviews", "/offers"), () => hiringPipelineSummary(range, db)),
@@ -247,7 +266,9 @@ export async function dashboardSummaryFor(
     when(holds("/offers"), () => offersSummary(range, db)),
     when(holds("/applicants", "/offers"), () => timeToHireSummary(range, db)),
     when(holds("/employee-information"), () => employeeRecentActivity(db)),
+    // Upcoming Events: Trainings only for a holder of Training; holidays and leave will come from Attendance, which has no data here yet.
+    when(holds("/training"), () => upcomingTrainingsSummary(now, db)),
   ]);
-  const read = { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire, recentActivity };
+  const read = { openJobs, applicants, hiringPipeline, needsAttention, applicantSources, applicantsByJob, interviews, upcomingInterviews, offers, timeToHire, recentActivity, upcomingEvents };
   return Object.fromEntries(Object.entries(read).filter(([, value]) => value !== undefined)) as DashboardSummary;
 }

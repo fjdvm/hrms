@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { dashboardRange } from "@/lib/dashboard";
-import { applicantSourcesSummary, applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, needsAttentionSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary } from "@/lib/dashboard-data";
+import { applicantSourcesSummary, applicantsByJobSummary, applicantsSummary, dashboardSummaryFor, hiringPipelineSummary, interviewsSummary, needsAttentionSummary, offersSummary, openJobsSummary, timeToHireSummary, upcomingInterviewsSummary, upcomingTrainingsSummary } from "@/lib/dashboard-data";
 
 const NOW = new Date("2026-10-28T12:05:00Z");
 const RANGE = dashboardRange("this-month", NOW);
@@ -70,7 +70,7 @@ it("fills the summary with every hiring figure for Staff who hold every hiring M
 
 it("does not read the database for Staff who hold no Modules with Dashboard data", async () => {
   const unreachable = { query: () => Promise.reject(new Error("must not be queried")) };
-  expect(await dashboardSummaryFor(["/dashboard", "/employee-onboarding", "/training"], RANGE, NOW, unreachable)).toEqual({});
+  expect(await dashboardSummaryFor(["/dashboard", "/employee-onboarding", "/performance"], RANGE, NOW, unreachable)).toEqual({});
 });
 
 it("reads only what each Module owns: a Job Postings holder gets Open jobs and nothing else", async () => {
@@ -421,4 +421,30 @@ it("counts Sources only for Applications received in the range, on Manila days",
 
 it("reads no Sources when no Application was received", async () => {
   expect(await applicantSourcesSummary(RANGE, db)).toEqual([]);
+});
+
+async function training(title: string, date: string, startTime = "09:00", cancelled = false) {
+  await db.query(`INSERT INTO public.hrms_trainings (title, trainer, training_date, start_time, end_time, mode, location, created_by_name, cancelled_at)
+    VALUES ($1, 'HR', $2, $3, $3::time + interval '2 hours', 'Online', 'https://meet.example.test/x', 'Ada', $4)`, [title, date, startTime, cancelled ? new Date().toISOString() : null]);
+}
+
+it("reads Upcoming Trainings from today (Manila) to 30 days on, soonest first, leaving out Cancelled and past ones", async () => {
+  // NOW is 28 Oct 2026, 20:05 in Manila.
+  await training("Tomorrow", "2026-10-29", "08:00");
+  await training("Today, later", "2026-10-28", "13:00");
+  await training("Today, earlier", "2026-10-28", "08:00");
+  await training("Cancelled", "2026-10-30", "09:00", true);
+  await training("Yesterday", "2026-10-27");
+  await training("Too far", "2026-11-28");
+  await training("On the edge", "2026-11-27");
+  const events = await upcomingTrainingsSummary(NOW, db);
+  expect(events.map((event) => event.title)).toEqual(["Today, earlier", "Today, later", "Tomorrow", "On the edge"]);
+  expect(events[0]).toMatchObject({ kind: "training", date: "2026-10-28", startTime: "08:00", description: "8:00 – 10:00 AM · Online · HR" });
+  expect((events[0] as { link: string }).link).toMatch(/^\/training\/\d+$/);
+});
+
+it("reads Trainings only for a Training holder, and nothing at all for the Dashboard alone", async () => {
+  await training("Soon", "2026-10-29");
+  expect(Object.keys(await dashboardSummaryFor(["/dashboard", "/training"], RANGE, NOW, db))).toEqual(["upcomingEvents"]);
+  expect(await dashboardSummaryFor(["/dashboard"], RANGE, NOW, db)).toEqual({});
 });

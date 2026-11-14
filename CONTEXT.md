@@ -118,7 +118,7 @@ A kind of Widget, owned by Employee Information, that shows how the company's em
 A kind of Widget, owned by Employee Information, that lists the latest employee-record events such as hires, transfers and status changes. It does not draw on other Modules.
 
 **Upcoming Events**:
-A kind of Widget, that has no owning Module, shown to every Dashboard holder as "Nothing to show yet" until something supplies it. It lists what is coming up such as approved leave and holidays.
+A Detail Widget fed by more than one Module, shown to Staff who hold Attendance or Training and Development, each seeing only the items of the Modules they hold: approved leave and holidays from Attendance, and Upcoming Trainings from Training and Development (title, date and time, a "Training" tag, linked to the Training). Cancelled Trainings are left out. It lists the next 30 days (Manila time), at most 10 items, and shows "Nothing to show yet" when there are none. Attendance has no HRMS page yet, so today only Training holders see it. Unrelated to Upcoming interviews.
 
 **Hiring pipeline**:
 A Detail Widget, cross-cutting, shown to a holder of Applications, Interviews or Offers with each line gated by its own Module (Applied and Screening by Applications, Interview by Interviews, Offer and Hired by Offers), that shows how many Applications received in the Dashboard Range have ever reached each Stage (Applied, Screening, Interview, Offer, Hired), each as a percent of all Applications received. Rejected and Withdrawn are not bars. Its headline names how many applicants it takes to get one hire and the Stage where most drop off.

@@ -3,7 +3,7 @@ import { cardRowsFor, compare, dashboardRange, dashboardLayoutFor, parseRangeId,
 
 const RANGE = dashboardRange(undefined, new Date("2026-10-28T12:05:00Z"));
 
-const ALL = ["/dashboard", "/job-postings", "/applicants", "/interviews", "/offers", "/employee-information"];
+const ALL = ["/dashboard", "/job-postings", "/applicants", "/interviews", "/offers", "/employee-information", "/training"];
 
 const cardRows = (pages: string[], summary: DashboardSummary = {}) => cardRowsFor(pages, summary, RANGE);
 const cards = (pages: string[], summary: DashboardSummary = {}) => cardRows(pages, summary).flat();
@@ -143,14 +143,18 @@ describe("Dashboard layout", () => {
     });
   });
 
-  it("leaves a lone Attendance Rate card as the left block, with no Headcount Trend, with only the Dashboard", () => {
+  it("leaves a lone Attendance Rate card as the left block, with no Headcount Trend and no rows, with only the Dashboard", () => {
     expect(shape(["/dashboard"])).toEqual({
       hiring: [],
       leftCards: ["Attendance Rate"],
       activity: null,
       trend: null,
-      rows: [["Upcoming Events"]],
+      rows: [],
     });
+  });
+
+  it("shows Upcoming Events, with no other Widget, to a Training holder", () => {
+    expect(shape(["/dashboard", "/training"]).rows).toEqual([["Upcoming Events"]]);
   });
 
   it("has no People block and no rows with only Job Postings", () => {
@@ -161,7 +165,7 @@ describe("Dashboard layout", () => {
   });
 
   it("is empty for Staff holding none of the owning Modules", () => {
-    const l = layout(["/performance", "/training", "/nope"]);
+    const l = layout(["/performance", "/nope"]);
     expect(l).toEqual({ hiringCards: [], hiringRows: [], people: null, rows: [] });
   });
 
@@ -297,8 +301,9 @@ describe("Upcoming Events", () => {
     kind === "leave"
       ? { id, kind, status: "approved", title: id, date, description: "" }
       : { id, kind, title: id, date, description: "" };
-  const items = (summary: DashboardSummary) =>
-    widgetData(["/dashboard"], "upcoming-events", summary) as { id: string }[] | null;
+  // Holidays and leave belong to Attendance, whose Module has no HRMS page yet, so its address is passed directly.
+  const items = (summary: DashboardSummary, pages = ["/dashboard", "/attendance"]) =>
+    widgetData(pages, "upcoming-events", summary) as { id: string }[] | null;
 
   it("keeps events in the next 30 days, soonest first", () => {
     const got = items({
@@ -325,6 +330,42 @@ describe("Upcoming Events", () => {
 
   it("is absent when nothing is coming up", () => {
     expect(items({ upcomingEvents: [ev("past", "2026-01-01")] })).toBeNull();
+  });
+});
+
+describe("Upcoming Events across Modules", () => {
+  const training = (id: string, date: string, startTime: string): UpcomingEvent =>
+    ({ id, kind: "training", title: id, date, startTime, description: "", link: `/training/${id}` });
+  const holiday = (id: string, date: string): UpcomingEvent => ({ id, kind: "holiday", title: id, date, description: "" });
+  const leave = (id: string, date: string): UpcomingEvent => ({ id, kind: "leave", status: "approved", title: id, date, description: "" });
+  const mixed: DashboardSummary = { upcomingEvents: [training("t1", "2026-10-30", "14:00"), holiday("h1", "2026-10-31"), leave("l1", "2026-10-28"), training("t2", "2026-10-30", "09:00")] };
+  const ids = (pages: string[]) => (widgetData(pages, "upcoming-events", mixed) as { id: string }[] | null)?.map((e) => e.id) ?? null;
+
+  it("shows a Training holder only Trainings, soonest first and by time within a day", () => {
+    expect(ids(["/dashboard", "/training"])).toEqual(["t2", "t1"]);
+  });
+
+  it("shows an Attendance holder only leave and holidays", () => {
+    expect(ids(["/dashboard", "/attendance"])).toEqual(["l1", "h1"]);
+  });
+
+  it("combines both for a holder of both Modules", () => {
+    expect(ids(["/dashboard", "/attendance", "/training"])).toEqual(["l1", "t2", "t1", "h1"]);
+  });
+
+  it("does not draw the Widget for Staff holding neither Module, whatever the summary holds", () => {
+    expect(ids(["/dashboard", "/applicants"])).toBeNull();
+    expect(layout(["/dashboard", "/applicants"], mixed).rows.flat().map((w) => w.id)).not.toContain("upcoming-events");
+  });
+
+  it("shows Nothing to show yet (null data) to a holder with no items in the next 30 days", () => {
+    expect(widgetData(["/dashboard", "/training"], "upcoming-events", { upcomingEvents: [training("far", "2027-03-01", "09:00")] })).toBeNull();
+    expect(layout(["/dashboard", "/training"]).rows.flat()[0]).toMatchObject({ id: "upcoming-events", data: null });
+  });
+
+  it("keeps the 30-day window and the limit of 10 for Trainings too", () => {
+    const many = Array.from({ length: 15 }, (_, i) => training(`t${i}`, "2026-11-01", "09:00"));
+    expect(widgetData(["/training"], "upcoming-events", { upcomingEvents: many })).toHaveLength(10);
   });
 });
 
