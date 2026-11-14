@@ -141,3 +141,41 @@ export function formatSize(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+
+// ── Assigned employees ────────────────────────────────────────────────────
+
+export const ASSIGNMENT_STATUSES = ["Assigned", "Completed", "Did not attend", "Cancelled"] as const;
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
+
+/** An Employee on a Training. `email` is null when the Employee has none, which makes them "Needs printed schedule". */
+export type AssignedEmployee = {
+  employeeId: number;
+  name: string;
+  position: string;
+  branch: string;
+  email: string | null;
+  needsPrintedSchedule: boolean;
+  status: AssignmentStatus;
+  completedOn: string | null;
+};
+/** An Employee the Assign dialog offers. */
+export type AssignableEmployee = {
+  employeeId: number;
+  name: string;
+  position: string;
+  branch: string;
+  department: string | null;
+  email: string | null;
+  alreadyAssigned: boolean;
+};
+/** Who to assign: the chosen Employees, or every Employee of one department. */
+export type AssignRequest = { employeeIds: number[] } | { department: string };
+export type AssignResult = { added: number; alreadyAssigned: number; needPrintedSchedule: number };
+
+/** "Needs printed schedule" for no-email Employees, so the warning names who, in neutral wording. */
+export function noEmailWarning(people: { name: string; email: string | null }[]): string | null {
+  const missing = people.filter((person) => !person.email).map((person) => person.name);
+  if (missing.length === 0) return null;
+  const names = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} and ${missing[missing.length - 1]}`;
+  return `${names} ${missing.length === 1 ? "has" : "have"} no email, so ${missing.length === 1 ? "they" : "they"} won’t get the Assignment email. Print the schedule from the training page.`;
+}

@@ -3,7 +3,7 @@ import { accessFor } from "./portal/access";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
   TRAINING_TABS, manilaToday, materialProblem, readTrainingForm, tabOf, trainingStatus,
-  type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
+  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
 export type TrainingListItem = {
@@ -53,10 +53,11 @@ export type TrainingDetail = TrainingTerms & {
   /** Objectives, one per line, as a list. */
   objectiveList: string[];
   materials: TrainingMaterial[];
+  assigned: AssignedEmployee[];
 };
 
 export class TrainingError extends Error {
-  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found") {
+  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found" | "conflict") {
     super(`Training: ${reason}`);
   }
 }
@@ -97,6 +98,13 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
 
   const validId = (id: unknown) => Number.isInteger(id) && (id as number) > 0 && (id as number) <= 2_147_483_647;
   const unavailable = (error: unknown): never => { throw error instanceof TrainingError ? error : new TrainingError("unavailable"); };
+
+  async function requireTraining(id: number) {
+    if (!validId(id)) throw new TrainingError("not-found");
+    const { rows } = await db.query<{ cancelled: boolean }>(`SELECT cancelled_at IS NOT NULL AS cancelled FROM public.hrms_trainings WHERE id = $1`, [id]);
+    if (!rows[0]) throw new TrainingError("not-found");
+    return rows[0];
+  }
 
   return {
     /** Every Training in one tab, with all tab counts from the same snapshot. */
@@ -171,8 +179,55 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const { rows: materials } = await db.query<TrainingMaterial>(`
         SELECT file_id AS "fileId", filename, content_type AS "contentType", size FROM public.hrms_training_materials
         WHERE training_id = $1 AND status = 'Active' ORDER BY created_at, file_id`, [id]);
+      const { rows: assigned } = await db.query<Omit<AssignedEmployee, "needsPrintedSchedule">>(`
+        SELECT e.id AS "employeeId", e.full_name AS name, e.position, e.branch, NULLIF(btrim(e.email), '') AS email,
+          a.status, a.completed_on::text AS "completedOn"
+        FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
+        WHERE a.training_id = $1 ORDER BY a.assigned_at, e.full_name, e.id`, [id]);
       const { cancelled, ...training } = found[0];
-      return { ...training, status: trainingStatus({ date: training.date, cancelled }, now()), objectiveList: training.objectives.split("\n").filter(Boolean), materials };
+      return { ...training, assigned: assigned.map((person) => ({ ...person, needsPrintedSchedule: !person.email })), status: trainingStatus({ date: training.date, cancelled }, now()), objectiveList: training.objectives.split("\n").filter(Boolean), materials };
+    },
+    /** Everyone the Assign dialog may offer: Employee records only, never Staff, with who is already on this Training. */
+    async assignable(trainingId: number): Promise<AssignableEmployee[]> {
+      await authorise();
+      await requireTraining(trainingId);
+      const { rows } = await db.query<AssignableEmployee>(`
+        SELECT e.id AS "employeeId", e.full_name AS name, e.position, e.branch, e.department, NULLIF(btrim(e.email), '') AS email,
+          EXISTS (SELECT 1 FROM public.hrms_training_assignments a WHERE a.training_id = $1 AND a.employee_id = e.id) AS "alreadyAssigned"
+        FROM public.hrms_employees e ORDER BY e.full_name, e.id`, [trainingId]);
+      return rows;
+    },
+    /** Assigns Employees by person or by whole department. Already-assigned Employees are left as they are. */
+    async assign(trainingId: number, request: AssignRequest): Promise<AssignResult> {
+      const staff = await authorise();
+      const training = await requireTraining(trainingId);
+      if (training.cancelled) throw new TrainingError("conflict");
+      const byDepartment = "department" in request;
+      if (byDepartment ? typeof request.department !== "string" || request.department.trim() === "" : !Array.isArray(request.employeeIds) || request.employeeIds.length === 0 || !request.employeeIds.every(validId)) {
+        throw new TrainingError("validation");
+      }
+      const { rows: chosen } = await db.query<{ id: number; email: string | null; assigned: boolean }>(`
+        SELECT e.id, NULLIF(btrim(e.email), '') AS email,
+          EXISTS (SELECT 1 FROM public.hrms_training_assignments a WHERE a.training_id = $1 AND a.employee_id = e.id) AS assigned
+        FROM public.hrms_employees e
+        WHERE ${byDepartment ? "e.department = $2" : "e.id = ANY($2::int[])"}`,
+      [trainingId, byDepartment ? request.department.trim() : [...new Set(request.employeeIds)]]);
+      // Anyone who is not an Employee record (a Staff member, or an id that doesn't exist) is not found here, so it is refused.
+      if (chosen.length === 0 || (!byDepartment && chosen.length !== new Set(request.employeeIds).size)) throw new TrainingError("validation");
+      const fresh = chosen.filter((person) => !person.assigned);
+      if (fresh.length > 0) {
+        await db.query(`INSERT INTO public.hrms_training_assignments (training_id, employee_id, assigned_by)
+          SELECT $1, unnest($2::int[]), $3 ON CONFLICT DO NOTHING`, [trainingId, fresh.map((person) => person.id), staff.username]);
+      }
+      return { added: fresh.length, alreadyAssigned: chosen.length - fresh.length, needPrintedSchedule: fresh.filter((person) => !person.email).length };
+    },
+    /** Removes an Employee from a Training. */
+    async unassign(trainingId: number, employeeId: number): Promise<void> {
+      await authorise();
+      await requireTraining(trainingId);
+      if (!validId(employeeId)) throw new TrainingError("not-found");
+      const { rows } = await db.query(`DELETE FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = $2 RETURNING 1`, [trainingId, employeeId]);
+      if (!rows[0]) throw new TrainingError("not-found");
     },
     /** Asks file-storage for an upload address. The file is Pending, and uploaded by this Staff member, until confirmed. */
     async requestMaterial(file: MaterialRequest, trainingId?: number): Promise<{ fileId: string; uploadUrl: string }> {
