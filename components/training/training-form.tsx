@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { Bell, Calendar, Clock, MapPin, Printer, UserPlus, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { MaterialsDropzone, useMaterials } from "@/components/training/materials";
 import { saveTraining, type SaveTrainingState } from "@/app/(hrms)/training/actions";
 import { TRAINING_MODES, type TrainingMode } from "@/lib/training-terms";
 import { cn } from "@/lib/utils";
@@ -36,10 +37,11 @@ const MODE_COPY: Record<TrainingMode, { icon: typeof Video; hint: string }> = {
 
 const REQUIRED = ["title", "trainer", "date", "startTime", "endTime", "location"] as const;
 
-/** The New training form: one dated session, no materials yet. Saving returns to the list. */
+/** The New training form: one dated session, with its materials. Saving returns to the list. */
 export function TrainingForm({ today }: { today: string }) {
   const [state, submit, pending] = useActionState(saveTraining, {} as SaveTrainingState);
   const errors = state.fieldErrors ?? {};
+  const materialState = useMaterials([]);
   const [values, setValues] = useState<Record<string, string>>({ mode: "In person" });
   const value = (name: string) => values[name] ?? state.values?.[name] ?? "";
   const set = (name: string) => (event: { target: { value: string } }) => setValues((current) => ({ ...current, [name]: event.target.value }));
@@ -106,6 +108,14 @@ export function TrainingForm({ today }: { today: string }) {
               </div>
             </Field>
           </Card>
+          <Card className={SECTION}>
+            <div className="flex flex-col gap-[2px]">
+              <h2 className="text-[15px] font-semibold text-zinc-900">Materials</h2>
+              <p className="text-xs text-zinc-500">PDF, Word, Excel or images, up to 10 MB each.</p>
+            </div>
+            {materialState.materials.map((m) => <input key={m.fileId} type="hidden" name="material" value={m.fileId} />)}
+            <MaterialsDropzone state={materialState} />
+          </Card>
         </div>
         <div className="flex w-full shrink-0 flex-col gap-[16px] lg:w-[340px]">
           <Card className={SECTION}>
@@ -127,7 +137,7 @@ export function TrainingForm({ today }: { today: string }) {
       <div className="flex flex-wrap items-center gap-sm border-t border-[#ebebeb] bg-white px-md py-[14px] sm:px-xl">
         {state.error ? <p role="alert" className="flex-1 text-sm text-destructive">{state.error}</p> : <p className="flex-1 text-[13px] text-zinc-500">{ready ? "Ready to save." : "Fill in the required fields to save."}</p>}
         <Button variant="outline" asChild className="h-auto rounded-lg px-[14px] py-[9px] shadow-none"><Link href="/training">Cancel</Link></Button>
-        <Button type="submit" disabled={pending || !ready} className="h-auto rounded-lg px-[14px] py-[9px] shadow-none">{pending ? "Saving…" : "Save training"}</Button>
+        <Button type="submit" disabled={pending || !ready || materialState.uploading > 0} className="h-auto rounded-lg px-[14px] py-[9px] shadow-none">{pending ? "Saving…" : "Save training"}</Button>
       </div>
     </form>
   );
