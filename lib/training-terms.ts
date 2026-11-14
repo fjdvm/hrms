@@ -183,6 +183,47 @@ export function noEmailWarning(people: { name: string; email: string | null }[])
   return `${names} ${missing.length === 1 ? "has" : "have"} no email, so ${missing.length === 1 ? "they" : "they"} won’t get the Assignment email. Print the schedule from the training page.`;
 }
 
+// ── Cancel ────────────────────────────────────────────────────────────────
+
+export const CANCEL_REASON_MAX = 500;
+
+/** The reason Staff give for cancelling: required, trimmed, markup rejected (not stripped). `reason` is set only when there is no error. */
+export function readCancelReason(raw: unknown): { reason: string | null; error?: string } {
+  const reason = cleanLines(raw);
+  if (!reason) return { reason: null, error: "Enter a reason for cancelling." };
+  if (reason.length > CANCEL_REASON_MAX || !TEXT.test(reason.replace(/\n/g, " "))) {
+    return { reason: null, error: `Use up to ${CANCEL_REASON_MAX} characters for the reason, without < or >.` };
+  }
+  return { reason };
+}
+
+/** What Staff chose in the Cancel dialog. */
+export type CancelRequest = { reason: string; notify: boolean };
+/** `notified` Employees were queued a Cancelled email; `needPrintedSchedule` have no email and must be told directly. */
+export type CancelResult = { cancelled: number; notified: number; needPrintedSchedule: number };
+
+/** The Cancelled email. Names the Training, when it was, and why; nothing the Employee would need to sign in for. */
+export function cancelledEmail(
+  employeeName: string,
+  training: { title: string; date: string },
+  reason: string,
+): { title: string; body: string } {
+  const first = employeeName.trim().split(/\s+/)[0] || employeeName;
+  const day = formatTrainingDate(training.date);
+  return {
+    title: `Cancelled: ${training.title} on ${day.replace(/,? \d{4}$/, "")}`,
+    body: [
+      `Hi ${first},`,
+      "",
+      `The training "${training.title}" on ${day} is cancelled.`,
+      "",
+      `Reason: ${reason}`,
+      "",
+      "Bren Raphael's",
+    ].join("\n"),
+  };
+}
+
 // ── Notification log ──────────────────────────────────────────────────────
 
 export type LogNoticeState = "Sending" | "Sent" | "Retrying" | "Failed" | "Needs printed schedule";

@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, materialProblem, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, materialProblem, readCancelReason, readTrainingForm, manilaToday, type AssignableEmployee, type AssignRequest, type AssignResult, type CancelResult, type UpdateResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
@@ -154,5 +154,27 @@ export async function updateTraining(trainingId: number, previous: EditTrainingS
   } catch (error) {
     if (error instanceof TrainingError && error.reason === "conflict") return { error: "This training was cancelled, so it can't be edited.", values, attempt };
     return { error: problem(error), values, attempt };
+  }
+}
+
+export type CancelState = { error?: string; reasonError?: string; result?: CancelResult };
+
+/** Cancels the Training with its reason; the caller has already shown the confirm dialog. Invalid input comes back beside the field. */
+export async function cancelTraining(trainingId: number, reason: string, notify: boolean): Promise<CancelState> {
+  const checked = readCancelReason(reason);
+  if (checked.reason === null) return { reasonError: checked.error };
+  try {
+    const result = await (await trainingsForRequest()).cancel(trainingId, { reason: checked.reason, notify: Boolean(notify) });
+    // The Cancelled emails go out straight away; anything that fails is retried by the scheduled job.
+    after(() => deliverTrainingNotices());
+    revalidatePath(`/training/${trainingId}`);
+    revalidatePath(`/training/${trainingId}/log`);
+    revalidatePath("/training");
+    revalidatePath("/training/calendar");
+    return { result };
+  } catch (error) {
+    if (error instanceof TrainingError && error.reason === "conflict") return { error: "This training was already cancelled or has results recorded, so it can't be cancelled." };
+    if (error instanceof TrainingError && error.reason === "validation") return { reasonError: "Check the reason and try again." };
+    return { error: problem(error) };
   }
 }

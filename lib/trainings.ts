@@ -3,9 +3,9 @@ import { accessFor } from "./portal/access";
 import { assignmentEmail, queueNotice, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
-  TRAINING_TABS, manilaToday, materialProblem, readTrainingForm, tabOf, trainingStatus,
+  TRAINING_TABS, cancelledEmail, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
-  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
+  type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
 export type TrainingListItem = {
@@ -52,6 +52,8 @@ export type TrainingDetail = TrainingTerms & {
   id: number;
   status: TrainingStatus;
   rescheduledFrom: string | null;
+  /** Why Staff cancelled it; set only when the status is Cancelled. */
+  cancelReason: string | null;
   /** Objectives, one per line, as a list. */
   objectiveList: string[];
   materials: TrainingMaterial[];
@@ -225,9 +227,10 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
     async read(id: number): Promise<TrainingDetail> {
       await authorise();
       if (!validId(id)) throw new TrainingError("not-found");
-      const { rows: found } = await db.query<TrainingTerms & { id: number; rescheduledFrom: string | null; cancelled: boolean }>(`
+      const { rows: found } = await db.query<TrainingTerms & { id: number; rescheduledFrom: string | null; cancelReason: string | null; cancelled: boolean }>(`
         SELECT id, title, trainer, description, objectives, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime",
-          to_char(end_time, 'HH24:MI') AS "endTime", mode, location, rescheduled_from::text AS "rescheduledFrom", cancelled_at IS NOT NULL AS cancelled
+          to_char(end_time, 'HH24:MI') AS "endTime", mode, location, rescheduled_from::text AS "rescheduledFrom",
+          cancel_reason AS "cancelReason", cancelled_at IS NOT NULL AS cancelled
         FROM public.hrms_trainings WHERE id = $1`, [id]);
       if (!found[0]) throw new TrainingError("not-found");
       const { rows: materials } = await db.query<TrainingMaterial>(`
@@ -284,6 +287,43 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         }
       }
       return { added: fresh.length, alreadyAssigned: chosen.length - fresh.length, needPrintedSchedule: fresh.filter((person) => !person.email).length };
+    },
+    /**
+     * Cancels a Training with a required reason. Every Assigned employee becomes Cancelled, and, when `notify` is on, each one
+     * with an email is queued a Cancelled notice (no-email Employees are never emailed; they are told directly). Notices not
+     * yet delivered for this Training stop, since they describe a session that is off. A Training that is already cancelled,
+     * or that has recorded results, is refused.
+     */
+    async cancel(trainingId: number, request: CancelRequest): Promise<CancelResult> {
+      await authorise();
+      const training = await requireTraining(trainingId);
+      const { reason } = readCancelReason(request?.reason);
+      if (reason === null || typeof request.notify !== "boolean") throw new TrainingError("validation");
+      if (training.cancelled) throw new TrainingError("conflict");
+      const { rows: recorded } = await db.query(`SELECT 1 FROM public.hrms_training_assignments WHERE training_id = $1 AND status NOT IN ('Assigned', 'Cancelled') LIMIT 1`, [trainingId]);
+      if (recorded[0]) throw new TrainingError("conflict");
+      // The guard in WHERE makes a double submit cancel once; the second finds nothing to update.
+      const { rows: done } = await db.query<{ title: string; date: string }>(`
+        UPDATE public.hrms_trainings SET cancelled_at = $2::timestamptz, cancel_reason = $3
+        WHERE id = $1 AND cancelled_at IS NULL RETURNING title, training_date::text AS date`, [trainingId, now().toISOString(), reason]);
+      if (!done[0]) throw new TrainingError("conflict");
+      const { rows: people } = await db.query<{ id: number; name: string; email: string | null }>(`
+        UPDATE public.hrms_training_assignments a SET status = 'Cancelled'
+        FROM public.hrms_employees e WHERE a.training_id = $1 AND a.status = 'Assigned' AND e.id = a.employee_id
+        RETURNING e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email`, [trainingId]);
+      // An Assignment or Reminder still waiting to go out would announce a session that is off.
+      await db.query(`DELETE FROM public.hrms_training_notices WHERE training_id = $1 AND state IN ('Queued', 'Retrying')`, [trainingId]);
+      let notified = 0;
+      if (request.notify) {
+        for (const person of people) {
+          const notice = queueNotice("Cancelled", person, cancelledEmail(person.name, done[0], reason));
+          if (!notice) continue;
+          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), now().toISOString()]);
+          notified += 1;
+        }
+      }
+      return { cancelled: people.length, notified, needPrintedSchedule: people.filter((person) => !person.email).length };
     },
     /** Removes an Employee from a Training. */
     async unassign(trainingId: number, employeeId: number): Promise<void> {
