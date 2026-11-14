@@ -5,13 +5,14 @@ import { redirect } from "next/navigation";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { trainingsForRequest } from "@/lib/portal/trainings";
 import { TrainingError } from "@/lib/trainings";
-import { TERM_FIELDS, materialProblem, readTrainingForm, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
+import { TERM_FIELDS, materialProblem, readTrainingForm, type AssignableEmployee, type AssignRequest, type AssignResult, type MaterialRequest, type TrainingFormErrors, type TrainingMaterial } from "@/lib/training-terms";
 
 export type SaveTrainingState = { error?: string; fieldErrors?: TrainingFormErrors; values?: Record<string, string>; attempt?: number };
 
 const MESSAGES: Record<TrainingError["reason"], string> = {
   validation: "Check the training's details and try again.",
   "not-found": "That training no longer exists.",
+  conflict: "This training was cancelled, so no one can be assigned to it.",
   unavailable: "HRMS could not reach the Portal or database. Please try again in a moment.",
   invalid: "",
   denied: "",
@@ -73,6 +74,41 @@ export async function deleteTrainingMaterial(fileId: string, trainingId?: number
     return { error: problem(error) };
   }
   if (trainingId !== undefined) revalidatePath(`/training/${trainingId}`);
+  revalidatePath("/training");
+  return {};
+}
+
+export type AssignState = { error?: string; result?: AssignResult };
+
+/** Everyone the Assign dialog may offer, loaded when the dialog opens. */
+export async function loadAssignable(trainingId: number): Promise<{ error?: string; people?: AssignableEmployee[] }> {
+  try {
+    return { people: await (await trainingsForRequest()).assignable(trainingId) };
+  } catch (error) {
+    return { error: problem(error) };
+  }
+}
+
+/** Assigns the chosen Employees, or a whole department's. */
+export async function assignEmployees(trainingId: number, request: AssignRequest): Promise<AssignState> {
+  try {
+    const result = await (await trainingsForRequest()).assign(trainingId, request);
+    revalidatePath(`/training/${trainingId}`);
+    revalidatePath("/training");
+    return { result };
+  } catch (error) {
+    return { error: problem(error) };
+  }
+}
+
+/** Removes an Employee; the caller has already shown the confirm dialog. */
+export async function removeAssignedEmployee(trainingId: number, employeeId: number): Promise<{ error?: string }> {
+  try {
+    await (await trainingsForRequest()).unassign(trainingId, employeeId);
+  } catch (error) {
+    return { error: problem(error) };
+  }
+  revalidatePath(`/training/${trainingId}`);
   revalidatePath("/training");
   return {};
 }

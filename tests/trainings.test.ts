@@ -13,6 +13,17 @@ let handle: string;
 // 14 Nov 2026, 10:00 in Manila.
 let clock = new Date("2026-11-14T02:00:00Z");
 const staff = { name: "Ada Okafor", username: "ada", email: "ada@example.test", role: "HR Officer" };
+let employeeCount = 0;
+/** An Employee record (with its Offer), as hiring leaves it. An empty email means the Employee has none. */
+async function employee(name: string, { email = `${name.split(" ")[0].toLowerCase()}@example.test`, department = "Retail", branch = "Cainta branch" } = {}) {
+  employeeCount += 1;
+  const offer = (await db.query<{ id: number }>(`INSERT INTO public.hrms_offers (application_id, status, monthly_salary, start_date, employment_type, schedule, probation, reports_to, branch, created_by_name)
+    VALUES ($1, 'Accepted', 19000, '2026-01-05', 'Full-time', 'Mon-Sat', 'None', 'Paolo', $2, 'Ada') RETURNING id`, [employeeCount, branch])).rows[0].id;
+  return (await db.query<{ id: number }>(`INSERT INTO public.hrms_employees (employee_number, offer_id, application_id, full_name, email, position, department, branch, start_date, monthly_salary, employment_type, schedule, probation, reports_to, hired_by_name)
+    VALUES ($1, $2, $3, $4, $5, 'Branch Cashier', $6, $7, '2026-01-05', 19000, 'Full-time', 'Mon-Sat', 'None', 'Paolo', 'Ada') RETURNING id`,
+  [`2026-${String(employeeCount).padStart(3, "0")}`, offer, employeeCount, name, email, department, branch])).rows[0].id;
+}
+
 const files = {
   requestUpload: vi.fn<MaterialFiles["requestUpload"]>(), confirm: vi.fn<MaterialFiles["confirm"]>(),
   remove: vi.fn<MaterialFiles["remove"]>(), viewUrl: vi.fn<MaterialFiles["viewUrl"]>(),
@@ -26,6 +37,7 @@ const terms = (overrides: Partial<TrainingTerms> = {}): TrainingTerms => ({
 
 beforeEach(async () => {
   nextFile = 0;
+  employeeCount = 0;
   files.requestUpload.mockReset().mockImplementation(async () => ({ fileId: `file-${++nextFile}`, uploadUrl: "https://files.test/put" }));
   files.confirm.mockReset().mockResolvedValue(undefined);
   files.remove.mockReset().mockResolvedValue(undefined);
@@ -102,8 +114,9 @@ describe("Trainings list", () => {
     const recorded = await trainings().create(terms({ date: "2026-11-05" }));
     const unrecorded = await trainings().create(terms({ title: "Safe lifting", date: "2026-11-10" }));
     clock = new Date("2026-11-14T02:00:00Z");
+    const [ana, bea] = [await employee("Ana Dizon"), await employee("Bea Cruz")];
     await db.exec(`INSERT INTO public.hrms_training_assignments (training_id, employee_id, status) VALUES
-      (${recorded}, 1, 'Completed'), (${recorded}, 2, 'Did not attend'), (${unrecorded}, 1, 'Assigned'), (${unrecorded}, 2, 'Assigned')`);
+      (${recorded}, ${ana}, 'Completed'), (${recorded}, ${bea}, 'Did not attend'), (${unrecorded}, ${ana}, 'Assigned'), (${unrecorded}, ${bea}, 'Assigned')`);
     const rows = Object.fromEntries((await trainings().list()).rows.map((row) => [row.id, row]));
     expect(rows[recorded]).toMatchObject({ assigned: 2, completed: 1, resultsNotRecorded: false });
     expect(rows[unrecorded]).toMatchObject({ assigned: 2, completed: 0, resultsNotRecorded: true });
@@ -282,5 +295,76 @@ describe("Training detail and materials", () => {
     await expect(trainings(denied).materialUrl(fileId)).rejects.toMatchObject({ reason: "denied" });
     await expect(trainings(denied).deleteMaterial(fileId)).rejects.toMatchObject({ reason: "denied" });
     await expect(trainings(denied).requestMaterial(pdf)).rejects.toMatchObject({ reason: "denied" });
+  });
+});
+
+describe("Assigning Employees", () => {
+  it("assigns Employees individually and shows them on the Training with their status, and counts them on the list", async () => {
+    const id = await trainings().create(terms());
+    const [ana, bea] = [await employee("Ana Dizon"), await employee("Bea Cruz", { email: "" })];
+    expect(await trainings().assign(id, { employeeIds: [ana, bea] })).toEqual({ added: 2, alreadyAssigned: 0, needPrintedSchedule: 1 });
+    const detail = await trainings().read(id);
+    expect(detail.assigned).toMatchObject([
+      { employeeId: ana, name: "Ana Dizon", email: "ana@example.test", needsPrintedSchedule: false, status: "Assigned", completedOn: null },
+      { employeeId: bea, name: "Bea Cruz", email: null, needsPrintedSchedule: true, status: "Assigned" },
+    ]);
+    expect((await trainings().list()).rows[0]).toMatchObject({ assigned: 2, completed: 0 });
+    const stored = (await db.query<{ assigned_by: string }>(`SELECT assigned_by FROM public.hrms_training_assignments LIMIT 1`)).rows[0];
+    expect(stored.assigned_by).toBe("ada");
+  });
+
+  it("treats a blank or whitespace-only email as no email", async () => {
+    const id = await trainings().create(terms());
+    const cy = await employee("Cy Reyes", { email: "   " });
+    await trainings().assign(id, { employeeIds: [cy] });
+    expect((await trainings().read(id)).assigned[0]).toMatchObject({ email: null, needsPrintedSchedule: true });
+    expect((await trainings().assignable(id))[0]).toMatchObject({ email: null, alreadyAssigned: true });
+  });
+
+  it("assigns a whole department at once, leaving out other departments and anyone already assigned", async () => {
+    const id = await trainings().create(terms());
+    const ana = await employee("Ana Dizon", { department: "Production" });
+    await employee("Bea Cruz", { department: "Production", email: "" });
+    await employee("Cy Reyes", { department: "Retail" });
+    await trainings().assign(id, { employeeIds: [ana] });
+    expect(await trainings().assign(id, { department: "Production" })).toEqual({ added: 1, alreadyAssigned: 1, needPrintedSchedule: 1 });
+    expect((await trainings().read(id)).assigned.map((person) => person.name)).toEqual(["Ana Dizon", "Bea Cruz"]);
+    await expect(trainings().assign(id, { department: "Nowhere" })).rejects.toMatchObject({ reason: "validation" });
+  });
+
+  it("offers Employee records only, flags who is already assigned, and refuses ids that are not Employees", async () => {
+    const id = await trainings().create(terms());
+    const ana = await employee("Ana Dizon");
+    await employee("Bea Cruz");
+    await trainings().assign(id, { employeeIds: [ana] });
+    expect((await trainings().assignable(id)).map((person) => [person.name, person.alreadyAssigned])).toEqual([["Ana Dizon", true], ["Bea Cruz", false]]);
+    // Ada is Staff, not an Employee record: nothing in the list carries her, and no id can reach her.
+    expect((await trainings().assignable(id)).map((person) => person.name)).not.toContain("Ada Okafor");
+    await expect(trainings().assign(id, { employeeIds: [9999] })).rejects.toMatchObject({ reason: "validation" });
+    await expect(trainings().assign(id, { employeeIds: [] })).rejects.toMatchObject({ reason: "validation" });
+    await expect(trainings().assign(id, { employeeIds: [ana, 9999] })).rejects.toMatchObject({ reason: "validation" });
+    expect((await trainings().read(id)).assigned).toHaveLength(1);
+  });
+
+  it("removes an Employee from a Training and refuses to remove someone who isn't on it", async () => {
+    const id = await trainings().create(terms());
+    const [ana, bea] = [await employee("Ana Dizon"), await employee("Bea Cruz")];
+    await trainings().assign(id, { employeeIds: [ana, bea] });
+    await trainings().unassign(id, ana);
+    expect((await trainings().read(id)).assigned.map((person) => person.employeeId)).toEqual([bea]);
+    await expect(trainings().unassign(id, ana)).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings().unassign(999, bea)).rejects.toMatchObject({ reason: "not-found" });
+  });
+
+  it("refuses to assign to a Cancelled Training or an unknown one, and to anyone without the Training Module", async () => {
+    const id = await trainings().create(terms());
+    const ana = await employee("Ana Dizon");
+    await expect(trainings().assign(999, { employeeIds: [ana] })).rejects.toMatchObject({ reason: "not-found" });
+    const denied = portal.signIn(staff, ["Offers"]);
+    await expect(trainings(denied).assign(id, { employeeIds: [ana] })).rejects.toMatchObject({ reason: "denied" });
+    await expect(trainings(denied).assignable(id)).rejects.toMatchObject({ reason: "denied" });
+    await expect(trainings(denied).unassign(id, ana)).rejects.toMatchObject({ reason: "denied" });
+    await db.query(`UPDATE public.hrms_trainings SET cancelled_at = now() WHERE id = $1`, [id]);
+    await expect(trainings().assign(id, { employeeIds: [ana] })).rejects.toMatchObject({ reason: "conflict" });
   });
 });

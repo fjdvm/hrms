@@ -3,6 +3,8 @@ import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { BackLink, PAGE } from "@/components/hiring/parts";
+import { AssignDialog } from "@/components/training/assign-dialog";
+import { AssignedEmployees } from "@/components/training/assigned-employees";
 import { LaterCards } from "@/components/training/later-cards";
 import { MaterialsCard } from "@/components/training/materials";
 import { TrainingNoAccess } from "@/components/training/no-access";
@@ -37,12 +39,15 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
   return (
     <div className={PAGE}>
       <BackLink href="/training">Trainings</BackLink>
-      <header className="flex flex-col gap-xs">
-        <div className="flex flex-wrap items-center gap-[10px]">
-          <h1 className="text-2xl font-semibold text-foreground">{training.title}</h1>
-          <Badge variant={BADGE[training.status]}>{training.status}</Badge>
+      <header className="flex flex-wrap items-start gap-sm">
+        <div className="flex min-w-0 flex-1 flex-col gap-xs">
+          <div className="flex flex-wrap items-center gap-[10px]">
+            <h1 className="text-2xl font-semibold text-foreground">{training.title}</h1>
+            <Badge variant={BADGE[training.status]}>{training.status}</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">{training.trainer} · {formatTrainingDate(training.date)}, {formatTrainingTimes(training.startTime, training.endTime)} · {training.mode}</p>
         </div>
-        <p className="text-sm text-muted-foreground">{training.trainer} · {formatTrainingDate(training.date)}, {formatTrainingTimes(training.startTime, training.endTime)} · {training.mode}</p>
+        <AssignDialog trainingId={training.id} title={training.title} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`} disabled={training.status === "Cancelled"} />
       </header>
       <div className="flex flex-col items-start gap-[16px] lg:flex-row">
         <div className="flex w-full min-w-0 flex-1 flex-col gap-[16px]">
@@ -62,6 +67,12 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
                 </dd>
               </div>
             </dl>
+          </Card>
+          <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">
+            <div className="flex items-center gap-sm">
+              <h2 className="flex-1 text-[15px] font-semibold text-zinc-900">Assigned employees · {training.assigned.length}</h2>
+            </div>
+            <AssignedEmployees trainingId={training.id} title={training.title} date={formatTrainingDate(training.date)} people={training.assigned} />
           </Card>
           <Card className="flex flex-col gap-[12px] rounded-xl px-[20px] py-[18px] shadow-none">
             <h2 className="text-[15px] font-semibold text-zinc-900">About this training</h2>
