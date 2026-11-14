@@ -1,3 +1,4 @@
+import { shiftTrainingCalendar, trainingCalendarHref, trainingCalendarRange, trainingCalendarState, trainingCalendarTitle } from "@/lib/training-calendar";
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -151,6 +152,58 @@ describe("the New training form's rules", () => {
     expect(formatTrainingDate("2026-11-16")).toBe("Mon, 16 Nov 2026");
     expect(formatTrainingTimes("08:00", "09:00")).toBe("8:00 – 9:00 AM");
     expect(formatTrainingTimes("11:00", "13:30")).toBe("11:00 AM – 1:30 PM");
+  });
+});
+
+describe("Training Calendar", () => {
+  it("returns Trainings in the date range with Mode, soonest first, and derived status", async () => {
+    clock = new Date("2026-11-01T00:00:00Z");
+    await trainings().create(terms({ title: "Online POS", date: "2026-11-20", mode: "Online", location: "https://meet.example.com/pos" }));
+    await trainings().create(terms({ title: "Kitchen safety", date: "2026-11-20", startTime: "08:00", endTime: "09:00" }));
+    await trainings().create(terms({ title: "Allergens", date: "2026-11-05" }));
+    await trainings().create(terms({ title: "Next month", date: "2026-12-01" }));
+    await db.query(`UPDATE public.hrms_trainings SET cancelled_at = now() WHERE title = 'Allergens'`);
+    clock = new Date("2026-11-14T02:00:00Z");
+
+    const found = await trainings().calendar({ from: "2026-11-01", to: "2026-12-01" });
+    expect(found.map((t) => [t.title, t.date, t.mode, t.status])).toEqual([
+      ["Allergens", "2026-11-05", "In person", "Cancelled"],
+      ["Kitchen safety", "2026-11-20", "In person", "Upcoming"],
+      ["Online POS", "2026-11-20", "Online", "Upcoming"],
+    ]);
+    expect(found[2]).toMatchObject({ location: "https://meet.example.com/pos", startTime: "09:00", endTime: "11:00", assigned: 0 });
+  });
+
+  it("includes the first day and leaves out the end day of the range", async () => {
+    await trainings().create(terms({ date: "2026-11-16" }));
+    expect(await trainings().calendar({ from: "2026-11-16", to: "2026-11-17" })).toHaveLength(1);
+    expect(await trainings().calendar({ from: "2026-11-10", to: "2026-11-16" })).toHaveLength(0);
+  });
+
+  it("refuses a bad range, and without the Training Module", async () => {
+    await expect(trainings().calendar({ from: "2026-11-16", to: "2026-11-16" })).rejects.toMatchObject({ reason: "validation" });
+    await expect(trainings().calendar({ from: "nope", to: "2026-11-16" })).rejects.toMatchObject({ reason: "validation" });
+    const other = portal.signIn(staff, ["Offers"]);
+    await expect(trainings(other).calendar({ from: "2026-11-01", to: "2026-12-01" })).rejects.toMatchObject({ reason: "denied" });
+  });
+});
+
+describe("Training Calendar view state", () => {
+  const now = new Date("2026-11-14T02:00:00Z");
+  it("defaults to this month, covers whole Monday-first weeks, and steps by month or week", () => {
+    const state = trainingCalendarState({}, now);
+    expect(state).toEqual({ mode: "month", date: "2026-11-14" });
+    expect(trainingCalendarRange(state)).toEqual({ from: "2026-10-26", to: "2026-12-07" });
+    expect(shiftTrainingCalendar(state, 1)).toBe("2026-12-01");
+    const week = trainingCalendarState({ mode: "week", date: "2026-11-14" }, now);
+    expect(trainingCalendarRange(week)).toEqual({ from: "2026-11-09", to: "2026-11-16" });
+    expect(shiftTrainingCalendar(week, -1)).toBe("2026-11-07");
+    expect(trainingCalendarTitle(week)).toBe("9 – 15 November 2026");
+    expect(trainingCalendarState({ mode: "year", date: "2026-13-40" }, now)).toEqual(state);
+  });
+  it("keeps links short", () => {
+    expect(trainingCalendarHref({ mode: "month", date: "2026-11-14" }, now)).toBe("/training/calendar");
+    expect(trainingCalendarHref({ mode: "week", date: "2026-11-20" }, now)).toBe("/training/calendar?mode=week&date=2026-11-20");
   });
 });
 
