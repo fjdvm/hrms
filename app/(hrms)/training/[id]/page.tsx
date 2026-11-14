@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-import { Check } from "lucide-react";
+import { AlertTriangle, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { BackLink, PAGE } from "@/components/hiring/parts";
+import { EditTrainingDialog } from "@/components/training/edit-training-dialog";
 import { AssignDialog } from "@/components/training/assign-dialog";
 import { AssignedEmployees } from "@/components/training/assigned-employees";
 import { LaterCards } from "@/components/training/later-cards";
@@ -38,6 +39,7 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
     );
   }
   const online = training.mode === "Online";
+  const reprint = training.assigned.filter((person) => person.reprintNeeded).length;
 
   return (
     <div className={PAGE}>
@@ -50,8 +52,19 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
           </div>
           <p className="text-sm text-muted-foreground">{training.trainer} · {formatTrainingDate(training.date)}, {formatTrainingTimes(training.startTime, training.endTime)} · {training.mode}</p>
         </div>
+        {training.status !== "Cancelled" && (
+          <EditTrainingDialog trainingId={training.id}
+            training={{ title: training.title, trainer: training.trainer, description: training.description, objectives: training.objectives, date: training.date, startTime: training.startTime, endTime: training.endTime, mode: training.mode, location: training.location, rescheduledFrom: training.rescheduledFrom }}
+            assigned={training.assigned.map((person) => ({ name: person.name, email: person.email }))} />
+        )}
         <AssignDialog trainingId={training.id} title={training.title} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`} disabled={training.status === "Cancelled"} />
       </header>
+      {reprint > 0 && training.rescheduledFrom && (
+        <p role="status" className="flex items-center gap-[10px] rounded-lg bg-amber-50 px-[16px] py-[12px] text-sm text-amber-900">
+          <AlertTriangle className="size-4 shrink-0" aria-hidden />
+          Reprint schedule: {reprint} {reprint === 1 ? "employee" : "employees"} without an email {reprint === 1 ? "has" : "have"} a printed schedule with the old date ({formatShortDate(training.rescheduledFrom).replace(/ \d{4}$/, "")}).
+        </p>
+      )}
       <div className="flex flex-col items-start gap-[16px] lg:flex-row">
         <div className="flex w-full min-w-0 flex-1 flex-col gap-[16px]">
           <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">

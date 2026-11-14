@@ -5,6 +5,7 @@ import { Initials } from "@/components/hiring/parts";
 import { RetryNoticeButton } from "@/components/training/retry-notice-button";
 import { LOG_TABS, formatClock, formatNoticeTime, logHref, type LogRow, type LogTab, type NotificationLog } from "@/lib/training-terms";
 import { MAX_RETRIES } from "@/lib/training-notices";
+import { scheduleLine } from "@/lib/training-email";
 import { cn } from "@/lib/utils";
 
 const TH = "py-[6px] text-left text-xs font-medium text-muted-foreground";
@@ -90,6 +91,23 @@ export function NotificationLogView({ trainingId, log, tab }: { trainingId: numb
             </Card>
           )}
         </div>
+      )}
+      {log.scheduleChanges.length > 0 && (
+        <Card className="flex flex-col gap-[12px] rounded-xl px-[20px] py-[18px] shadow-none">
+          <h2 className="text-[15px] font-semibold text-zinc-900">Schedule changes · {log.scheduleChanges.length}</h2>
+          <ul className="flex flex-col">
+            {log.scheduleChanges.map((change) => (
+              <li key={change.at} className="flex flex-col gap-[2px] border-b border-[#efebf4] py-[10px]">
+                <div className="flex items-baseline gap-sm"><span className="flex-1 text-sm font-medium text-foreground">Schedule changed</span><span className="text-xs text-muted-foreground">{formatNoticeTime(change.at)}</span></div>
+                <span className="text-xs text-muted-foreground line-through">{scheduleLine(change.from)}</span>
+                <span className="text-xs text-foreground">{scheduleLine(change.to)}</span>
+                <span className="text-xs text-amber-700">
+                  {change.notified ? `${change.notifiedCount} emailed` : "Employees were not notified"}{change.needsPrinted > 0 ? ` · ${change.needsPrinted} need a reprinted schedule` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
       <Card className="flex flex-col gap-[14px] overflow-x-auto rounded-xl px-[20px] py-[18px] shadow-none">
         <h2 className="text-[15px] font-semibold text-zinc-900">{tab}</h2>

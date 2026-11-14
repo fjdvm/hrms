@@ -1,10 +1,10 @@
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
-import { assignmentEmail, queueNotice, type NoticeTraining } from "./training-notices";
+import { assignmentEmail, queueNotice, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
   TRAINING_TABS, manilaToday, materialProblem, readTrainingForm, tabOf, trainingStatus,
-  type LogEvent, type LogRow, type LogTab, type NotificationLog,
+  scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
   type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingTab, type TrainingTerms,
 } from "./training-terms";
 
@@ -169,6 +169,58 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       }
       return rows[0].id;
     },
+    /**
+     * Edits a Training. A change to the date, time, Mode or venue is a reschedule: the Training stays Upcoming, keeps its
+     * previous date for the "Rescheduled from" caption, records a Schedule changed event, flags no-email Employees
+     * "Reprint needed", and (when `notify` is on) queues a Schedule changed email for each assigned Employee with an email.
+     */
+    async update(id: number, edited: TrainingTerms, { notify }: { notify: boolean }): Promise<UpdateResult> {
+      const staff = await authorise();
+      if (!validId(id)) throw new TrainingError("not-found");
+      const { rows: found } = await db.query<TrainingTerms & { rescheduledFrom: string | null; cancelled: boolean }>(`
+        SELECT title, trainer, description, objectives, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime",
+          to_char(end_time, 'HH24:MI') AS "endTime", mode, location, rescheduled_from::text AS "rescheduledFrom", cancelled_at IS NOT NULL AS cancelled
+        FROM public.hrms_trainings WHERE id = $1`, [id]);
+      const current = found[0];
+      if (!current) throw new TrainingError("not-found");
+      if (current.cancelled) throw new TrainingError("conflict");
+      const { terms } = readTrainingForm({ ...edited }, manilaToday(now()), { currentDate: current.date });
+      if (!terms) throw new TrainingError("validation");
+      const changed = (Object.keys(terms) as (keyof TrainingTerms)[]).some((key) => terms[key] !== current[key]);
+      if (!changed) return { changed: false, rescheduled: false, notified: 0, needPrintedSchedule: 0 };
+      const rescheduled = scheduleDiffers(terms, current);
+      // Only a new date makes a "Rescheduled from" caption; a time or venue change keeps whatever was there.
+      const rescheduledFrom = terms.date !== current.date ? current.date : current.rescheduledFrom;
+      const at = now().toISOString();
+      await db.query(`UPDATE public.hrms_trainings SET title = $2, trainer = $3, description = $4, objectives = $5, training_date = $6,
+        start_time = $7, end_time = $8, mode = $9, location = $10, rescheduled_from = $11, updated_at = $12::timestamptz WHERE id = $1`,
+      [id, terms.title, terms.trainer, terms.description, terms.objectives, terms.date, terms.startTime, terms.endTime, terms.mode, terms.location, rescheduledFrom, at]);
+      if (!rescheduled) return { changed: true, rescheduled: false, notified: 0, needPrintedSchedule: 0 };
+
+      const { rows: people } = await db.query<{ id: number; name: string; email: string | null }>(`
+        SELECT e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email
+        FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
+        WHERE a.training_id = $1 AND a.status <> 'Cancelled' ORDER BY a.assigned_at, e.id`, [id]);
+      const noEmail = people.filter((person) => !person.email);
+      if (noEmail.length > 0) {
+        await db.query(`UPDATE public.hrms_training_assignments SET reprint_needed = true WHERE training_id = $1 AND employee_id = ANY($2::int[])`, [id, noEmail.map((person) => person.id)]);
+      }
+      let notified = 0;
+      if (notify) {
+        for (const person of people) {
+          const notice = queueNotice("Schedule changed", person, scheduleChangedEmail(person.name, terms, current));
+          if (!notice) continue;
+          notified += 1;
+          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $6::timestamptz)`, [id, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), at]);
+        }
+      }
+      const pick = (t: { date: string; startTime: string; endTime: string; mode: TrainingMode; location: string }) => ({ date: t.date, startTime: t.startTime, endTime: t.endTime, mode: t.mode, location: t.location });
+      await db.query(`INSERT INTO public.hrms_training_events (training_id, kind, detail, notified, notified_count, needs_printed, actor_name, created_at)
+        VALUES ($1, 'Schedule changed', $2::jsonb, $3, $4, $5, $6, $7::timestamptz)`,
+      [id, JSON.stringify({ from: pick(current), to: pick(terms) }), notify, notified, noEmail.length, staff.name, at]);
+      return { changed: true, rescheduled: true, notified, needPrintedSchedule: noEmail.length };
+    },
     /** One Training with its schedule, text and Active materials. */
     async read(id: number): Promise<TrainingDetail> {
       await authorise();
@@ -183,7 +235,7 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         WHERE training_id = $1 AND status = 'Active' ORDER BY created_at, file_id`, [id]);
       const { rows: assigned } = await db.query<Omit<AssignedEmployee, "needsPrintedSchedule">>(`
         SELECT e.id AS "employeeId", e.full_name AS name, e.position, e.branch, NULLIF(btrim(e.email), '') AS email,
-          a.status, a.completed_on::text AS "completedOn"
+          a.status, a.completed_on::text AS "completedOn", a.reprint_needed AS "reprintNeeded"
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 ORDER BY a.assigned_at, e.full_name, e.id`, [id]);
       const { cancelled, ...training } = found[0];
@@ -218,8 +270,8 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (chosen.length === 0 || (!byDepartment && chosen.length !== new Set(request.employeeIds).size)) throw new TrainingError("validation");
       const fresh = chosen.filter((person) => !person.assigned);
       if (fresh.length > 0) {
-        await db.query(`INSERT INTO public.hrms_training_assignments (training_id, employee_id, assigned_by)
-          SELECT $1, unnest($2::int[]), $3 ON CONFLICT DO NOTHING`, [trainingId, fresh.map((person) => person.id), staff.username]);
+        await db.query(`INSERT INTO public.hrms_training_assignments (training_id, employee_id, assigned_by, assigned_at)
+          SELECT $1, unnest($2::int[]), $3, $4::timestamptz ON CONFLICT DO NOTHING`, [trainingId, fresh.map((person) => person.id), staff.username, now().toISOString()]);
         // Everyone with an email gets the Assignment email; no-email Employees get none and are listed as Needs printed schedule.
         const { rows: details } = await db.query<NoticeTraining>(`
           SELECT title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime", mode, location
@@ -227,8 +279,8 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         for (const person of fresh) {
           const notice = queueNotice("Assignment", person, assignmentEmail(person.name, details[0]));
           if (!notice) continue;
-          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), now().toISOString()]);
+          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), now().toISOString()]);
         }
       }
       return { added: fresh.length, alreadyAssigned: chosen.length - fresh.length, needPrintedSchedule: fresh.filter((person) => !person.email).length };
@@ -265,11 +317,18 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const notReached = rows.filter((row) => row.state === "Failed");
       const needsPrinted = rows.filter((row) => row.state === "Needs printed schedule");
       const counts: Record<LogTab, number> = { "All notices": rows.length, "Not reached": notReached.length, "Needs printed schedule": needsPrinted.length };
-      return { rows, notReached, needsPrinted, counts };
+      const { rows: changes } = await db.query<{ at: Date | string; detail: { from: ScheduleChange["from"]; to: ScheduleChange["to"] }; notified: boolean; notifiedCount: number; needsPrinted: number }>(`
+        SELECT created_at AS at, detail, notified, notified_count AS "notifiedCount", needs_printed AS "needsPrinted"
+        FROM public.hrms_training_events WHERE training_id = $1 ORDER BY created_at DESC, id DESC`, [trainingId]);
+      const scheduleChanges: ScheduleChange[] = changes.map((change) => ({
+        at: new Date(change.at).toISOString(), from: change.detail.from, to: change.detail.to,
+        notified: change.notified, notifiedCount: change.notifiedCount, needsPrinted: change.needsPrinted,
+      }));
+      return { rows, scheduleChanges, notReached, needsPrinted, counts };
     },
     /** The latest notice events for the detail page, each with how many were sent, retrying, failed or need a printed schedule. */
     async logPreview(trainingId: number, limit = 3): Promise<LogEvent[]> {
-      const { rows } = await this.log(trainingId);
+      const { rows, scheduleChanges } = await this.log(trainingId);
       const { rows: created } = await db.query<{ kind: string; createdAt: Date | string; state: string }>(
         `SELECT kind, created_at AS "createdAt", state FROM public.hrms_training_notices WHERE training_id = $1`, [trainingId]);
       const events = new Map<string, LogEvent>();
@@ -284,6 +343,12 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         if (row.state === "Sent") event.sent += 1; else if (row.state === "Failed") event.failed += 1; else event.retrying += 1;
       }
       for (const row of rows.filter((item) => item.state === "Needs printed schedule")) bucket(row.kind, row.at).needPrinted += 1;
+      // A reschedule is an event of its own, even when nobody was emailed (Notify off, or no one assigned with an email).
+      for (const change of scheduleChanges) {
+        const event = bucket("Schedule changed", change.at);
+        event.needPrinted = change.needsPrinted;
+        event.notified = change.notified;
+      }
       return [...events.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
     },
     /** Puts a Not reached notice back in the queue; it gets the full three retries again. */
