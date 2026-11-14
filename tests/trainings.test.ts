@@ -368,3 +368,80 @@ describe("Assigning Employees", () => {
     await expect(trainings().assign(id, { employeeIds: [ana] })).rejects.toMatchObject({ reason: "conflict" });
   });
 });
+
+describe("Cancelling a Training", () => {
+  const notices = async () => (await db.query<{ kind: string; state: string; email: string; payload: { body: string; title: string } }>(
+    `SELECT kind, state, email, payload FROM public.hrms_training_notices ORDER BY id`)).rows;
+  const statuses = async (id: number) => (await trainings().read(id)).assigned.map((person) => [person.name, person.status]);
+
+  it("cancels with a reason, shows the Cancelled status and reason, and sets every Assigned employee to Cancelled", async () => {
+    const id = await trainings().create(terms());
+    await trainings().assign(id, { employeeIds: [await employee("Ana Dizon"), await employee("Rhea Bautista", { email: "" })] });
+    const result = await trainings().cancel(id, { reason: "  Our trainer is   unavailable that day.  ", notify: false });
+    expect(result).toEqual({ cancelled: 2, notified: 0, needPrintedSchedule: 1 });
+    const detail = await trainings().read(id);
+    expect(detail).toMatchObject({ status: "Cancelled", cancelReason: "Our trainer is unavailable that day." });
+    expect(await statuses(id)).toEqual([["Ana Dizon", "Cancelled"], ["Rhea Bautista", "Cancelled"]]);
+    expect((await trainings().list("Cancelled")).rows.map((row) => row.id)).toEqual([id]);
+    expect((await trainings().list()).counts).toMatchObject({ Upcoming: 0, Cancelled: 1 });
+  });
+
+  it("requires a reason and rejects markup instead of stripping it", async () => {
+    const id = await trainings().create(terms());
+    for (const reason of ["", "   ", "<b>no</b>", "x".repeat(501)]) {
+      await expect(trainings().cancel(id, { reason, notify: true })).rejects.toMatchObject({ reason: "validation" });
+    }
+    await expect(trainings().cancel(id, { reason: "ok", notify: "yes" as unknown as boolean })).rejects.toMatchObject({ reason: "validation" });
+    expect((await trainings().read(id)).status).toBe("Upcoming");
+  });
+
+  it("queues a Cancelled notice with the reason for each Employee with an email when notify is on, and none for no-email Employees", async () => {
+    const id = await trainings().create(terms());
+    await trainings().assign(id, { employeeIds: [await employee("Ana Dizon"), await employee("Rhea Bautista", { email: "  " })] });
+    const result = await trainings().cancel(id, { reason: "Trainer unavailable.", notify: true });
+    expect(result).toEqual({ cancelled: 2, notified: 1, needPrintedSchedule: 1 });
+    // The undelivered Assignment notice stopped; only the Cancelled one is waiting.
+    expect(await notices()).toEqual([expect.objectContaining({ kind: "Cancelled", state: "Queued", email: "ana@example.test" })]);
+    const [notice] = await notices();
+    expect(notice.payload.title).toBe("Cancelled: Food safety and hygiene refresher on Wed, 18 Nov");
+    expect(notice.payload.body).toContain("Hi Ana,");
+    expect(notice.payload.body).toContain("Reason: Trainer unavailable.");
+    expect(notice.payload.body).not.toMatch(/sign in|log in/i);
+  });
+
+  it("sends no notice when notify is off, and keeps delivered notices in the log", async () => {
+    const id = await trainings().create(terms());
+    await trainings().assign(id, { employeeIds: [await employee("Ana Dizon")] });
+    await db.query(`UPDATE public.hrms_training_notices SET state = 'Sent'`);
+    await trainings().cancel(id, { reason: "Trainer unavailable.", notify: false });
+    expect(await notices()).toEqual([expect.objectContaining({ kind: "Assignment", state: "Sent" })]);
+  });
+
+  it("leaves Employees with a recorded result alone and refuses once a result exists", async () => {
+    const id = await trainings().create(terms());
+    const ana = await employee("Ana Dizon");
+    await trainings().assign(id, { employeeIds: [ana, await employee("Liza Manalo")] });
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Completed', completed_on = '2026-11-18' WHERE employee_id = $1`, [ana]);
+    await expect(trainings().cancel(id, { reason: "Too late", notify: true })).rejects.toMatchObject({ reason: "conflict" });
+    expect((await trainings().read(id)).status).toBe("Upcoming");
+  });
+
+  it("cancels once: a second cancel, an unknown id and a user without the Module are refused", async () => {
+    const id = await trainings().create(terms());
+    await trainings().assign(id, { employeeIds: [await employee("Ana Dizon")] });
+    await trainings().cancel(id, { reason: "First", notify: true });
+    await expect(trainings().cancel(id, { reason: "Again", notify: true })).rejects.toMatchObject({ reason: "conflict" });
+    expect(await notices()).toHaveLength(1);
+    expect((await trainings().read(id)).cancelReason).toBe("First");
+    await expect(trainings().cancel(999, { reason: "x", notify: true })).rejects.toMatchObject({ reason: "not-found" });
+    await expect(trainings(portal.signIn(staff, ["Offers"])).cancel(id, { reason: "x", notify: true })).rejects.toMatchObject({ reason: "denied" });
+  });
+
+  it("leaves Cancelled Employees out of Training completion's results due: they are not Assigned or counted as Completed", async () => {
+    const id = await trainings().create(terms({ date: "2026-11-14" }));
+    await trainings().assign(id, { employeeIds: [await employee("Ana Dizon")] });
+    await trainings().cancel(id, { reason: "Typhoon", notify: false });
+    expect(await statuses(id)).toEqual([["Ana Dizon", "Cancelled"]]);
+    expect((await trainings().list()).rows[0]).toMatchObject({ status: "Cancelled", completed: 0 });
+  });
+});

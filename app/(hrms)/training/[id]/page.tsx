@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { BackLink, PAGE } from "@/components/hiring/parts";
 import { AssignDialog } from "@/components/training/assign-dialog";
+import { CancelTrainingDialog } from "@/components/training/cancel-dialog";
 import { AssignedEmployees } from "@/components/training/assigned-employees";
 import { LaterCards } from "@/components/training/later-cards";
 import { NotificationLogPreview } from "@/components/training/notification-log-preview";
@@ -50,8 +51,17 @@ export default async function Page({ params }: PageProps<"/training/[id]">) {
           </div>
           <p className="text-sm text-muted-foreground">{training.trainer} · {formatTrainingDate(training.date)}, {formatTrainingTimes(training.startTime, training.endTime)} · {training.mode}</p>
         </div>
+        {training.status !== "Cancelled" && (
+          <CancelTrainingDialog trainingId={training.id} title={training.title} date={training.date} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`}
+            people={training.assigned.filter((person) => person.status === "Assigned")} />
+        )}
         <AssignDialog trainingId={training.id} title={training.title} subtitle={`${formatTrainingDate(training.date)} · ${formatTrainingTimes(training.startTime, training.endTime)}`} disabled={training.status === "Cancelled"} />
       </header>
+      {training.status === "Cancelled" && (
+        <p role="status" className="rounded-lg bg-[#f7f5fa] px-[14px] py-[12px] text-sm text-[#6e6680]">
+          <span className="font-medium text-foreground">This training was cancelled.</span>{training.cancelReason ? ` Reason: ${training.cancelReason}` : ""}
+        </p>
+      )}
       <div className="flex flex-col items-start gap-[16px] lg:flex-row">
         <div className="flex w-full min-w-0 flex-1 flex-col gap-[16px]">
           <Card className="flex flex-col gap-[14px] rounded-xl px-[20px] py-[18px] shadow-none">
