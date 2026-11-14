@@ -1,6 +1,7 @@
-name: Training notice retries
+name: Training notices and reminders
 
-# Sends Training notices that are due: new Assignment emails and failed ones waiting for their retry.
+# Sends Training notices that are due: new Assignment emails, failed ones waiting for their retry, and the automatic
+# Reminders (queued here from 8:00 AM Manila time, 1 day before each Training).
 # Runs on GitHub Actions, not as a Vercel cron, because Vercel limits some plans to daily crons.
 # See docs/training-notices.md.
 on:
