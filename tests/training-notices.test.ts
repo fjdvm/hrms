@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_RETRIES, RETRY_AFTER_MS, assignmentEmail, deliverTrainingNotices, trainingNoticesJob, type SendEmail } from "@/lib/training-notices";
+import { MAX_RETRIES, RETRY_AFTER_MS, assignmentEmail, deliverTrainingNotices, queueDueReminders, reminderEmail, trainingNoticesJob, type SendEmail } from "@/lib/training-notices";
 import { trainingsFor } from "@/lib/trainings";
 import type { MaterialFiles } from "@/lib/training-material-files";
 import { FAKE_PORTAL_URL, FAKE_SECRET, FAKE_SYSTEM, FakePortal, portalFetch } from "./fake-portal";
@@ -193,5 +193,158 @@ describe("the scheduled job", () => {
     expect(sent).toHaveLength(0);
     expect((await job(new Request("https://x.test", { headers: { authorization: "Bearer s3cret" } }))).status).toBe(200);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("Reminders", () => {
+  // The Training is on Fri 20 Nov 2026, so its automatic Reminder is due Thu 19 Nov at 8:00 AM Manila time (= 00:00 UTC).
+  const at = (iso: string) => { clock = new Date(iso); };
+  const queueDue = () => queueDueReminders(db, () => clock);
+  const reminders = async () => (await db.query<{ employee: string; state: string; automatic: boolean }>(`
+    SELECT e.full_name AS employee, n.state, n.automatic_for IS NOT NULL AS automatic FROM public.hrms_training_notices n
+    JOIN public.hrms_employees e ON e.id = n.employee_id WHERE n.kind = 'Reminder' ORDER BY n.id`)).rows;
+  const assignAll = async (id: number, ...people: [string, string?][]) => {
+    const ids: number[] = [];
+    for (const [name, email] of people) ids.push(await employee(name, email));
+    await trainings().assign(id, { employeeIds: ids });
+    await db.query(`DELETE FROM public.hrms_training_notices`); // leave out the Assignment emails
+    return ids;
+  };
+
+  it("waits for 8:00 AM Manila time the day before, then queues one Reminder per assigned Employee with an email", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"], ["Liza Manalo"], ["Rhea Bautista", ""]);
+    at("2026-11-18T23:59:00Z"); // 7:59 AM on the 19th in Manila
+    await queueDue();
+    expect(await reminders()).toEqual([]);
+    at("2026-11-19T00:00:00Z"); // 8:00 AM
+    await queueDue();
+    expect(await reminders()).toEqual([{ employee: "Ana Dizon", state: "Queued", automatic: true }, { employee: "Liza Manalo", state: "Queued", automatic: true }]);
+  });
+
+  it("is safe to repeat or overlap: each Employee is reminded once for a date, however often the job runs", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"]);
+    at("2026-11-19T00:05:00Z");
+    await Promise.all([queueDue(), queueDue()]);
+    at("2026-11-19T00:20:00Z");
+    await queueDue();
+    await deliver();
+    await deliver();
+    expect(await reminders()).toEqual([{ employee: "Ana Dizon", state: "Sent", automatic: true }]);
+    expect(sent).toHaveLength(1);
+    const payload = sent[0].payload as { to: string; title: string; body: string };
+    expect(payload).toMatchObject({ to: "ana@example.test", title: "Reminder: POS and cash handling on Fri, 20 Nov" });
+    expect(payload.body).toContain("Hi Ana,");
+    expect(payload.body).toContain("Fri, 20 Nov 2026, 2:00 – 4:00 PM");
+    expect(payload.body).toContain("Join online: https://meet.example.test/pos");
+  });
+
+  it("only reminds about a Training dated tomorrow, and not once the day has come or if the day before was missed", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"]);
+    at("2026-11-18T05:00:00Z"); // two days before
+    await queueDue();
+    at("2026-11-20T01:00:00Z"); // the day itself, 9:00 AM
+    await queueDue();
+    at("2026-11-21T01:00:00Z");
+    await queueDue();
+    expect(await reminders()).toEqual([]);
+  });
+
+  it("leaves out Cancelled Trainings and Employees who are not still marked Assigned", async () => {
+    const id = await training();
+    const [ana, liza, rhea] = await assignAll(id, ["Ana Dizon"], ["Liza Manalo"], ["Rhea Bautista"]);
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Completed' WHERE employee_id = $1`, [ana]);
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Did not attend' WHERE employee_id = $1`, [liza]);
+    at("2026-11-19T00:00:00Z");
+    await queueDue();
+    expect((await reminders()).map((row) => row.employee)).toEqual(["Rhea Bautista"]);
+    await db.query(`DELETE FROM public.hrms_training_notices`);
+    await db.query(`UPDATE public.hrms_trainings SET cancelled_at = now()`);
+    await queueDue();
+    expect(await reminders()).toEqual([]);
+    expect(rhea).toBeGreaterThan(0);
+  });
+
+  it("reminds again for a new date after a reschedule", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"]);
+    at("2026-11-19T00:00:00Z");
+    await queueDue();
+    await db.query(`UPDATE public.hrms_trainings SET training_date = '2026-11-23' WHERE id = $1`, [id]);
+    at("2026-11-22T00:30:00Z");
+    await queueDue();
+    expect(await reminders()).toHaveLength(2);
+  });
+
+  it("does not send an automatic Reminder to someone Staff already reminded by hand in the last 24 hours", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"], ["Liza Manalo"]);
+    at("2026-11-18T23:00:00Z"); // 7:00 AM on the 19th
+    await trainings().sendReminder(id);
+    await db.query(`DELETE FROM public.hrms_training_notices WHERE employee_id = (SELECT id FROM public.hrms_employees WHERE full_name = 'Liza Manalo')`);
+    at("2026-11-19T00:00:00Z");
+    await queueDue();
+    expect(await reminders()).toEqual([{ employee: "Ana Dizon", state: "Queued", automatic: false }, { employee: "Liza Manalo", state: "Queued", automatic: true }]);
+  });
+
+  it("is queued and sent by the scheduled job, which still needs its secret", async () => {
+    vi.stubEnv("CRON_SECRET", "s3cret");
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"]);
+    at("2026-11-19T00:10:00Z");
+    const job = trainingNoticesJob(db, () => clock, mailer);
+    expect((await job(new Request("https://x.test"))).status).toBe(401);
+    expect(await reminders()).toEqual([]);
+    expect((await job(new Request("https://x.test", { headers: { authorization: "Bearer s3cret" } }))).status).toBe(200);
+    expect(await reminders()).toEqual([{ employee: "Ana Dizon", state: "Sent", automatic: true }]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("retries a failed Reminder like any notice, then marks the Employee Not reached", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"]);
+    at("2026-11-19T00:00:00Z");
+    failing = true;
+    await queueDue();
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) { await deliver(); advance(RETRY_AFTER_MS); }
+    expect(await reminders()).toEqual([{ employee: "Ana Dizon", state: "Failed", automatic: true }]);
+    expect((await trainings().log(id)).notReached.map((row) => [row.employeeName, row.kind])).toEqual([["Ana Dizon", "Reminder"]]);
+  });
+
+  it("sends a manual reminder to Employees still Assigned who have an email, and says how many were left out", async () => {
+    const id = await training();
+    const [, liza] = await assignAll(id, ["Ana Dizon"], ["Liza Manalo"], ["Rhea Bautista", ""], ["Joel Ramirez", "  "]);
+    await db.query(`UPDATE public.hrms_training_assignments SET status = 'Cancelled' WHERE employee_id = $1`, [liza]);
+    await expect(trainings().sendReminder(id)).resolves.toEqual({ queued: 1, notEmailed: 2 });
+    expect(await reminders()).toEqual([{ employee: "Ana Dizon", state: "Queued", automatic: false }]);
+    await deliver();
+    expect(sent).toHaveLength(1);
+    // Showing in the Notification log as a Reminder, and again if Staff send another.
+    expect((await trainings().log(id)).rows.filter((row) => row.kind === "Reminder").map((row) => [row.employeeName, row.state])).toEqual([["Ana Dizon", "Sent"]]);
+    await trainings().sendReminder(id);
+    expect(await reminders()).toHaveLength(2);
+  });
+
+  it("refuses a reminder for a Cancelled or past Training, an unknown one, and anyone without the Training Module", async () => {
+    const id = await training();
+    await assignAll(id, ["Ana Dizon"]);
+    await expect(trainings(portal.signIn(staff, ["Offers"])).sendReminder(id)).rejects.toMatchObject({ reason: "denied" });
+    await expect(trainings().sendReminder(999)).rejects.toMatchObject({ reason: "not-found" });
+    at("2026-11-21T02:00:00Z");
+    await expect(trainings().sendReminder(id)).rejects.toMatchObject({ reason: "conflict" });
+    at("2026-11-14T02:00:00Z");
+    await db.query(`UPDATE public.hrms_trainings SET cancelled_at = now() WHERE id = $1`, [id]);
+    await expect(trainings().sendReminder(id)).rejects.toMatchObject({ reason: "conflict" });
+    expect(await reminders()).toEqual([]);
+  });
+
+  it("words the Reminder with the Training's when and where, and the venue for an In person Training", () => {
+    const base = { title: "Safety drill", trainer: "Safety Officer", date: "2026-11-20", startTime: "08:00", endTime: "09:30" };
+    expect(reminderEmail("Carla Mendoza", { ...base, mode: "In person", location: "Main kitchen, Antipolo" })).toEqual({
+      title: "Reminder: Safety drill on Fri, 20 Nov",
+      body: ["Hi Carla,", "", 'This is a reminder about your training "Safety drill" on Fri, 20 Nov 2026, 8:00 – 9:30 AM.', "", "Venue: Main kitchen, Antipolo", "", "Bren Raphael's HR"].join("\n"),
+    });
   });
 });
