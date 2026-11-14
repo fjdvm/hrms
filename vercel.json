@@ -7,10 +7,6 @@
     {
       "path": "/api/cron/employee-activation",
       "schedule": "30 16 * * *"
-    },
-    {
-      "path": "/api/cron/training-notices",
-      "schedule": "*/15 * * * *"
     }
   ]
 }
