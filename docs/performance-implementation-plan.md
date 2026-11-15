@@ -1,0 +1,180 @@
+# Performance module: implementation plan (draft for grilling)
+
+**Status:** draft, 15 Nov 2026. Not approved. Nothing here has been built, specced or ticketed.
+**Purpose:** input for a `/grill-with-docs` session. It states what is known, what was decided in discussion, what is only my assumption, and what is still open. Anything marked **[ASSUMPTION]** or **[OPEN]** should be challenged.
+**Module name:** Performance (Portal and HRMS Module names match; `CONTEXT.md` lists "Training and Performance" among the Modules). Business requirement BR-04.
+
+## 1. Sources and how reliable each is
+
+| Source | What it gave | Caveat |
+|---|---|---|
+| `HRMS_Training_and_Performance_Requirements.docx` (Drive), section 3 | BR-PM-01..06, FR-PM-01..11, data sources, starter weights, worked example, workflow | Source of truth for behavior |
+| `Business_Requirement_HRMS_v2` v2.2, sheet "Performance" (BR-04) | KPI Setup is row 1, status **Planned**; "Formulas need HR approval" | I could only read the first row. The other screens in that sheet were not visible to me. **Read the full sheet.** |
+| Same file, sheet "KPI References" | Attendance rate formula: days with time-in and time-out ÷ (scheduled days − excused days) × 100 | Other rows only partly visible |
+| `HRMS Product Backlog v3` and `HRMS Sprint Plan` | Sprint 8 "Deliver the Performance Module", status **To plan**, BL-071..BL-079 plus BL-082 (Portal grant); Risks sheet cites BL-071..BL-080 | Item titles, sizes and priorities not read |
+| Production Neon (`brenraphaels-ats`, branch `production`, read-only) | Real `schedule` values, employee columns | Snapshot of 15 Nov 2026 |
+| `fjdvm/hrms` `main` at `36bd94a` | Placeholder page, existing patterns | |
+| Branch `docs/training-and-development-brief` | How Training was planned (section 11) | |
+| Figma file `76nS6Pw2TXA6fWfUvTmzJ1`, page HRMS | Frame list | **No Performance frames exist.** Training frames do. |
+
+## 2. Scope
+
+**In (first release), per the requirements:**
+- Position-based KPI setup, activate or deactivate (FR-PM-01).
+- Assign KPI sets to employees by position for a defined evaluation period (FR-PM-02).
+- Configurable KPI weights (FR-PM-03).
+- Import attendance from the client's biometric export, XLSX or CSV, matched by employee number, with preview and confirm (FR-PM-04).
+- Validate imported rows and exclude unusable ones from scoring (FR-PM-05).
+- Calculate KPI results and the weighted overall score (FR-PM-06).
+- Performance dashboard and period summaries (FR-PM-07).
+- Manager evaluation, locked on submit, reopened only with a recorded reason (FR-PM-08).
+- Reports for an employee, department or period (FR-PM-09).
+- Performance history (FR-PM-10).
+- Development needs: flag gaps and record recommended actions or training (FR-PM-11).
+
+**Scoring sources (exactly three):** attendance import (Attendance rate, Punctuality, Full shift), Training completion (from the Training module), Evaluator rating (HRMS Manager, 0 to 100).
+
+**Out:**
+- No attendance monitoring, shift scheduling, leave filing or payroll. The Attendance module was dropped (Sprint Plan, "Dropped and Moved").
+- No use of salary, overtime, deductions or payroll data in scoring.
+- POS and CRM KPIs (Future Integration).
+- AI skill-gap and training recommendations, and microlearning (optional, later).
+- Employee sign-in: employees never sign in to HRMS, so there is no employee-facing screen and no emails from this module in the first release.
+
+**Terminology rule carried from Training:** the UI says "Attendance import" and must never imply an attendance record, attendance screen or shift management. The requirements say imported records are not shown as an attendance record.
+
+## 2b. Starter KPIs, formulas and the worked example
+
+Weights are team proposals that HR must approve. HR may use a different weight set per position. Default grace period: 10 minutes.
+
+| KPI | Weight | Source | Result formula |
+|---|---|---|---|
+| Attendance rate | 30 | Attendance import | days with time-in and time-out ÷ (scheduled days − excused days) × 100 |
+| Punctuality | 25 | Attendance import | (present days − late days) ÷ present days × 100, late = time-in later than shift start + grace |
+| Full shift | 15 | Attendance import | (present days − early-out days) ÷ present days × 100, early-out = time-out earlier than shift end **[ASSUMPTION on exact rule]** |
+| Training completion | 15 | Training | Trainings marked Completed ÷ Trainings assigned in the period × 100 |
+| Evaluator rating | 15 | HRMS Manager | the 0 to 100 score entered |
+
+Worked example from the requirements (illustrative only): 96.2 (25 of 26 days) × .30 + 88 (3 late of 25) × .25 + 96 (1 early-out of 25) × .15 + 100 (2 of 2 trainings) × .15 + 85 × .15 = **93.0 / 100**. Use it as the first unit test for the scoring engine.
+
+## 3. Decisions made in discussion (treat as settled unless the grill breaks them)
+
+1. **Strict submit gate.** The HRMS Manager can submit an evaluation only when: attendance is imported for the period, the employee's shift is set, and the Manager's rating is entered. Training completion arrives automatically.
+2. **One submit action**, performed by the Manager. It locks the evaluation, saves KPI results and score to history, and records an audit event. There is no separate "mark as evaluated" button.
+3. **Reopen is Manager only**, with a required reason. The previously submitted version is kept in History. Who, when and why go to the audit log. HR asks the Manager if a correction is needed. A locked evaluation does not change when new data is imported.
+4. **Access rule is based on the Performance Module grant plus a Manager flag, not on role names** (the Portal renamed Super Admin to Admin and HRMS still checks old names; backlog BL-115).
+5. **Structured shift on the employee record (option A):** add nullable shift start, shift end and working days to the employee record. Keep the existing `schedule` text as display text. An employee with no shift shows "Not scored: shift missing".
+6. **Mock attendance for testing:** build a test file in the real export's layout and keep it as a repo test fixture. Do not load mock attendance into production.
+7. **Layout:** Performance follows Training's sizes, fonts and components (the shared `components/ui` primitives). Performance layout may differ where scoring needs it. Do not import from `components/training/*`.
+8. **No spec or tickets yet.** Planning follows the Training precedent first (section 11).
+
+## 4. Rules proposed but not yet approved (HR sign-off needed) **[OPEN]**
+
+| Topic | Proposed rule |
+|---|---|
+| No trainings assigned in the period (0 of 0) | Training completion is "Not applicable", excluded, other weights rescaled proportionally. The effective weights are saved with the evaluation. Applies identically to everyone in the same position. |
+| Too little weight left | Below a floor (placeholder **60%**) the result is "Insufficient data" and HR reviews it. |
+| Employee has no attendance rows at all | Unresolved blocks submit. HR re-imports, enters excused days, or confirms "no attendance this period" with a reason (counts as full absence). |
+| Scheduled day missing for an employee who has other rows | Counts as absence. |
+| Time-in with no time-out | Flagged for HR to resolve. Not counted automatically. |
+| Import file does not cover the whole period | Warn or block before confirming. |
+| "N/A" versus the strict gate | N/A is a computed outcome, not a missing input, so it does not block submit. |
+
+## 5. Production facts (read-only, 15 Nov 2026)
+
+- Tables carry an `hrms_` prefix in production (`hrms_employees`, `hrms_offers`, `hrms_employee_history`, `hrms_employee_documents`, and others). The database is shared with Careers.
+- `hrms_employees` has 9 rows. `schedule` is `text NOT NULL`. Values: `Mon-Sat, 6 AM-2 PM` ×7, `Mon-Fri` ×2.
+- `hrms_offers.schedule`: `Mon-Sat, 6 AM-2 PM` ×7, `Mon-Fri 8AM-5PM` ×2, `Mon-Fri` ×2. Employees have no `8AM-5PM` value; unresolved (not hired, or edited after hire). **[OPEN: verify]**
+- `job_postings.work_schedule`: null ×9, `Mon-Fri, 9AM to 6PM` ×2, `Mon-Fri` ×1.
+- Free text uses four different formats, so parsing it in code is rejected.
+- `hrms_employees.offer_id` and `application_id` are `NOT NULL`, `status` is Onboarding or Active only. Relevant to cutover (section 9).
+- Employee number and email exist on the record (needed for biometric matching and notices).
+
+## 6. Proposed data model (all new tables unless stated) **[ASSUMPTION: names and shapes for the grill]**
+
+Migrations continue the numbering after `0041-training-printed.sql`. New tables only, plus additive columns on `hrms_employees`.
+
+- `hrms_employees` (existing): add `shift_start time`, `shift_end time`, `working_days` (e.g. smallint[] or bitmask), all nullable.
+- `performance_kpis`: name, description, source (attendance, training, evaluator), method, target, status (active or inactive). Not deletable once used.
+- `performance_kpi_sets` / position links: which KPIs and weights apply to which position.
+- `performance_periods`: start, end, grace minutes, status.
+- `performance_period_days`: scheduled working days and excused days per employee per period.
+- `performance_attendance_imports`: who, when, file name, row counts (usable and rejected), period; keep the source.
+- `performance_attendance_rows`: employee, date, time-in, time-out, import reference, validity reason.
+- `performance_evaluations`: employee, period, status (Draft, In review, Evaluated), rating, comments, submitted by and at, locked flag.
+- `performance_evaluation_results`: per KPI: result, weight used, source, period. Snapshot of effective weights.
+- `performance_evaluation_versions` / reopen log: previous submitted version, reopen reason, who, when.
+- `performance_development_needs`: employee, gap, recommended action or Training, flagged by, flagged at.
+
+Rules: forward-only migrations, additive where possible; revert is a down migration that drops new tables only while empty. Locked evaluations and audit records are history, not deletable.
+
+## 7. Screens (proposed, no Figma yet)
+
+Follow Training's patterns: tabs, table cards, dialogs, skeleton, empty, populated and error states, No access screen.
+
+1. **Performance list**: period selector; tabs All, Draft, In review, Evaluated; columns: employee, employee number, position, branch, score, status, updated.
+2. **Employee performance page**: header with shift and period; stage tracker (Setup, Attendance imported, Scored, Evaluated); KPI results table with target, result, weight, source; Manager evaluation panel; Development needs; History.
+3. **KPI Setup**: list and create/edit dialog; weights must total 100.
+4. **Evaluation period setup**: dates, working days, excused days, grace, KPI assignment by position.
+5. **Import attendance dialog**: upload, preview, rejected rows, coverage check, confirm.
+6. **Submit evaluation** and **Reopen evaluation** dialogs.
+7. **Flag development need** dialog.
+8. **Reports** and **Print or export** dialog.
+9. **Employee profile tab** showing Performance history, gated like Training history (`staffWithModule`) **[ASSUMPTION]**.
+10. **Employee form**: shift start, end and working days.
+
+## 8. Implementation ordering (outline only, not tickets)
+
+| # | Slice | Depends on |
+|---|---|---|
+| T0 | Performance access gate (Portal grant BL-082, Manager flag, BL-115) | none |
+| T1 | Shift fields on employee record, form, validation, reviewed backfill of the 7 uniform rows | none |
+| T2 | KPI Setup | T0 |
+| T3 | Evaluation periods and assignment | T2 |
+| T4 | Attendance import | T1, T3, real sample export |
+| T5 | Scoring engine (pure code, unit tests, the 93.0 example) | T2, T3, T4, Training completion read |
+| T6 | Performance list and employee page, read-only | T5, Figma frames |
+| T7 | Manager evaluation: rating, comments, strict gate, submit, lock, audit | T6 |
+| T8 | Reopen evaluation | T7 |
+| T9 | History and development needs | T7 |
+| T10 | Reports, print and export | T7 |
+
+Suggested MVP cut: T0 to T8. Human tasks: draw Performance Figma frames; HR approves formulas, weights, grace, N/A rule and floor; get one real biometric export sample.
+
+## 9. Cross-cutting concerns
+
+- **Dependencies on other modules:** Training completion (built, read-only), Employee Information (employee number, email, shift), Offers hire hand-off (writes the employee record's `schedule` today; later could carry structured shift), audit-logs service (HRMS sends audit events), Portal (Module grants).
+- **Repo conventions seen:** `requireModule("Performance")` and a `ModulePlaceholder` page already exist; sidebar and `lib/modules.ts` already list Performance. Training layout to mirror: `app/(hrms)/training/*`, `components/training/*`, `lib/trainings.ts`, `lib/portal/trainings`, tests under `tests/training-*.test.ts(x)`. No-polling rule applies (`AGENTS.md`).
+- **Production data cutover (separate piece of work, not planned yet):** the client's real employees cannot be inserted today (employees only come from the hire hand-off and require `offer_id`/`application_id`). Recommended: a clean production environment instead of deleting mock rows, plus an import tool for employees and historical records marked "Imported". Performance needs imported history to allow a score without a KPI breakdown. Not in the backlog as far as I saw.
+- **Testing approach:** pure unit tests for scoring and import validation; a test fixture file in the real export layout with deliberate bad rows (unmatched employee number, duplicate, invalid date or time, time-in with no time-out, employee with no rows, short period coverage, the two employees with no shift times); hand-computed expected scores.
+- **Risks:** shared production database and migrations (no `hrms` rule found for applying production migrations before merge, check); formulas not yet approved; real export format unknown; Figma frames missing while `AGENTS.md` says Figma is the UI reference; role-name drift between Portal and HRMS.
+
+## 10. Open questions for the grill **[OPEN]**
+
+1. Who is the designer for Performance and when will frames exist? (The Training brief said another person designs Performance.)
+2. Exact access model: Module grant plus Manager flag. Can HR Staff without the Manager flag see scores? The requirements say the Manager "can see all employees"; HR configures KPIs and reports.
+3. Evaluation period cadence (monthly, quarterly?) and who opens a period.
+4. Which employees are evaluated: Active only? Onboarding or probation employees? Mid-period joiners or leavers?
+5. Source of excused days (HR-entered per period; leave is not in HRMS).
+6. Rounding rules, and whether the Manager sees scores before entering the rating.
+7. The N/A rule, the 60% floor, Full shift's exact rule, and the handling of time-in with no time-out: HR approval.
+8. Real biometric export format (need one sample).
+9. Production migration process for `hrms` (apply before merge?).
+10. Should the Manager be notified (header bell) when a period is ready for review? Not in the requirements.
+11. Which Neon branch is used for development and staging data?
+12. The two `Mon-Fri` employees and the `8AM-5PM` offer discrepancy: verify and backfill.
+13. Whether the unread BR-04 rows in the Business Requirements sheet or backlog items BL-071..BL-080 add requirements not in the docx.
+14. Glossary: "KPI" is on the `Avoid` list for the Dashboard's Key Summary Card (`CONTEXT.md` line 92). Define KPI for Performance and scope that avoid rule.
+15. Cutover: scope and owner of the historical data import, and how past evaluations are stored.
+
+## 11. Precedent: how Training was planned (branch `docs/training-and-development-brief`)
+
+1. Glossary first in `CONTEXT.md`: new terms with `_Avoid_` lists, the Module entry, updated related entries.
+2. A Figma brief for the design owner: scope, source docs, strict layout reference to the existing frames, **13 settled decisions ("do not re-open")**, a frame table mapped to FR IDs, a reuse list with node IDs, measured tokens, copy style and sample data, and a hand-off ("send back frame names with node IDs mapped to FR IDs").
+3. Frames drawn, then implemented from the frames, `CONTEXT.md` and the requirements doc.
+
+Mirror for Performance: Performance terms in `CONTEXT.md` → a Performance Figma brief containing the settled decisions in section 3 → frames → spec and tickets → build.
+
+## 12. Glossary candidates for `CONTEXT.md` **[ASSUMPTION: for the grill]**
+
+KPI (Performance scope), Evaluation period, Attendance import, Performance score, Evaluator rating, Evaluation (Draft, In review, Evaluated), Development need, Shift. Each needs an `_Avoid_` list and care that "Attendance" does not suggest a record or module.
