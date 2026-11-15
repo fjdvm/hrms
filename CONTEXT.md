@@ -55,6 +55,10 @@ _Avoid_: Notification (alone), alert
 **Training completion**:
 A summary card at the top of the Trainings page, not on the Dashboard and not affected by the Dashboard Range. It shows the Assigned employees marked Completed as a whole percent of the results due for Trainings held this month (Manila time), with "X of Y completed" beneath. Cancelled Assigned employees are not counted. It shows "Nothing to show yet", never 0%, when no Training was held this month.
 
+**Performance**:
+The Module in which Staff evaluate Employees. Anyone who holds the Performance Module can do everything in it: rate, submit, reopen, set up KPIs, import attendance and flag development needs. There is no separate manager permission and no role names are checked; every action records which Staff member did it.
+_Avoid_: HRMS Manager (as the evaluator), Manager flag
+
 **Pre-employment Document**:
 One of the seven documents an Offer's checklist tracks before Staff may mark the person Hired: résumé, valid ID, NBI clearance, health certificate, SSS, PhilHealth, and Pag-IBIG MID and TIN. Each is Submitted, Requested or Not requested. One the Applicant already sent with the Application starts as Submitted, so Staff can only request the missing ones. An upload counts as Submitted at once, with no Staff approval; Staff can request it again, which resets it to Requested, and the new upload replaces the old file. Not the same as a Required Document, which is what a Job Posting asks for at application time.
 _Avoid_: Requirement, onboarding document
