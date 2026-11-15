@@ -11,9 +11,9 @@ export function TrainingNoAccess() {
         <span className="flex size-[56px] items-center justify-center rounded-full bg-zinc-100">
           <Lock className="size-6 text-zinc-500" aria-hidden />
         </span>
-        <h1 className="text-[18px] font-semibold text-foreground">No access to Training and Development</h1>
+        <h1 className="text-[18px] font-semibold text-foreground">No access to Training</h1>
         <p className="text-sm text-muted-foreground">
-          You don’t have access to Training and Development. Ask an administrator to grant it in the Portal.
+          You don’t have access to Training. Ask an administrator to grant it in the Portal.
         </p>
         <Button asChild className="h-auto gap-[6px] rounded-lg px-[14px] py-[9px] font-medium shadow-none">
           <Link href="/dashboard"><ArrowLeft className="size-4" aria-hidden />Back to Dashboard</Link>
