@@ -71,6 +71,10 @@ _Avoid_: Appraisal, review (as the record), Evaluated (as a button)
 In Performance, one measure that contributes to an Evaluation's score, with a source (the attendance import, Training completion, or the Staff member's rating), a target and a status of Active or Inactive. Each KPI carries a weight in a weight set. Every period has one default weight set, and HR may create a set for a position that applies when an Employee's position text matches it exactly, ignoring case and extra spaces; no match means the default set. Each set totals 100. A KPI used by an Evaluation can be deactivated but never deleted. Not a Key Summary Card, which is never called a KPI.
 _Avoid_: Metric, goal, objective
 
+**Probation review**:
+An Evaluation of one newly hired Employee, completed before their probation ends. It has its own date range, taken from the Employee's start date and ending before their probation end date, and it is separate from the company-wide Evaluation periods, so it may overlap them and is left out of their averages. Planned after the first release of Performance; the first release has company-wide Evaluation periods only.
+_Avoid_: Regularization (until HR defines the outcome of a probation review), probationary evaluation
+
 **Pre-employment Document**:
 One of the seven documents an Offer's checklist tracks before Staff may mark the person Hired: résumé, valid ID, NBI clearance, health certificate, SSS, PhilHealth, and Pag-IBIG MID and TIN. Each is Submitted, Requested or Not requested. One the Applicant already sent with the Application starts as Submitted, so Staff can only request the missing ones. An upload counts as Submitted at once, with no Staff approval; Staff can request it again, which resets it to Requested, and the new upload replaces the old file. Not the same as a Required Document, which is what a Job Posting asks for at application time.
 _Avoid_: Requirement, onboarding document
