@@ -59,6 +59,10 @@ A summary card at the top of the Trainings page, not on the Dashboard and not af
 The Module in which Staff evaluate Employees. Anyone who holds the Performance Module can do everything in it: rate, submit, reopen, set up KPIs, import attendance and flag development needs. There is no separate manager permission and no role names are checked; every action records which Staff member did it.
 _Avoid_: HRMS Manager (as the evaluator), Manager flag
 
+**Evaluation period**:
+A date range in Performance, chosen as a Month, a Quarter or a Custom start and end, for which each Employee gets one score. The Employees in it are every Active Employee whose start date is on or before its end date; the list is live until an Employee's evaluation is saved, and from then on that Employee stays in the period. An Employee's scheduled days are the dates in the period, counted from the later of the period's start and the Employee's start date, that fall on their Working days, minus the period's Non-working dates (holidays and closures, entered once per period by HR). Excused days are entered by HR per Employee, because leave is not in HRMS. Not the Dashboard Range.
+_Avoid_: Review cycle, appraisal period, scheduled working days (as a number typed in once per period)
+
 **Pre-employment Document**:
 One of the seven documents an Offer's checklist tracks before Staff may mark the person Hired: résumé, valid ID, NBI clearance, health certificate, SSS, PhilHealth, and Pag-IBIG MID and TIN. Each is Submitted, Requested or Not requested. One the Applicant already sent with the Application starts as Submitted, so Staff can only request the missing ones. An upload counts as Submitted at once, with no Staff approval; Staff can request it again, which resets it to Requested, and the new upload replaces the old file. Not the same as a Required Document, which is what a Job Posting asks for at application time.
 _Avoid_: Requirement, onboarding document
