@@ -4,6 +4,97 @@
 **Purpose:** input for a `/grill-with-docs` session. It states what is known, what was decided in discussion, what is only my assumption, and what is still open. Anything marked **[ASSUMPTION]** or **[OPEN]** should be challenged.
 **Module name:** Performance (Portal and HRMS Module names match; `CONTEXT.md` lists "Training and Performance" among the Modules). Business requirement BR-04.
 
+## 0. Frontend reference (strict)
+
+Figma file: **Bren Raphael's CRM - Orders Prototype**, page **HRMS** (`244:2817`).
+
+- Design link: https://www.figma.com/design/76nS6Pw2TXA6fWfUvTmzJ1/Bren-Raphael-s-CRM---Orders-Prototype?node-id=244-2817&p=f&t=ybxnIXbjrCaoSf3j-0
+- File link: https://www.figma.com/file/76nS6Pw2TXA6fWfUvTmzJ1?node-id=244:2817&locale=en&type=design
+- Performance frames sit below the existing content on the HRMS page (screens at y = 15200, dialogs at y = 16500). The full list with node IDs is in section 13. `AGENTS.md` says to follow Figma over your own design instincts, so build each screen from its frame: same sidebar, top bar, spacing, tabs, table cards, dialogs and badges as the Training frames they were copied from.
+- The frames are **drafts**: the design owner has not reviewed them, sample names are made up, and employee numbers use the Figma sample format (BR-EMP-00xx). Where no frame exists (Custom period date picker, a Performance tab on the employee profile, a Development needs list screen), ask for a frame; do not invent a layout.
+
+## 0b. What the Performance module does (design walkthrough)
+
+The Performance tab is where HR sets up KPIs for each position, brings in attendance records from the biometric export, and gets a weighted score for each employee per evaluation period. The HRMS Manager then reviews the results, enters a rating and submits the evaluation, and HR flags any development needs. Here's what it does in the current design.
+
+**Performance list (the main screen)** · frames `973:5856`, states `984:7010` Loading, `984:7407` Empty, `984:7678` Error
+
+- Every employee being evaluated in the selected period, with tabs: All, Draft, In review, Evaluated.
+- A progress card at the top: "3 of 8 evaluated", and a warning line if someone is not scored because their shift is missing, with a "Set shift" link.
+- For each employee: name and employee number, position and branch, shift, score, attendance import status, and evaluation status. A person with no shift shows "Not scored: shift missing".
+- Header buttons: the period selector (for example "November 2026"), KPI setup, and Import attendance.
+- Clicking a row opens that employee's performance page.
+- Staff without the Performance Module see a No access screen (`979:7056`) and no PERFORMANCE group in the sidebar.
+
+**Employee performance page (one per employee)** · frames `974:5979` Ready to submit, `974:6569` Submit locked, `984:7956` Evaluated
+
+- Header: name, status badge (Draft, In review or Evaluated), employee number, position, branch and period.
+- A banner that says whether Submit is unlocked or locked and why, with a button to enter the rating when it is missing.
+- Evaluation period card: period, shift, scheduled days (and excused days), grace period.
+- KPI results: for each KPI the source, result, weight and points, and the overall weighted score out of 100 (for example 93.0 / 100).
+- Manager evaluation: the rating (0 to 100) and the Manager's comments, then the development needs flagged for this employee.
+- Submit checklist: three checks, Attendance imported, Shift set, Manager rating entered. All three must be done before Submit unlocks.
+- History: earlier periods with their saved scores.
+- Reopening: a short note that only the HRMS Manager can reopen a submitted evaluation, with a recorded reason.
+- Buttons: Print report, Flag development need, Submit evaluation (faded while locked).
+- No stage tracker is drawn. The Submit checklist plays that role.
+
+**Submit evaluation** · frame `977:6211`
+
+- Locked until three things are true: attendance is imported for the period, the employee's shift is set, and the Manager's rating is entered. Training completion comes in automatically.
+- It is one action by the HRMS Manager. When unlocked, clicking it asks for confirmation and then:
+  - Locks the evaluation (it does not change when new data is imported).
+  - Saves the score, KPI results and the weights used to the employee's history.
+  - Records an audit event. No email is sent.
+
+**Reopen evaluation** · frame `984:8298`
+
+- Only the HRMS Manager can reopen, and a reason is required.
+- The submitted version stays in History. The evaluation goes back to In review.
+- Who reopened it, when and why are recorded in the audit log. If HR finds a problem (for example a bad import), they ask the Manager to reopen it.
+
+**Flag development need** · frame `977:6737`
+
+- HR or the Manager records a gap and a recommended action or Training. It is a recommendation and never changes the score.
+
+**KPI setup** · frame `979:6675`
+
+- The five starter KPIs with source, positions, weight, target and status (Active or Inactive): Attendance rate 30, Punctuality 25, Full shift 15, Training completion 15, Evaluator rating 15.
+- A weights card shows the total (must be 100) for each position. HR can use a different weight set per position.
+- A KPI used by a finished evaluation can only be deactivated, never deleted. Formulas, targets and weights need HR approval (a business step, not a screen).
+
+**Evaluation period setup** · frames `979:7165` Month, `1002:8143` Quarter, `1002:8538` Quarter with an overlap error
+
+- Period type: Month, Quarter or Custom. Month and Quarter fill the dates; Custom lets HR pick any start and end.
+- Scheduled working days (for example 26 for a month, 78 for a quarter) and the grace period in minutes (default 10).
+- A box shows which KPI weight set applies, and a callout says employees appear once their shift is set.
+- A period cannot overlap another open period for the same employee. The overlap frame shows the error and a faded "Open period" button.
+
+**Import attendance** · frame `977:7007`
+
+- HR exports the records from the biometric device by USB (XLSX or CSV) and uploads the file. Rows are matched to employees by employee number.
+- A preview shows usable rows and the rows that cannot be used (no matching employee number, duplicates, invalid time), and lists employees with no records.
+- A coverage note says whether the file covers the whole period. Nothing is saved until HR confirms.
+- The records are used only to compute scores, not shown as an attendance record.
+
+**Shift on the employee record** · frame `985:8000`
+
+- The Edit employment dialog on the employee profile gets Shift start, Shift end and Working days, next to the existing Work schedule text.
+- Performance uses them for Punctuality and Full shift. An employee with no shift is not scored until HR sets one.
+
+**Reports** · frames `985:7471` Reports, `985:7837` Print or export dialog
+
+- A summary by branch, position or employee for the selected period: employees, how many are evaluated, average, highest and lowest score, and development needs flagged.
+- Averages count only submitted, locked evaluations. Print or export offers a PDF or Excel file, with an option to include employee names.
+
+**On the employee's side**
+
+- Employees do not sign in to HRMS and get no emails from this module in the first release. HR and the HRMS Manager see all results.
+
+**Not in the first release**
+
+- POS and CRM KPIs, AI skill-gap suggestions, and microlearning.
+
 ## 1. Sources and how reliable each is
 
 | Source | What it gave | Caveat |
@@ -113,12 +204,12 @@ Migrations continue the numbering after `0041-training-printed.sql`. New tables 
 
 Rules: forward-only migrations, additive where possible; revert is a down migration that drops new tables only while empty. Locked evaluations and audit records are history, not deletable.
 
-## 7. Screens (proposed, no Figma yet)
+## 7. Screens (draft frames exist, see sections 0b and 13)
 
 Follow Training's patterns: tabs, table cards, dialogs, skeleton, empty, populated and error states, No access screen.
 
-1. **Performance list**: period selector; tabs All, Draft, In review, Evaluated; columns: employee, employee number, position, branch, score, status, updated.
-2. **Employee performance page**: header with shift and period; stage tracker (Setup, Attendance imported, Scored, Evaluated); KPI results table with target, result, weight, source; Manager evaluation panel; Development needs; History.
+1. **Performance list**: period selector; tabs All, Draft, In review, Evaluated; columns as drawn: employee, position, shift, score, attendance import, status.
+2. **Employee performance page**: header with shift and period; banner and Submit checklist (no stage tracker is drawn); KPI results table with result, weight, source and points; Manager evaluation panel; Development needs; History.
 3. **KPI Setup**: list and create/edit dialog; weights must total 100.
 4. **Evaluation period setup**: dates, working days, excused days, grace, KPI assignment by position.
 5. **Import attendance dialog**: upload, preview, rejected rows, coverage check, confirm.
@@ -152,11 +243,11 @@ Suggested MVP cut: T0 to T8. Human tasks: draw Performance Figma frames; HR appr
 - **Repo conventions seen:** `requireModule("Performance")` and a `ModulePlaceholder` page already exist; `lib/modules.ts` already lists the Performance Module, but `components/layout/sidebar-nav.ts` does not list it in the sidebar yet (to be added). Training layout to mirror: `app/(hrms)/training/*`, `components/training/*`, `lib/trainings.ts`, `lib/portal/trainings`, tests under `tests/training-*.test.ts(x)`. No-polling rule applies (`AGENTS.md`).
 - **Production data cutover (separate piece of work, not planned yet):** the client's real employees cannot be inserted today (employees only come from the hire hand-off and require `offer_id`/`application_id`). Recommended: a clean production environment instead of deleting mock rows, plus an import tool for employees and historical records marked "Imported". Performance needs imported history to allow a score without a KPI breakdown. Not in the backlog as far as I saw.
 - **Testing approach:** pure unit tests for scoring and import validation; a test fixture file in the real export layout with deliberate bad rows (unmatched employee number, duplicate, invalid date or time, time-in with no time-out, employee with no rows, short period coverage, the two employees with no shift times); hand-computed expected scores.
-- **Risks:** shared production database and migrations (no `hrms` rule found for applying production migrations before merge, check); formulas not yet approved; real export format unknown; Figma frames missing while `AGENTS.md` says Figma is the UI reference; role-name drift between Portal and HRMS.
+- **Risks:** shared production database and migrations (no `hrms` rule found for applying production migrations before merge, check); formulas not yet approved; real export format unknown; Figma frames are drafts not yet reviewed by the design owner while `AGENTS.md` says Figma is the UI reference; role-name drift between Portal and HRMS.
 
 ## 10. Open questions for the grill **[OPEN]**
 
-1. Who is the designer for Performance and when will frames exist? (The Training brief said another person designs Performance.)
+1. Who is the design owner for Performance, and when will they review the draft frames in section 13? (The Training brief said another person designs Performance.)
 2. Exact access model: Module grant plus Manager flag. Can HR Staff without the Manager flag see scores? The requirements say the Manager "can see all employees"; HR configures KPIs and reports.
 3. Evaluation period: monthly is the default and quarterly and custom ranges are allowed (decision 9). Still open: what HR does today, whether probation reviews use a different cadence, who opens a period, and the Custom date-picker design (not drawn).
 4. Which employees are evaluated: Active only? Onboarding or probation employees? Mid-period joiners or leavers?
