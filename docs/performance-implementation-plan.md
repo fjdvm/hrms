@@ -1,6 +1,6 @@
 # Performance module: implementation plan (draft for grilling)
 
-**Status:** draft, 15 Nov 2026. Not approved. Nothing here has been built, specced or ticketed.
+**Status:** draft, 15 Nov 2026, updated after the draft Figma frames (section 13). Not approved. Nothing here has been built in code, specced or ticketed.
 **Purpose:** input for a `/grill-with-docs` session. It states what is known, what was decided in discussion, what is only my assumption, and what is still open. Anything marked **[ASSUMPTION]** or **[OPEN]** should be challenged.
 **Module name:** Performance (Portal and HRMS Module names match; `CONTEXT.md` lists "Training and Performance" among the Modules). Business requirement BR-04.
 
@@ -15,7 +15,7 @@
 | Production Neon (`brenraphaels-ats`, branch `production`, read-only) | Real `schedule` values, employee columns | Snapshot of 15 Nov 2026 |
 | `fjdvm/hrms` `main` at `36bd94a` | Placeholder page, existing patterns | |
 | Branch `docs/training-and-development-brief` | How Training was planned (section 11) | |
-| Figma file `76nS6Pw2TXA6fWfUvTmzJ1`, page HRMS | Frame list | **No Performance frames exist.** Training frames do. |
+| Figma file `76nS6Pw2TXA6fWfUvTmzJ1`, page HRMS | Frame list, Training patterns | Performance frames did not exist at first. Draft frames were added later (section 13) and are not reviewed by the design owner. |
 
 ## 2. Scope
 
@@ -67,6 +67,9 @@ Worked example from the requirements (illustrative only): 96.2 (25 of 26 days) �
 6. **Mock attendance for testing:** build a test file in the real export's layout and keep it as a repo test fixture. Do not load mock attendance into production.
 7. **Layout:** Performance follows Training's sizes, fonts and components (the shared `components/ui` primitives). Performance layout may differ where scoring needs it. Do not import from `components/training/*`.
 8. **No spec or tickets yet.** Planning follows the Training precedent first (section 11).
+9. **Period type: Month, Quarter or Custom.** An evaluation period is a date range. Month and Quarter are presets that fill the dates; Custom lets HR choose any start and end. Monthly is the default shown. Scores are percentages, so periods of different lengths stay readable, but reports compare periods of the same length only.
+10. **No overlapping periods for the same employee** **[ASSUMPTION: HR to confirm]**. A monthly and a quarterly period covering the same days would count the same attendance twice, so the system refuses to open an overlapping period.
+11. **Sidebar:** the Figma sidebar component now has a PERFORMANCE group with a Performance item. Group header spacing was NOT changed. In the real app, `components/layout/sidebar-nav.ts` does not list Performance yet (its comment says "Performance has a Module but no HRMS pages to list yet"), so building Performance adds one PERFORMANCE section there. No other module changes.
 
 ## 4. Rules proposed but not yet approved (HR sign-off needed) **[OPEN]**
 
@@ -79,6 +82,8 @@ Worked example from the requirements (illustrative only): 96.2 (25 of 26 days) �
 | Time-in with no time-out | Flagged for HR to resolve. Not counted automatically. |
 | Import file does not cover the whole period | Warn or block before confirming. |
 | "N/A" versus the strict gate | N/A is a computed outcome, not a missing input, so it does not block submit. |
+| Overlapping periods | A period that overlaps another open period for the same employee cannot be opened (shown as an error on the Period field). |
+| Scheduled working days | Entered per period by HR. The Figma sample uses 26 for a month and 78 for a quarter (26 × 3), which is only arithmetic, not a rule. |
 
 ## 5. Production facts (read-only, 15 Nov 2026)
 
@@ -97,7 +102,7 @@ Migrations continue the numbering after `0041-training-printed.sql`. New tables 
 - `hrms_employees` (existing): add `shift_start time`, `shift_end time`, `working_days` (e.g. smallint[] or bitmask), all nullable.
 - `performance_kpis`: name, description, source (attendance, training, evaluator), method, target, status (active or inactive). Not deletable once used.
 - `performance_kpi_sets` / position links: which KPIs and weights apply to which position.
-- `performance_periods`: start, end, grace minutes, status.
+- `performance_periods`: type (month, quarter, custom), start, end, grace minutes, status. No overlapping open periods per employee.
 - `performance_period_days`: scheduled working days and excused days per employee per period.
 - `performance_attendance_imports`: who, when, file name, row counts (usable and rejected), period; keep the source.
 - `performance_attendance_rows`: employee, date, time-in, time-out, import reference, validity reason.
@@ -144,7 +149,7 @@ Suggested MVP cut: T0 to T8. Human tasks: draw Performance Figma frames; HR appr
 ## 9. Cross-cutting concerns
 
 - **Dependencies on other modules:** Training completion (built, read-only), Employee Information (employee number, email, shift), Offers hire hand-off (writes the employee record's `schedule` today; later could carry structured shift), audit-logs service (HRMS sends audit events), Portal (Module grants).
-- **Repo conventions seen:** `requireModule("Performance")` and a `ModulePlaceholder` page already exist; sidebar and `lib/modules.ts` already list Performance. Training layout to mirror: `app/(hrms)/training/*`, `components/training/*`, `lib/trainings.ts`, `lib/portal/trainings`, tests under `tests/training-*.test.ts(x)`. No-polling rule applies (`AGENTS.md`).
+- **Repo conventions seen:** `requireModule("Performance")` and a `ModulePlaceholder` page already exist; `lib/modules.ts` already lists the Performance Module, but `components/layout/sidebar-nav.ts` does not list it in the sidebar yet (to be added). Training layout to mirror: `app/(hrms)/training/*`, `components/training/*`, `lib/trainings.ts`, `lib/portal/trainings`, tests under `tests/training-*.test.ts(x)`. No-polling rule applies (`AGENTS.md`).
 - **Production data cutover (separate piece of work, not planned yet):** the client's real employees cannot be inserted today (employees only come from the hire hand-off and require `offer_id`/`application_id`). Recommended: a clean production environment instead of deleting mock rows, plus an import tool for employees and historical records marked "Imported". Performance needs imported history to allow a score without a KPI breakdown. Not in the backlog as far as I saw.
 - **Testing approach:** pure unit tests for scoring and import validation; a test fixture file in the real export layout with deliberate bad rows (unmatched employee number, duplicate, invalid date or time, time-in with no time-out, employee with no rows, short period coverage, the two employees with no shift times); hand-computed expected scores.
 - **Risks:** shared production database and migrations (no `hrms` rule found for applying production migrations before merge, check); formulas not yet approved; real export format unknown; Figma frames missing while `AGENTS.md` says Figma is the UI reference; role-name drift between Portal and HRMS.
@@ -153,7 +158,7 @@ Suggested MVP cut: T0 to T8. Human tasks: draw Performance Figma frames; HR appr
 
 1. Who is the designer for Performance and when will frames exist? (The Training brief said another person designs Performance.)
 2. Exact access model: Module grant plus Manager flag. Can HR Staff without the Manager flag see scores? The requirements say the Manager "can see all employees"; HR configures KPIs and reports.
-3. Evaluation period cadence (monthly, quarterly?) and who opens a period.
+3. Evaluation period: monthly is the default and quarterly and custom ranges are allowed (decision 9). Still open: what HR does today, whether probation reviews use a different cadence, who opens a period, and the Custom date-picker design (not drawn).
 4. Which employees are evaluated: Active only? Onboarding or probation employees? Mid-period joiners or leavers?
 5. Source of excused days (HR-entered per period; leave is not in HRMS).
 6. Rounding rules, and whether the Manager sees scores before entering the rating.
@@ -177,4 +182,30 @@ Mirror for Performance: Performance terms in `CONTEXT.md` → a Performance Figm
 
 ## 12. Glossary candidates for `CONTEXT.md` **[ASSUMPTION: for the grill]**
 
-KPI (Performance scope), Evaluation period, Attendance import, Performance score, Evaluator rating, Evaluation (Draft, In review, Evaluated), Development need, Shift. Each needs an `_Avoid_` list and care that "Attendance" does not suggest a record or module.
+KPI (Performance scope), Evaluation period (with period type), Attendance import, Performance score, Evaluator rating, Evaluation (Draft, In review, Evaluated), Development need, Shift. Each needs an `_Avoid_` list and care that "Attendance" does not suggest a record or module.
+
+## 13. Draft Figma frames (HRMS page of file `76nS6Pw2TXA6fWfUvTmzJ1`)
+
+Built from copies of Training frames so sizes, fonts and components match. These are drafts: the design owner has not reviewed them. Sample names are made up; employee numbers use the Figma sample format (BR-EMP-00xx). Frames sit below existing content: row 1 at y = 15200 (screens), row 2 at y = 16500 (dialogs).
+
+| Frame | Node ID |
+|---|---|
+| Performance · List | `973:5856` |
+| Employee evaluation · Ready to submit | `974:5979` |
+| Employee evaluation · Submit locked | `974:6569` |
+| Employee evaluation · Evaluated | `984:7956` |
+| KPI Setup | `979:6675` |
+| No access | `979:7056` |
+| List · Loading / Empty / Error | `984:7010` / `984:7407` / `984:7678` |
+| Reports | `985:7471` |
+| Dialog · Submit evaluation | `977:6211` |
+| Dialog · Reopen evaluation | `984:8298` |
+| Dialog · Flag development need | `977:6737` |
+| Dialog · Import attendance | `977:7007` |
+| Dialog · Set up evaluation period · Month / Quarter / Quarter · Overlap | `979:7165` / `1002:8143` / `1002:8538` |
+| Dialog · Print or export report | `985:7837` |
+| Dialog · Edit employment · Shift (shift start, end, working days) | `985:8000` |
+
+Shared sidebar `Sidebar · HRMS` (`244:2818`) now includes the PERFORMANCE group. Existing 900px-high frames show the Performance item partly under the footer, which reads as a scrolling menu.
+
+**Not drawn:** Custom period date picker, a Performance tab on the employee profile, a Development needs list screen. **Not screenshot-checked:** Loading state, Submit evaluation dialog, No access, Print or export dialog. **[OPEN]:** the "Pending HR approval" strip on KPI Setup (implies an approval status the requirements do not define; recommended to remove); the "Super Admin" label in the sidebar footer may change with the Portal role rename (BL-115).
