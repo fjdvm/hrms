@@ -687,7 +687,7 @@ function upcomingEvents(summary: DashboardSummary, now: Date, permittedPages: re
   const from = dayNumber(now);
   const day = (e: UpcomingEvent) => dayNumber(new Date(`${e.date}T00:00`));
   const time = (e: UpcomingEvent) => (e.kind === "training" ? e.startTime : "");
-  // Each Module's items go only to its holders: holidays and leave to Attendance, Trainings to Training and Development.
+  // Each Module's items go only to its holders: holidays and leave to Attendance, Trainings to Training.
   const owns = (e: UpcomingEvent) => permittedPages.includes(e.kind === "training" ? TRAINING_PAGE : ATTENDANCE_PAGE);
   const items = (summary.upcomingEvents ?? [])
     .filter(owns)

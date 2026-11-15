@@ -40,12 +40,27 @@ _Avoid_: Status (in the HRMS UI), step
 One written job offer made to one Application, with its own status: Draft, Sent, Accepted or Declined. An Application has at most one Offer. Declining moves the Application to Rejected, so it is a Decided offer; accepting leaves the Application at the Offer Stage until Staff mark it Hired. An Offer is created as a Draft for an Application at the Offer Stage with no Offer yet; a Draft can be edited or deleted, and sending it locks its terms. Its terms are monthly salary, start date, employment type, schedule, probation period and who the person reports to. They are delivered in the offer email and shown identically on the Applicant's Careers page; there is no offer letter file. An Offer's reply is final: Accepted and Declined cannot be changed, and the email they send cannot be edited or cancelled once queued. When Staff record a reply they choose when its email goes out; a reply the Applicant makes on Careers sends its email at once. When the Applicant withdraws the Application, its Offer (Draft, Sent or Accepted) shows as Withdrawn, is not counted as waiting for a reply, and allows no further action; it is listed under the Offers tab's Withdrawn tab only, never under All. A Sent Offer past its reply-by date stays Sent and is flagged overdue; nothing expires automatically, Staff can extend the date, and a reply can still be recorded. The Offers tab lists Offers by their status, whereas the Applicants tab lists Applications by their Stage.
 _Avoid_: Job offer (alone), Offer Stage (for the Offer itself)
 
+**Training**:
+One dated session that Staff with the Training Module create, with a title, description, objectives, one date and time, a Mode (Online or In person), either a venue or an online meeting link, and optional materials. A course that runs on several days or repeats is entered as separate Trainings. Its status is derived, not chosen: Upcoming until its date passes, Completed once its date has passed (Manila time), Cancelled when Staff cancel it with a reason. Rescheduling is not a status; a rescheduled Training stays Upcoming and shows "Rescheduled from" its old date. Once any Employee has a recorded result its date and time can no longer be edited.
+_Avoid_: Training program (in the UI), Program, course, class, session (for the record), Rescheduled (as a status)
+
+**Assigned employee**:
+An Employee assigned to one Training, with their own status that Staff set after the session from the paper sign-in sheet on the "Mark results" screen: Assigned, Completed (with a completion date), Did not attend, or Cancelled (set automatically when the Training is cancelled). Not the same as the Training's status. Staff may also record the Employee's feedback, a 1 to 5 rating and comments, typed from the paper feedback form. Only Employees can be assigned, never Staff.
+_Avoid_: Attendee, participant, trainee, attendance (for Mark results, which is unrelated to the Attendance Module)
+
+**Training notice**:
+An email to an Assigned employee about a Training: Assignment (sent when Staff assign), Schedule changed, Cancelled (both on by default, and Staff may turn them off), or Reminder (sent automatically 1 day before at 8:00 AM Manila time, and by Staff on demand). Each is Sent, Failed or Retrying (Queued until first tried); a failed one is retried 3 times about 15 minutes apart and then the Employee is listed as Not reached, with a Retry action. An Employee with no email is never sent one and is never counted as Failed or Not reached; they are flagged "Needs printed schedule", with "Reprint schedule" flagged after a change, and Staff print the schedule for them.
+_Avoid_: Notification (alone), alert
+
+**Training completion**:
+A summary card at the top of the Trainings page, not on the Dashboard and not affected by the Dashboard Range. It shows the Assigned employees marked Completed as a whole percent of the results due for Trainings held this month (Manila time), with "X of Y completed" beneath. Cancelled Assigned employees are not counted. It shows "Nothing to show yet", never 0%, when no Training was held this month.
+
 **Pre-employment Document**:
 One of the seven documents an Offer's checklist tracks before Staff may mark the person Hired: résumé, valid ID, NBI clearance, health certificate, SSS, PhilHealth, and Pag-IBIG MID and TIN. Each is Submitted, Requested or Not requested. One the Applicant already sent with the Application starts as Submitted, so Staff can only request the missing ones. An upload counts as Submitted at once, with no Staff approval; Staff can request it again, which resets it to Requested, and the new upload replaces the old file. Not the same as a Required Document, which is what a Job Posting asks for at application time.
 _Avoid_: Requirement, onboarding document
 
 **Employee record**:
-The record of a person who works for Bren Raphael's, created when Staff mark an Offer's Application as Hired. It carries over the Applicant's details, the Offer's terms and the Pre-employment Documents (their Digital 201 folder), and starts as Onboarding. It is created together with the move to Hired, never separately. Unrelated to Staff, even for the same person.
+The record of a person who works for Bren Raphael's, created when Staff mark an Offer's Application as Hired. It carries over the Applicant's details, the Offer's terms and the Pre-employment Documents (their Digital 201 folder), and starts as Onboarding. It is created together with the move to Hired, never separately. Unrelated to Staff, even for the same person. The person behind an Employee record is the **Employee** that Staff assign to Trainings; Employees never sign in to HRMS, and Staff are never assigned to a Training.
 _Avoid_: Employee (for the record), Staff
 
 **Source**:
@@ -69,7 +84,7 @@ The Module for employee attendance. Biometrics is not a separate Module and is n
 _Avoid_: Attendance Biometrics, Biometrics
 
 **Widget**:
-A summary block on the Dashboard that belongs to exactly one Module and is shown only to Staff who hold that Module. Until its Module has data, a Widget shows "Nothing to show yet". The Dashboard has no Widget of its own.
+A summary block on the Dashboard that belongs to exactly one Module (Upcoming Events is the one exception) and is shown only to Staff who hold that Module. Until its Module has data, a Widget shows "Nothing to show yet". The Dashboard has no Widget of its own.
 _Avoid_: Tile, panel
 
 **Key Summary Card**:
@@ -118,7 +133,7 @@ A kind of Widget, owned by Employee Information, that shows how the company's em
 A kind of Widget, owned by Employee Information, that lists the latest employee-record events such as hires, transfers and status changes. It does not draw on other Modules.
 
 **Upcoming Events**:
-A Detail Widget fed by more than one Module, shown to Staff who hold Attendance or Training and Development, each seeing only the items of the Modules they hold: approved leave and holidays from Attendance, and Upcoming Trainings from Training and Development (title, date and time, a "Training" tag, linked to the Training). Cancelled Trainings are left out. It lists the next 30 days (Manila time), at most 10 items, and shows "Nothing to show yet" when there are none. Attendance has no HRMS page yet, so today only Training holders see it. Unrelated to Upcoming interviews.
+A Detail Widget fed by more than one Module, shown to Staff who hold Attendance or Training, each seeing only the items of the Modules they hold: approved leave and holidays from Attendance, and Upcoming Trainings from Training (title, date and time, a "Training" tag, linked to the Training). Cancelled Trainings are left out. It lists the next 30 days (Manila time), at most 10 items, and shows "Nothing to show yet" when there are none. Attendance has no HRMS page yet, so today only Training holders see it. Unrelated to Upcoming interviews.
 
 **Hiring pipeline**:
 A Detail Widget, cross-cutting, shown to a holder of Applications, Interviews or Offers with each line gated by its own Module (Applied and Screening by Applications, Interview by Interviews, Offer and Hired by Offers), that shows how many Applications received in the Dashboard Range have ever reached each Stage (Applied, Screening, Interview, Offer, Hired), each as a percent of all Applications received. Rejected and Withdrawn are not bars. Its headline names how many applicants it takes to get one hire and the Stage where most drop off.

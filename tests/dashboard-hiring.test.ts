@@ -562,7 +562,7 @@ describe("Module access to Dashboard Widgets", () => {
     expect(link(["/interviews", "/applicants"])).toContain("/applicants");
   });
 
-  it("shows Upcoming Events to a holder of Attendance or Training and Development, and to no one else", () => {
+  it("shows Upcoming Events to a holder of Attendance or Training, and to no one else", () => {
     const events = (pages: string[]) => dashboardLayoutFor(pages, {}, RANGE, NOW).rows.flat().filter((w) => w.id === "upcoming-events").map((w) => [w.id, w.module]);
     expect(events(["/training"])).toEqual([["upcoming-events", null]]);
     expect(events(["/attendance"])).toEqual([["upcoming-events", null]]);
