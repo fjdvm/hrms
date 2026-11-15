@@ -53,7 +53,7 @@ An email to an Assigned employee about a Training: Assignment (sent when Staff a
 _Avoid_: Notification (alone), alert
 
 **Training completion**:
-A summary card at the top of the Trainings page, not on the Dashboard and not affected by the Dashboard Range. It shows the Assigned employees marked Completed as a whole percent of the results due for Trainings held this month (Manila time), with "X of Y completed" beneath. Cancelled Assigned employees are not counted. It shows "Nothing to show yet", never 0%, when no Training was held this month.
+A summary card at the top of the Trainings page, not on the Dashboard and not affected by the Dashboard Range. It shows the Assigned employees marked Completed as a whole percent of the results due for Trainings held this month (Manila time), with "X of Y completed" beneath. Cancelled Assigned employees are not counted. It shows "Nothing to show yet", never 0%, when no Training was held this month. The same measure, for one Employee and one Evaluation period, is the Training completion KPI in Performance: only Trainings whose date has passed within the period count, Cancelled ones are excluded, Did not attend and not yet marked count as not completed, and with nothing due it is "Not applicable", never 0%.
 
 **Performance**:
 The Module in which Staff evaluate Employees. Anyone who holds the Performance Module can do everything in it: rate, submit, reopen, set up KPIs, import attendance and flag development needs. There is no separate manager permission and no role names are checked; every action records which Staff member did it.
