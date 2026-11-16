@@ -41,8 +41,12 @@ const PAGES: [path: string, module: string][] = [
   ["employee-information", "Employee Information"],
   ["employee-information/[id]", "Employee Information"],
   ["employee-onboarding", "Employee Onboarding"],
-  ["performance", "Performance"],
 ];
+
+/** Pages that render their own No access screen, with the component they show, so Staff without the Module keep the shell. */
+const NO_ACCESS: Record<string, { module: string; screen: string }> = {
+  performance: { module: "Performance", screen: "PerformanceNoAccess" },
+};
 
 /** Training pages render their own No access screen, so Staff without the Module keep the shell. */
 const TRAINING_PAGES = ["training", "training/new", "training/[id]", "training/[id]/log", "training/[id]/results", "training/calendar", "training/history"];
@@ -74,7 +78,7 @@ afterEach(() => {
 describe("Module access to each page", { timeout: 60_000 }, () => {
   it("covers every page that exists", async () => {
     const found = Object.keys(pageFiles).map((file) => file.replace("../app/(hrms)/", "").replace("/page.tsx", ""));
-    expect(found.sort()).toEqual([...PAGES.map(([path]) => path), ...TRAINING_PAGES].sort());
+    expect(found.sort()).toEqual([...PAGES.map(([path]) => path), ...TRAINING_PAGES, ...Object.keys(NO_ACCESS)].sort());
   });
 
   it("covers the Training pages, which show a No access screen in the shell instead of redirecting", () => {
@@ -90,6 +94,18 @@ describe("Module access to each page", { timeout: 60_000 }, () => {
 
   it.each(TRAINING_PAGES)("%s opens for Staff holding only the Training Module", async (path) => {
     state.cookie = portal.signIn(ada, ["Training"]);
+    expect(await run(path)).not.toBe("REDIRECT /no-access");
+  });
+
+  it.each(Object.entries(NO_ACCESS))("%s shows No access to Staff without its Module", async (path, { module, screen }) => {
+    state.cookie = portal.signIn(ada, ALL.filter((name) => name !== module));
+    const { default: Page } = await pageFiles[`../app/(hrms)/${path}/page.tsx`]();
+    const element = (await Page(props)) as { type: { name: string } };
+    expect(element.type.name).toBe(screen);
+  });
+
+  it.each(Object.entries(NO_ACCESS))("%s opens for Staff holding only its Module", async (path, { module }) => {
+    state.cookie = portal.signIn(ada, [module]);
     expect(await run(path)).not.toBe("REDIRECT /no-access");
   });
 
