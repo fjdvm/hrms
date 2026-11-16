@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { CalendarPlus, Layers } from "lucide-react";
+import { CalendarPlus, Layers, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
@@ -124,6 +124,9 @@ function Form({ today, periods, nonWorkingDates, sets, kpis, onDone }: Props & {
   );
 }
 
+/** What the dialog needs from the page, apart from how it is opened. */
+export type SetUpPeriodData = Pick<Props, "today" | "periods" | "nonWorkingDates" | "sets" | "kpis">;
+
 type Props = {
   /** Today in Manila, "YYYY-MM-DD", chosen by the server so the first render matches. */
   today: string;
@@ -133,6 +136,11 @@ type Props = {
   sets: WeightSet[];
   kpis: Kpi[];
   defaultOpen?: boolean;
+  /** Controls the dialog from outside, for a trigger that lives elsewhere (the period selector's menu). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** The button that opens it: the header's, the empty state's with a plus, or none when `open` is controlled. */
+  trigger?: "header" | "plus" | "none";
 };
 
 /**
@@ -140,15 +148,20 @@ type Props = {
  * (read-only, from the company calendar) and the weight set that applies. A range that overlaps another period shows the error on
  * the Period field and keeps Open period disabled.
  */
-export function SetUpPeriodDialog({ defaultOpen = false, ...props }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+export function SetUpPeriodDialog({ defaultOpen = false, open: controlled, onOpenChange, trigger = "header", ...props }: Props) {
+  const [inner, setInner] = useState(defaultOpen);
+  const open = controlled ?? inner;
+  const change = (next: boolean) => { if (controlled === undefined) setInner(next); onOpenChange?.(next); };
+  const Icon = trigger === "plus" ? Plus : CalendarPlus;
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button className="h-auto gap-[6px] rounded-lg bg-[#5b2a86] px-[14px] py-[9px] font-medium shadow-none"><CalendarPlus className="size-4" aria-hidden />Set up period</Button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={change}>
+      {trigger !== "none" && (
+        <DialogTrigger asChild>
+          <Button className="h-auto gap-[6px] rounded-lg bg-[#5b2a86] px-[14px] py-[9px] font-medium shadow-none"><Icon className="size-4" aria-hidden />Set up period</Button>
+        </DialogTrigger>
+      )}
       <DialogFrame title="Set up evaluation period" description="Dates and grace period">
-        <Form {...props} onDone={() => setOpen(false)} />
+        <Form {...props} onDone={() => change(false)} />
       </DialogFrame>
     </Dialog>
   );
