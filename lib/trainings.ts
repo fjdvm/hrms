@@ -3,7 +3,7 @@ import { accessFor } from "./portal/access";
 import { assignmentEmail, queueNotice, reminderEmail, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
-  TRAINING_TABS, cancelledEmail, completionOf, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
+  TRAINING_TABS, cancelledEmail, resultsDue, resultsNotRecorded, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
   HISTORY_TABS, MAX_SCHEDULE_TRAININGS, historyRowsFor, type PrintableTraining, type ScheduleItem, type ScheduleSheet, type HistoryEmployee, type HistoryRow, type HistoryTab, type TrainingHistory,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
   type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type ReminderResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
@@ -161,21 +161,19 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
           id: row.id, title: row.title, trainer: row.trainer, date: row.date, startTime: row.startTime, endTime: row.endTime,
           mode: row.mode, rescheduledFrom: row.rescheduledFrom, hasMaterials: row.hasMaterials,
           assigned: row.assigned, completed: row.completed,
-          resultsNotRecorded: status === "Completed" && row.due > 0 && row.recorded === 0, status,
+          resultsNotRecorded: resultsNotRecorded(row, clock), status,
         };
       });
       const counts: Record<TrainingTab, number> = { All: items.length, Upcoming: 0, Past: 0, Cancelled: 0 };
       for (const item of items) counts[tabOf(item.status)] += 1;
       const today = manilaToday(clock);
       const month = today.slice(0, 7);
-      // Held = its date has passed (status Completed). Results due = Assigned employees who are not Cancelled.
-      const held = rows.filter((row, index) => row.date.startsWith(month) && items[index].status === "Completed");
-      const dueCount = held.reduce((sum, row) => sum + row.due, 0);
-      const completedCount = held.reduce((sum, row) => sum + row.completed, 0);
+      // The same definition of results due Performance's Training completion reads (see resultsDue).
+      const { completion } = resultsDue(rows, clock, (date) => date.startsWith(month));
       return {
         counts,
         month: formatMonth(today),
-        completion: completionOf(completedCount, dueCount),
+        completion,
         needResults: items.filter((item) => item.date.startsWith(month) && item.resultsNotRecorded)
           .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`) || a.id - b.id).map((item) => ({ id: item.id, title: item.title })),
         thisMonth: items.filter((item) => item.date.startsWith(month)).length,

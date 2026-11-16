@@ -224,6 +224,28 @@ export type TrainingCompletion = { percent: number; completed: number; due: numb
 /** Null when nothing is due, so the card says "Nothing to show yet" and never 0%. */
 export const completionOf = (completed: number, due: number): TrainingCompletion | null =>
   due > 0 ? { percent: Math.round((completed / due) * 100), completed, due } : null;
+/**
+ * One Training's figures, the same for every reader: `due` is its Assigned employees who are not Cancelled (the results
+ * due), `completed` those marked Completed, `recorded` those with any result marked (Completed or Did not attend).
+ */
+export type TrainingTotals = { date: string; cancelled: boolean; due: number; completed: number; recorded: number };
+
+/** A Training that has been held, has results due, and has no result recorded yet: its sign-in sheet is not marked. */
+export const resultsNotRecorded = (training: TrainingTotals, now: Date = new Date()) =>
+  trainingStatus(training, now) === "Completed" && training.due > 0 && training.recorded === 0;
+
+/**
+ * The one definition of "results due", shared by the Trainings card and Performance's Training completion so they never
+ * disagree. Only Trainings that have been held count (their date has passed in Manila time and they are not Cancelled);
+ * Cancelled Assigned employees are not due; Did not attend and results not marked yet count as not completed. Nothing due
+ * gives a null completion, never 0%.
+ */
+export function resultsDue(trainings: readonly TrainingTotals[], now: Date = new Date(), inRange: (date: string) => boolean = () => true) {
+  const held = trainings.filter((training) => inRange(training.date) && trainingStatus(training, now) === "Completed");
+  const due = held.reduce((sum, training) => sum + training.due, 0);
+  const completed = held.reduce((sum, training) => sum + training.completed, 0);
+  return { completed, due, completion: completionOf(completed, due), notMarked: held.filter((training) => resultsNotRecorded(training, now)).length };
+}
 /** "November 2026" from a Manila "YYYY-MM-DD" date. */
 export const formatMonth = (day: string) =>
   new Date(`${day.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });

@@ -2,6 +2,7 @@ import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
 import type { Staff } from "./portal/client";
 import { kpiModule, type Actor } from "./performance-kpis";
+import { trainingCompletionModule } from "./performance-training";
 
 /**
  * The Performance interface: the single seam every Performance ticket extends. It owns the access rule and composes the
@@ -10,6 +11,7 @@ import { kpiModule, type Actor } from "./performance-kpis";
  */
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
+export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
 
 export class PerformanceError extends Error {
   constructor(public readonly reason: "invalid" | "unavailable" | "denied") {
@@ -24,9 +26,8 @@ export type PerformanceAccess = { decision: "allowed"; staff: Staff } | { decisi
  * database and the clock. Later domain modules take the same `db` and `now`.
  */
 export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date()) {
-  // Held for the domain modules later tickets add.
-  void now;
   const kpis = kpiModule(db);
+  const training = trainingCompletionModule(db, now);
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -57,5 +58,10 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     saveWeightSet: async (input: { id?: number; position?: string | null; weights: unknown }) => kpis.saveWeightSet(await acting(), input),
     /** The set that scores an Employee with this position, with its name; the default when no position set matches. */
     weightSetFor: async (position: string | null | undefined) => { await acting(); return kpis.weightSetFor(position); },
+    /**
+     * One Employee's Training completion for a date range (Manila "YYYY-MM-DD", both ends included), read with the same rules
+     * as the Trainings card. Needs Performance only, and returns figures only, never the Trainings themselves.
+     */
+    trainingCompletion: async (employeeId: number, range: { from: string; to: string }) => { await acting(); return training.trainingCompletion(employeeId, range); },
   };
 }
