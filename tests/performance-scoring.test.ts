@@ -273,3 +273,29 @@ describe("the engine is pure", () => {
     expect(source).not.toMatch(/new Date\(|Date\.now\(|performance\.now\(/);
   });
 });
+
+describe("an Employee HR confirmed had no attendance", () => {
+  it("counts as full absence: Attendance rate 0, Punctuality and Full shift Not applicable, and no no-attendance issue", () => {
+    const scoring = scoreEvaluation(input({ rows: [], noAttendanceConfirmed: true }));
+
+    expect(scoring.issues).toEqual([]);
+    expect(scoring.counts).toMatchObject({ counted: 10, present: 0 });
+    expect(result(scoring, "attendanceRate")).toMatchObject({ status: "scored", result: 0, points: 0 });
+    expect(result(scoring, "punctuality")).toMatchObject({ status: "not-applicable", reason: "no-present-days" });
+    expect(result(scoring, "fullShift")).toMatchObject({ status: "not-applicable", reason: "no-present-days" });
+    // Attendance 30, Training 15 and Rating 15 remain: 60 of 100, exactly at the floor, so it is scored: (0 x 30 + 100 x 15 + 85 x 15) / 60.
+    expect(scoring).toMatchObject({ outcome: "scored", score: 46.3, weightRemainingPercent: 60 });
+  });
+
+  it("is ignored once there are rows, and does nothing without counted days", () => {
+    expect(scoreEvaluation(input({ noAttendanceConfirmed: true }))).toEqual(scoreEvaluation(input()));
+    expect(scoreEvaluation(input({ rows: [], scheduledDays: [], noAttendanceConfirmed: true })).results.find((r) => r.kpi === "attendanceRate")).toMatchObject({ status: "not-applicable" });
+  });
+
+  it("is not assumed: with no rows and no confirmation it is still flagged and left out", () => {
+    const scoring = scoreEvaluation(input({ rows: [] }));
+
+    expect(scoring.issues).toEqual([{ kind: "no-attendance" }]);
+    expect(result(scoring, "attendanceRate")).toMatchObject({ status: "not-applicable", reason: "no-attendance" });
+  });
+});

@@ -218,5 +218,5 @@ export function periodsModule(db: Database) {
     };
   }
 
-  return { listPeriods, openPeriod, listNonWorkingDates, addNonWorkingDate, excuseDays, scheduleFor };
+  return { listPeriods, openPeriod, listNonWorkingDates, addNonWorkingDate, excuseDays, scheduleFor, requirePeriod };
 }

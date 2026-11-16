@@ -15,7 +15,9 @@
  *                 are simply the counted days that are not present.
  *   issue         a counted day with a time-in and no time-out: not present, and returned so HR can resolve it
  *                 (re-import, mark Excused, or mark Absent). An Employee with no rows at all is also an issue; they
- *                 are never scored as fully absent by accident.
+ *                 are never scored as fully absent by accident, only when HR has confirmed no attendance for the
+ *                 period (`noAttendanceConfirmed`): then every counted day is an absence, Attendance rate is 0, and
+ *                 Punctuality and Full shift are Not applicable because nobody was present.
  *
  * KPI results, each a percentage from 0 to 100:
  *   Attendance rate     present days / counted days x 100.
@@ -60,6 +62,8 @@ export type ScoringInput = {
   rating: number | null;
   /** The weight of each KPI in the applied weight set; the set's total is what the weights are rescaled to. */
   weights: Readonly<Record<KpiId, number>>;
+  /** HR confirmed this Employee had no attendance for the period. It only matters when there are no rows at all. */
+  noAttendanceConfirmed?: boolean;
 };
 
 export type NotApplicableReason = "no-attendance" | "no-present-days" | "no-training-due" | "no-rating";
@@ -116,7 +120,8 @@ export function scoreEvaluation(input: ScoringInput): Scoring {
   let present = 0;
   let late = 0;
   let earlyOut = 0;
-  if (rows.length === 0) issues.push({ kind: "no-attendance" });
+  const confirmedAbsent = input.noAttendanceConfirmed === true && rows.length === 0;
+  if (rows.length === 0 && !confirmedAbsent) issues.push({ kind: "no-attendance" });
   for (const day of counted) {
     const row = byDate.get(day);
     if (!row) continue;
@@ -130,7 +135,7 @@ export function scoreEvaluation(input: ScoringInput): Scoring {
   }
 
   const percent = (part: number, whole: number) => (part / whole) * 100;
-  const noAttendance = rows.length === 0 || counted.length === 0;
+  const noAttendance = (rows.length === 0 && !confirmedAbsent) || counted.length === 0;
   type Raw = { result: number } | { reason: NotApplicableReason };
   const raw: Record<KpiId, Raw> = {
     attendanceRate: noAttendance ? { reason: "no-attendance" } : { result: percent(present, counted.length) },

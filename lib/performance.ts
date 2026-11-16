@@ -4,6 +4,7 @@ import type { Staff } from "./portal/client";
 import { kpiModule, type Actor } from "./performance-kpis";
 import { trainingCompletionModule } from "./performance-training";
 import { periodsModule, type CalendarInput, type OpenPeriodInput } from "./performance-periods";
+import { attendanceModule, type Resolution } from "./performance-attendance";
 
 /**
  * The Performance interface: the single seam every Performance ticket extends. It owns the access rule and composes the
@@ -13,6 +14,8 @@ import { periodsModule, type CalendarInput, type OpenPeriodInput } from "./perfo
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { AttendanceError, type AttendanceImport, type AttendanceIssue, type AttendancePreview, type AttendanceProblem, type AttendanceState, type EmployeeWithoutRecords, type Resolution } from "./performance-attendance";
+export { REJECTION_REASONS, type RawAttendanceRow, type RejectedRow, type RowRejection } from "./performance-attendance-rows";
 export { PeriodError, type CalendarEntry, type CalendarInput, type OpenPeriodInput, type Period, type PeriodProblem, type Schedule } from "./performance-periods";
 
 export class PerformanceError extends Error {
@@ -31,6 +34,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const kpis = kpiModule(db);
   const training = trainingCompletionModule(db, now);
   const periods = periodsModule(db);
+  const attendance = attendanceModule(db, periods);
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -78,5 +82,17 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     excuseDays: async (employeeId: number, periodId: number, dates: readonly string[]) => periods.excuseDays(await acting(), employeeId, periodId, dates),
     /** An Employee's scheduled and excused days in a period, or not scorable when they have no shift. */
     scheduleFor: async (employeeId: number, periodId: number) => { await acting(); return periods.scheduleFor(employeeId, periodId); },
+    /** What a batch of normalised attendance rows would do, with nothing saved: usable and rejected rows, coverage and who has no records. */
+    previewAttendance: async (input: { periodId: number; rows: unknown }) => { await acting(); return attendance.previewAttendance(input); },
+    /** Saves a confirmed batch: only the usable rows, replacing earlier rows for the same Employee and date, with one import record. */
+    importAttendance: async (input: { fileName: string; sourceRef?: string | null; rows: unknown }) => attendance.importAttendance(await acting(), input),
+    /** The most recent imports: who, when, the file name and the counts. */
+    listAttendanceImports: async () => { await acting(); return attendance.listImports(); },
+    /** An Employee's rows for scoring in a period, their open issues, and whether attendance is imported. Never shown as an attendance record. */
+    attendanceFor: async (employeeId: number, periodId: number) => { await acting(); return attendance.attendanceFor(employeeId, periodId); },
+    /** Resolves a day with a time-in and no time-out as Excused (optional reason) or Absent (reason required). */
+    resolveDay: async (employeeId: number, periodId: number, date: string, resolution: Resolution) => attendance.resolveDay(await acting(), employeeId, periodId, date, resolution),
+    /** Confirms an Employee had no attendance in the period, with a required reason. It counts as full absence. */
+    confirmNoAttendance: async (employeeId: number, periodId: number, reason: string) => attendance.confirmNoAttendance(await acting(), employeeId, periodId, reason),
   };
 }
