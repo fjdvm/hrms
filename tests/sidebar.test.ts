@@ -13,13 +13,14 @@ const layout = (pages: string[]) =>
   }));
 
 describe("sidebar", () => {
-  it("lists Dashboard, RECRUITMENT, HIRING, EMPLOYEE, then the TRAINING section", () => {
+  it("lists Dashboard, RECRUITMENT, HIRING, EMPLOYEE, TRAINING, then the PERFORMANCE section", () => {
     expect(layout(ALL_PAGES)).toEqual([
       { label: undefined, items: ["Dashboard"] },
       { label: "RECRUITMENT", items: ["Job Postings", "Applicants"] },
       { label: "HIRING", items: ["Interviews", "Offers"] },
       { label: "EMPLOYEE", items: ["Information", "Onboarding"] },
       { label: "TRAINING", items: ["Trainings", "Calendar", "Training history"] },
+      { label: "PERFORMANCE", items: ["Performance"] },
     ]);
   });
 
@@ -31,15 +32,16 @@ describe("sidebar", () => {
     expect(layout(["/employee-information"])).toEqual([{ label: "EMPLOYEE", items: ["Information"] }]);
     expect(layout(["/employee-onboarding"])).toEqual([{ label: "EMPLOYEE", items: ["Onboarding"] }]);
     expect(layout(["/training"])).toEqual([{ label: "TRAINING", items: ["Trainings", "Calendar", "Training history"] }]);
+    expect(layout(["/performance"])).toEqual([{ label: "PERFORMANCE", items: ["Performance"] }]);
   });
 
   it("hides the groups whose Modules are not held, and lists no TRAINING group without the Training Module", () => {
     const pages = ALL_PAGES.filter((href) => !["/job-postings", "/applicants", "/interviews", "/offers"].includes(href));
 
-    expect(layout(pages).flatMap((s) => s.items)).toEqual(["Dashboard", "Information", "Onboarding", "Trainings", "Calendar", "Training history"]);
+    expect(layout(pages).flatMap((s) => s.items)).toEqual(["Dashboard", "Information", "Onboarding", "Trainings", "Calendar", "Training history", "Performance"]);
     expect(layout(pages).map((s) => s.label)).not.toContain("RECRUITMENT");
     expect(layout(pages).map((s) => s.label)).not.toContain("HIRING");
-    expect(layout(["/performance"])).toEqual([]);
+    expect(layout(pages.filter((href) => href !== "/performance")).map((s) => s.label)).not.toContain("PERFORMANCE");
     expect(layout(pages.filter((href) => href !== "/training")).map((s) => s.label)).not.toContain("TRAINING");
   });
 

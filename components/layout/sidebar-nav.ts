@@ -14,6 +14,7 @@ import {
   Users2,
   GraduationCap,
   History,
+  BarChart3,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MODULES, type Module } from "@/lib/modules";
@@ -42,7 +43,7 @@ export interface NavSection {
   items: NavItem[];
 }
 
-/** The sidebar, top to bottom. Performance has a Module but no HRMS pages to list yet. */
+/** The sidebar, top to bottom. */
 export const sidebarSections: NavSection[] = [
   {
     items: [
@@ -76,6 +77,12 @@ export const sidebarSections: NavSection[] = [
       { name: "Trainings", href: "/training", icon: GraduationCap, module: "Training" },
       { name: "Calendar", href: "/training/calendar", icon: CalendarDays, module: "Training" },
       { name: "Training history", href: "/training/history", icon: History, module: "Training" },
+    ],
+  },
+  {
+    label: "PERFORMANCE",
+    items: [
+      { name: "Performance", href: "/performance", icon: BarChart3, module: "Performance" },
     ],
   },
 ];
