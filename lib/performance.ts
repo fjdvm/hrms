@@ -3,6 +3,7 @@ import { accessFor } from "./portal/access";
 import type { Staff } from "./portal/client";
 import { kpiModule, type Actor } from "./performance-kpis";
 import { trainingCompletionModule } from "./performance-training";
+import { periodsModule, type CalendarInput, type OpenPeriodInput } from "./performance-periods";
 
 /**
  * The Performance interface: the single seam every Performance ticket extends. It owns the access rule and composes the
@@ -12,6 +13,7 @@ import { trainingCompletionModule } from "./performance-training";
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { PeriodError, type CalendarEntry, type CalendarInput, type OpenPeriodInput, type Period, type PeriodProblem, type Schedule } from "./performance-periods";
 
 export class PerformanceError extends Error {
   constructor(public readonly reason: "invalid" | "unavailable" | "denied") {
@@ -28,6 +30,7 @@ export type PerformanceAccess = { decision: "allowed"; staff: Staff } | { decisi
 export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date()) {
   const kpis = kpiModule(db);
   const training = trainingCompletionModule(db, now);
+  const periods = periodsModule(db);
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -63,5 +66,17 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
      * as the Trainings card. Needs Performance only, and returns figures only, never the Trainings themselves.
      */
     trainingCompletion: async (employeeId: number, range: { from: string; to: string }) => { await acting(); return training.trainingCompletion(employeeId, range); },
+    /** The Evaluation periods, latest first. */
+    listPeriods: async () => { await acting(); return periods.listPeriods(); },
+    /** Opens a company-wide period (Month, Quarter or Custom). One that overlaps another by date is refused, naming it. */
+    openPeriod: async (input: OpenPeriodInput) => periods.openPeriod(await acting(), input),
+    /** The company calendar's non-working dates, optionally within a range of dates. */
+    listNonWorkingDates: async (range?: { from: string; to: string }) => { await acting(); return periods.listNonWorkingDates(range); },
+    /** Adds a holiday, closure or other non-working date for the whole company. The same date cannot be added twice. */
+    addNonWorkingDate: async (input: CalendarInput) => periods.addNonWorkingDate(await acting(), input),
+    /** Records excused days for an Employee in a period. They are subtracted from the scheduled days when the score is worked out. */
+    excuseDays: async (employeeId: number, periodId: number, dates: readonly string[]) => periods.excuseDays(await acting(), employeeId, periodId, dates),
+    /** An Employee's scheduled and excused days in a period, or not scorable when they have no shift. */
+    scheduleFor: async (employeeId: number, periodId: number) => { await acting(); return periods.scheduleFor(employeeId, periodId); },
   };
 }
