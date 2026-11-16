@@ -8,7 +8,9 @@ import { PageHeader, ProfileColumns } from "@/components/hiring/parts";
 import type { EvaluationDetail } from "@/lib/performance-evaluations";
 import { dayMonth } from "@/lib/performance-evaluation-view";
 import { Banner, Checklist, KpiResults, PeriodCard, StatusBadge } from "./evaluation-parts";
+import { AttendanceIssuesCard } from "./attendance-issues-card";
 import { RatingDialog } from "./rating-dialog";
+import { ResolveIssueDialog, type ResolveTarget } from "./resolve-issue-dialog";
 
 const NO_RATING = "No rating or comments yet. Enter a rating from 0 to 100 and comments, then submit.";
 
@@ -36,6 +38,7 @@ function EvaluationCard({ detail }: { detail: EvaluationDetail }) {
  */
 export function EvaluationView({ detail, onSubmit }: { detail: EvaluationDetail; /** Wired by the Submit evaluation dialog; without it the button is shown but cannot act. */ onSubmit?: () => void }) {
   const [ratingOpen, setRatingOpen] = useState(false);
+  const [resolving, setResolving] = useState<ResolveTarget | null>(null);
   const subtitle = [detail.employeeNumber, detail.position, detail.branch, detail.period.name].join(" · ");
   const canEditRating = !detail.submitted;
   const canSubmit = detail.submit.unlocked && onSubmit !== undefined;
@@ -53,6 +56,7 @@ export function EvaluationView({ detail, onSubmit }: { detail: EvaluationDetail;
         main={
           <>
             <PeriodCard detail={detail} />
+            {detail.issues.length > 0 && !detail.submitted && <AttendanceIssuesCard issues={detail.issues} onResolve={setResolving} />}
             <KpiResults detail={detail} action={canEditRating ? (
               <Button type="button" variant="outline" onClick={() => setRatingOpen(true)} className="h-auto gap-[6px] rounded-lg border-[#e6e1ee] px-[12px] py-[7px] shadow-none">
                 <ClipboardCheck aria-hidden className="size-4" />{hasRating ? "Edit rating" : "Enter rating"}
@@ -63,6 +67,8 @@ export function EvaluationView({ detail, onSubmit }: { detail: EvaluationDetail;
         }
         aside={<Checklist detail={detail} />}
       />
+      <ResolveIssueDialog employeeId={detail.employeeId} periodId={detail.period.id} employeeName={detail.name} periodName={detail.period.name}
+        countedDays={detail.scheduledDays.length - detail.excusedDays.length} target={resolving} onClose={() => setResolving(null)} />
       {canEditRating && (
         <RatingDialog key={detail.rating?.savedAt ?? "new"} employeeId={detail.employeeId} periodId={detail.period.id} current={detail.rating ? { value: detail.rating.value, comments: detail.rating.comments } : undefined} open={ratingOpen} onOpenChange={setRatingOpen} />
       )}

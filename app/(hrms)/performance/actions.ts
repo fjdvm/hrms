@@ -2,9 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { KpiError, PerformanceError, PeriodError, RatingError, RosterError, type CalendarInput, type OpenPeriodInput } from "@/lib/performance";
+import { AttendanceError, KpiError, PerformanceError, PeriodError, RatingError, RosterError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
+import { attendanceMessage } from "@/lib/performance-attendance-terms";
 import { ratingMessage } from "@/lib/performance-rating-terms";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { performanceForRequest } from "@/lib/portal/performance";
@@ -19,6 +20,7 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
+    if (error instanceof AttendanceError) return { ok: false, error: attendanceMessage(error.problem) };
     if (error instanceof RatingError) return { ok: false, error: ratingMessage(error.problem) };
     if (error instanceof RosterError) return { ok: false, error: ratingMessage(error.problem) };
     if (error instanceof PerformanceError) {
@@ -71,4 +73,19 @@ export async function removeNonWorkingDate(id: number): Promise<PeriodActionResu
  */
 export async function saveEvaluationRating(employeeId: number, periodId: number, input: { rating: number; comments: string }): Promise<PeriodActionResult> {
   return run(async () => (await performanceForRequest()).saveRating(employeeId, periodId, input), ["/performance", `/performance/evaluation/${employeeId}`]);
+}
+
+const evaluationPaths = (employeeId: number) => ["/performance", `/performance/evaluation/${employeeId}`];
+
+/**
+ * Resolves a day with a time-in and no time-out as Excused (optional reason) or Absent (reason required). The record is never edited.
+ * The page is refreshed so the card, the checklist, the banner and the score follow.
+ */
+export async function resolveAttendanceDay(employeeId: number, periodId: number, date: string, resolution: Resolution): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).resolveDay(employeeId, periodId, date, resolution), evaluationPaths(employeeId));
+}
+
+/** Confirms an Employee had no attendance in the period, with a required reason. It counts as full absence. */
+export async function confirmNoAttendance(employeeId: number, periodId: number, reason: string): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).confirmNoAttendance(employeeId, periodId, reason), evaluationPaths(employeeId));
 }

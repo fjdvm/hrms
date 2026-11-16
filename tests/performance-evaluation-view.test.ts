@@ -29,9 +29,9 @@ describe("the banner", () => {
   it("names every missing check, with how many attendance issues are open", () => {
     const submit = submitReadiness({ attendanceImported: false, shiftSet: false, openIssues: 2, ratingEntered: false });
     expect(bannerText({ ...base, submit, attendance: { imported: false, confirmedNone: false, openIssues: 2 } }))
-      .toBe("Submit is locked: attendance is not imported yet, the shift is not set, 2 attendance issues are not resolved and the rating is not entered yet.");
+      .toBe("Submit is locked: attendance is not imported yet, the shift is not set, 2 attendance issues are open and the rating is not entered yet. Resolve each one below, or re-import a corrected file.");
     const one = submitReadiness({ attendanceImported: true, shiftSet: true, openIssues: 1, ratingEntered: true });
-    expect(bannerText({ ...base, submit: one, attendance: { imported: true, confirmedNone: false, openIssues: 1 } })).toMatch(/^Submit is locked: 1 attendance issue is not resolved\./);
+    expect(bannerText({ ...base, submit: one, attendance: { imported: true, confirmedNone: false, openIssues: 1 } })).toMatch(/^Submit is locked: 1 attendance issue is open\. Resolve each one below, or re-import a corrected file\. Attendance is imported/);
   });
 
   it("says a submitted evaluation is locked", () => {
@@ -93,7 +93,7 @@ describe("the checklist and period card", () => {
       ["Attendance issues resolved", true, "No open issues"], ["Rating entered", true, "85 / 100 · entered 30 Nov"],
     ]);
     const open = checklist({ ...base, rating: null, attendance: { imported: true, confirmedNone: false, openIssues: 3 }, submit: submitReadiness({ attendanceImported: true, shiftSet: true, openIssues: 3, ratingEntered: false }) });
-    expect(open[2]).toMatchObject({ passed: false, detail: "3 open issues" });
+    expect(open[2]).toMatchObject({ passed: false, detail: "3 open · see Attendance issues" });
     expect(open[3]).toMatchObject({ passed: false, detail: "Not entered yet" });
   });
 
