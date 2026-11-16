@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { Suspense } from "react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PAGE, PageHeader } from "@/components/hiring/parts";
 import { PerformanceNoAccess } from "@/components/performance/no-access";
@@ -20,7 +22,9 @@ export default async function Page() {
 
   return (
     <div className={PAGE}>
-      <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE} />
+      <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE}>
+        <Button asChild variant="outline" className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] shadow-none"><Link href="/performance/kpis">KPI setup</Link></Button>
+      </PageHeader>
       <Suspense fallback={<PerformanceListSkeleton />}>
         <EvaluationList />
       </Suspense>
