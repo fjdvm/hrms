@@ -45,7 +45,7 @@ export function headerSubtitle(employee: EmployeeDetail) {
 const FIELD_LABELS: Record<string, string> = {
   name: "Full name", email: "Email", birthday: "Birthday", sex: "Sex", civilStatus: "Civil status", mobile: "Mobile", homeAddress: "Home address",
   position: "Position", department: "Department", branch: "Branch", employmentType: "Employment type", startDate: "Start date",
-  probationEndDate: "Probation ends", reportsTo: "Reports to", schedule: "Work schedule", relationship: "Relationship",
+  probationEndDate: "Probation ends", reportsTo: "Reports to", schedule: "Work schedule", shiftStart: "Shift start", shiftEnd: "Shift end", workingDays: "Working days", relationship: "Relationship",
   sss: "SSS number", philhealth: "PhilHealth number", pagibigMid: "Pag-IBIG MID", tin: "TIN", monthlyPay: "Monthly pay", status: "Status",
   terms: "Terms",
 };

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { EmployeeError, type EmployeeSection, type GovernmentIds } from "@/lib/employees";
+import { EmployeeError, type EmployeeSection, type GovernmentIds, type ShiftProblem } from "@/lib/employees";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { employeesForRequest } from "@/lib/portal/employees";
 
@@ -15,8 +15,15 @@ const MESSAGES: Record<EmployeeError["reason"], string> = {
   denied: "", invalid: "",
 };
 
+const SHIFT_MESSAGES: Record<ShiftProblem, string> = {
+  "shift-incomplete": "Set the Shift start, Shift end and Working days together, or clear all three.",
+  "shift-order": "Shift end must be after Shift start. Overnight shifts are not supported.",
+  "shift-days": "Choose at least one Working day.",
+};
+
 function fail(error: unknown): string {
   if (!(error instanceof EmployeeError)) throw error;
+  if (error.detail) return SHIFT_MESSAGES[error.detail];
   if (error.reason === "denied") redirect(NO_ACCESS_PATH);
   if (error.reason === "invalid") redirect(LOGIN_PATH);
   return MESSAGES[error.reason];
