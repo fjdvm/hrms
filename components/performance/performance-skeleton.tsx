@@ -4,11 +4,13 @@ import { PAGE, PageHeader } from "@/components/hiring/parts";
 
 const ROWS = 6;
 
-/** The Performance page while it loads: the static header, tabs and a table card sized like the list. Shared by loading.tsx and the Suspense fallback. */
-export function PerformanceSkeleton() {
+export const PERFORMANCE_TITLE = "Performance";
+export const PERFORMANCE_SUBTITLE = "Evaluate each Employee against their KPIs";
+
+/** The tabs and table card of the Performance list while its data loads: the Suspense fallback under the static header. */
+export function PerformanceListSkeleton() {
   return (
-    <div className={PAGE} aria-busy="true" aria-label="Loading performance">
-      <PageHeader title="Performance" subtitle="Evaluate each Employee against their KPIs" />
+    <>
       <div className="flex gap-xs">
         {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[36px] w-[88px] rounded-lg" />)}
       </div>
@@ -24,6 +26,16 @@ export function PerformanceSkeleton() {
           </div>
         ))}
       </Card>
+    </>
+  );
+}
+
+/** The whole page while it loads, for loading.tsx: the same header and list skeleton the page renders. */
+export function PerformanceSkeleton() {
+  return (
+    <div className={PAGE} aria-busy="true" aria-label="Loading performance">
+      <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE} />
+      <PerformanceListSkeleton />
     </div>
   );
 }
