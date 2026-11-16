@@ -6,7 +6,7 @@ import { EvaluationView } from "@/components/performance/evaluation-view";
 import type { EvaluationDetail, KpiLine } from "@/lib/performance-evaluations";
 import { submitReadiness } from "@/lib/performance-evaluations-terms";
 
-const actions = vi.hoisted(() => ({ saveEvaluationRating: vi.fn(), submitEvaluation: vi.fn(), resolveAttendanceDay: vi.fn(), confirmNoAttendance: vi.fn() }));
+const actions = vi.hoisted(() => ({ saveEvaluationRating: vi.fn(), submitEvaluation: vi.fn(), reopenEvaluation: vi.fn(), resolveAttendanceDay: vi.fn(), confirmNoAttendance: vi.fn() }));
 vi.mock("@/app/(hrms)/performance/actions", () => actions);
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -118,16 +118,5 @@ describe("the Evaluated state", () => {
     expect(screen.getByRole("button", { name: "Reopen evaluation" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Submit evaluation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit rating" })).toBeNull();
-  });
-
-  it("lets the Reopen dialog take over the button once it is wired", async () => {
-    const reopen = vi.fn();
-    const { rerender } = render(<EvaluationView detail={submitted()} />);
-    expect((screen.getByRole("button", { name: "Reopen evaluation" }) as HTMLButtonElement).disabled).toBe(true);
-
-    rerender(<EvaluationView detail={submitted()} onReopen={reopen} />);
-    await userEvent.click(screen.getByRole("button", { name: "Reopen evaluation" }));
-
-    expect(reopen).toHaveBeenCalledTimes(1);
   });
 });

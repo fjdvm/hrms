@@ -7,9 +7,10 @@ import { Card } from "@/components/ui/card";
 import { PageHeader, ProfileColumns } from "@/components/hiring/parts";
 import type { EvaluationDetail } from "@/lib/performance-evaluations";
 import { dayMonth } from "@/lib/performance-evaluation-view";
-import { Banner, Checklist, KpiResults, PeriodCard, StatusBadge } from "./evaluation-parts";
+import { Banner, Checklist, KpiResults, PeriodCard, ReopeningCard, StatusBadge } from "./evaluation-parts";
 import { AttendanceIssuesCard } from "./attendance-issues-card";
 import { SubmitEvaluationDialog } from "./submit-evaluation-dialog";
+import { ReopenEvaluationDialog } from "./reopen-evaluation-dialog";
 import { RatingDialog } from "./rating-dialog";
 import { ResolveIssueDialog, type ResolveTarget } from "./resolve-issue-dialog";
 
@@ -35,12 +36,13 @@ function EvaluationCard({ detail }: { detail: EvaluationDetail }) {
  * One Employee's evaluation for a period: the status and who they are, the banner, the period card, the KPI results, the rating
  * and the Submit checklist. The rating form is opened from the banner and from the KPI results, and saving refreshes the page.
  * Submit evaluation is faded until all four checks pass, then opens the confirmation dialog; once submitted the page shows the locked
- * Evaluated state with a Reopen button (the dialog behind it is its own ticket). Print report, Flag development need, History and the
+ * Evaluated state with a Reopen button that opens the Reopen evaluation dialog. Print report, Flag development need, History and the
  * Development needs list belong to the later spec.
  */
-export function EvaluationView({ detail, onReopen }: { detail: EvaluationDetail; /** Wired by the Reopen evaluation dialog; without it the button is shown but cannot act. */ onReopen?: () => void }) {
+export function EvaluationView({ detail }: { detail: EvaluationDetail }) {
   const [ratingOpen, setRatingOpen] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
   const [resolving, setResolving] = useState<ResolveTarget | null>(null);
   const subtitle = [detail.employeeNumber, detail.position, detail.branch, detail.period.name].join(" · ");
   const canEditRating = !detail.submitted;
@@ -56,7 +58,7 @@ export function EvaluationView({ detail, onReopen }: { detail: EvaluationDetail;
           </Button>
         )}
       </PageHeader>
-      <Banner detail={detail} onEnterRating={() => setRatingOpen(true)} onReopen={onReopen} />
+      <Banner detail={detail} onEnterRating={() => setRatingOpen(true)} onReopen={() => setReopenOpen(true)} />
       <ProfileColumns
         main={
           <>
@@ -70,8 +72,9 @@ export function EvaluationView({ detail, onReopen }: { detail: EvaluationDetail;
             <EvaluationCard detail={detail} />
           </>
         }
-        aside={<Checklist detail={detail} />}
+        aside={<><Checklist detail={detail} /><ReopeningCard detail={detail} /></>}
       />
+      {detail.submitted && <ReopenEvaluationDialog detail={detail} open={reopenOpen} onOpenChange={setReopenOpen} />}
       {!detail.submitted && <SubmitEvaluationDialog detail={detail} open={submitOpen} onOpenChange={setSubmitOpen} />}
       <ResolveIssueDialog employeeId={detail.employeeId} periodId={detail.period.id} employeeName={detail.name} periodName={detail.period.name}
         countedDays={detail.scheduledDays.length - detail.excusedDays.length} target={resolving} onClose={() => setResolving(null)} />
