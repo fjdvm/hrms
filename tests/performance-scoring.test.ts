@@ -299,3 +299,21 @@ describe("an Employee HR confirmed had no attendance", () => {
     expect(result(scoring, "attendanceRate")).toMatchObject({ status: "not-applicable", reason: "no-attendance" });
   });
 });
+
+describe("an inactive KPI", () => {
+  it("is left out like a Not-applicable result and the other weights are rescaled to the set's total", () => {
+    // Full shift (15) is inactive: 85 remains, so the weights become 30, 25, 15 and 15 over 85, scaled back up to 100.
+    const scoring = scoreEvaluation(input({ rating: 80, inactiveKpis: ["fullShift"] }));
+
+    expect(result(scoring, "fullShift")).toEqual({ kpi: "fullShift", status: "not-applicable", reason: "inactive", weight: 15 });
+    expect(scoring.weightRemainingPercent).toBe(85);
+    expect(Object.values(scoring.weightsUsed).reduce((a, b) => a + b, 0)).toBeCloseTo(100, 10);
+    // (100 x 30 + 100 x 25 + 100 x 15 + 80 x 15) / 85 = 96.47...
+    expect(scoring).toMatchObject({ outcome: "scored", score: 96.5 });
+  });
+
+  it("applies the floor like any other left-out weight, and changes nothing when none is inactive", () => {
+    expect(scoreEvaluation(input({ inactiveKpis: ["attendanceRate", "punctuality", "fullShift"] })).outcome).toBe("insufficient-data");
+    expect(scoreEvaluation(input({ inactiveKpis: [] }))).toEqual(scoreEvaluation(input()));
+  });
+});
