@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bannerText, checklist, dayMonth, lineFigures, overallFigures, percentText, periodFigures, scoreHeadline } from "@/lib/performance-evaluation-view";
+import { bannerText, checklist, dayMonth, dayMonthYear, submitSummary, lineFigures, overallFigures, percentText, periodFigures, scoreHeadline } from "@/lib/performance-evaluation-view";
 import { submitReadiness } from "@/lib/performance-evaluations-terms";
 import type { EvaluationDetail, KpiLine } from "@/lib/performance-evaluations";
 import { checkComments, checkRating, ratingMessage } from "@/lib/performance-rating-terms";
@@ -34,8 +34,8 @@ describe("the banner", () => {
     expect(bannerText({ ...base, submit: one, attendance: { imported: true, confirmedNone: false, openIssues: 1 } })).toMatch(/^Submit is locked: 1 attendance issue is open\. Resolve each one below, or re-import a corrected file\. Attendance is imported/);
   });
 
-  it("says a submitted evaluation is locked", () => {
-    expect(bannerText({ ...base, submitted: {} })).toMatch(/^This evaluation is submitted and locked/);
+  it("says when and by whom a submitted evaluation was locked", () => {
+    expect(bannerText({ ...base, submitted: { submittedByName: "Ada Okafor", submittedAt: "2026-11-30 02:00:00+00" } })).toBe("Evaluated and locked on 30 Nov 2026 by Ada Okafor. The score, KPI results and weights used are saved.");
   });
 });
 
@@ -110,6 +110,16 @@ describe("the checklist and period card", () => {
     expect(dayMonth("2026-11-30 10:00:00+08")).toBe("30 Nov");
     expect(dayMonth("2026-11-30 20:00:00-05:30")).toBe("1 Dec");
     expect(dayMonth("garbage")).toBe("");
+    expect(dayMonthYear("2026-11-30 02:00:00+00")).toBe("30 Nov 2026");
+    expect(dayMonthYear("2026-12-31 17:00:00+00")).toBe("1 Jan 2027");
+    expect(dayMonthYear("nope")).toBe("");
+  });
+});
+
+describe("the Submit dialog's confirmation", () => {
+  it("lists what is met with the rating, and that all four are needed", () => {
+    expect(submitSummary(base)).toBe("Attendance is imported (25 days), the shift is set, attendance issues are resolved and your rating (85 / 100) is entered. All four are needed to submit.");
+    expect(submitSummary({ ...base, attendance: { imported: false, confirmedNone: true, openIssues: 0 } })).toMatch(/^Attendance is confirmed as none, the shift is set/);
   });
 });
 

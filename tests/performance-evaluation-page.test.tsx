@@ -6,7 +6,7 @@ import { EvaluationView } from "@/components/performance/evaluation-view";
 import type { EvaluationDetail, KpiLine } from "@/lib/performance-evaluations";
 import { submitReadiness } from "@/lib/performance-evaluations-terms";
 
-const actions = vi.hoisted(() => ({ saveEvaluationRating: vi.fn() }));
+const actions = vi.hoisted(() => ({ saveEvaluationRating: vi.fn(), submitEvaluation: vi.fn(), resolveAttendanceDay: vi.fn(), confirmNoAttendance: vi.fn() }));
 vi.mock("@/app/(hrms)/performance/actions", () => actions);
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -75,14 +75,12 @@ describe("the Employee evaluation page", () => {
     expect(screen.getByTestId("submit-banner").textContent).toMatch(/^Submit is unlocked: attendance is imported, the shift is set/);
   });
 
-  it("fades Submit evaluation while locked, and cannot act until the submit dialog is wired", () => {
+  it("fades Submit evaluation while locked and enables it once every check passes", () => {
     const { rerender } = render(<EvaluationView detail={locked()} />);
     expect((screen.getByRole("button", { name: "Submit evaluation" }) as HTMLButtonElement).disabled).toBe(true);
 
-    const submit = vi.fn();
-    rerender(<EvaluationView detail={detailOf()} onSubmit={submit} />);
-    const button = screen.getByRole("button", { name: "Submit evaluation" }) as HTMLButtonElement;
-    expect(button.disabled).toBe(false);
+    rerender(<EvaluationView detail={detailOf()} />);
+    expect((screen.getByRole("button", { name: "Submit evaluation" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows the Evaluation period card: period, shift, scheduled days with excused, and grace", () => {
@@ -178,7 +176,7 @@ describe("the Employee evaluation page", () => {
     render(<EvaluationView detail={detailOf({ status: "Evaluated", submitted: { version: 1, submittedByName: "Ada Okafor", submittedAt: "2026-11-30 03:00:00+00", formulas: { version: "1", kpis: {}, graceMinutes: 10, floorPercent: 60 } }, submit: { ...submitReadiness({ attendanceImported: true, shiftSet: true, openIssues: 0, ratingEntered: true }), unlocked: false, reason: null, action: null } })} />);
 
     expect(screen.queryByRole("button", { name: "Edit rating" })).toBeNull();
-    expect(screen.getByTestId("submit-banner").textContent).toMatch(/submitted and locked/);
+    expect(screen.getByTestId("submit-banner").textContent).toMatch(/^Evaluated and locked on 30 Nov 2026 by Ada Okafor/);
   });
 });
 

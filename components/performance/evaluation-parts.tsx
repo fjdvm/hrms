@@ -1,4 +1,4 @@
-import { Check, Clock, TriangleAlert } from "lucide-react";
+import { Check, Clock, RotateCcw, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -12,12 +12,15 @@ const TITLE = "text-[15px] font-semibold text-foreground";
 const CAPTION = "text-xs text-muted-foreground";
 
 /** The banner: whether Submit is unlocked, or why it is locked, with an Enter rating button when the rating is what is missing. */
-export function Banner({ detail, onEnterRating }: { detail: EvaluationDetail; onEnterRating: () => void }) {
+export function Banner({ detail, onEnterRating, onReopen }: { detail: EvaluationDetail; onEnterRating: () => void; /** Wired by the Reopen evaluation dialog; without it the button is shown but cannot act. */ onReopen?: () => void }) {
   const locked = !detail.submit.unlocked && !detail.submitted;
   return (
     <div role="status" data-testid="submit-banner" className="flex flex-wrap items-center gap-sm rounded-xl bg-[#fdf1d8] px-[20px] py-[14px] text-[13px] text-[#8a5a00]">
       <TriangleAlert aria-hidden className="size-4 shrink-0" />
       <p className="min-w-[240px] flex-1">{bannerText(detail)}</p>
+      {detail.submitted && (
+        <Button type="button" variant="outline" disabled={!onReopen} onClick={onReopen} className="h-auto gap-[6px] rounded-lg border-[#e6e1ee] bg-white px-[14px] py-[8px] text-[#1f1a2e] shadow-none disabled:opacity-40"><RotateCcw aria-hidden className="size-4" />Reopen evaluation</Button>
+      )}
       {locked && detail.submit.action === "enter-rating" && (
         <Button type="button" variant="outline" onClick={onEnterRating} className="h-auto rounded-lg border-[#e6e1ee] bg-white px-[14px] py-[8px] text-[#1f1a2e] shadow-none">Enter rating</Button>
       )}

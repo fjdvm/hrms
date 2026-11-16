@@ -2,10 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, KpiError, PerformanceError, PeriodError, RatingError, RosterError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
+import { AttendanceError, KpiError, PerformanceError, PeriodError, RatingError, RosterError, SubmitError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
+import { submitMessage } from "@/lib/performance-submit-messages";
 import { ratingMessage } from "@/lib/performance-rating-terms";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { performanceForRequest } from "@/lib/portal/performance";
@@ -20,6 +21,7 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
+    if (error instanceof SubmitError) return { ok: false, error: submitMessage(error.problem, error.missing) };
     if (error instanceof AttendanceError) return { ok: false, error: attendanceMessage(error.problem) };
     if (error instanceof RatingError) return { ok: false, error: ratingMessage(error.problem) };
     if (error instanceof RosterError) return { ok: false, error: ratingMessage(error.problem) };
@@ -88,4 +90,12 @@ export async function resolveAttendanceDay(employeeId: number, periodId: number,
 /** Confirms an Employee had no attendance in the period, with a required reason. It counts as full absence. */
 export async function confirmNoAttendance(employeeId: number, periodId: number, reason: string): Promise<PeriodActionResult> {
   return run(async () => (await performanceForRequest()).confirmNoAttendance(employeeId, periodId, reason), evaluationPaths(employeeId));
+}
+
+/**
+ * Submits an evaluation: it locks, and the KPI results, score, weights and formulas used are saved. Refused, with the reason, when a
+ * check is not met. No email is sent. The page is refreshed so it shows the locked Evaluated state.
+ */
+export async function submitEvaluation(employeeId: number, periodId: number): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).submitEvaluation(employeeId, periodId), evaluationPaths(employeeId));
 }

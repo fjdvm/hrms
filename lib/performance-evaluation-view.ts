@@ -11,16 +11,27 @@ import { rangeLabel } from "./performance-period-form";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "30 Nov" for a timestamp as Postgres writes it ("2026-11-30 02:00:00.123456+00") or as ISO, on the Manila calendar. */
-export function dayMonth(timestamp: string): string {
+/** A timestamp as Postgres writes it ("2026-11-30 02:00:00.123456+00") or as ISO, moved to the Manila calendar; null when it is not one. */
+function manila(timestamp: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}(?::?\d{2})?)?$/.exec(timestamp);
-  if (!match) return "";
+  if (!match) return null;
   const [, y, mo, d, h, mi, sec, zone = "Z"] = match;
   const parts = /^([+-])(\d{2}):?(\d{2})?$/.exec(zone);
   const offsetMinutes = parts ? (parts[1] === "-" ? -1 : 1) * (Number(parts[2]) * 60 + Number(parts[3] ?? 0)) : 0;
   const utc = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec)) - offsetMinutes * 60_000;
-  const manila = new Date(utc + 8 * 3_600_000);
-  return `${manila.getUTCDate()} ${MONTHS[manila.getUTCMonth()]}`;
+  return new Date(utc + 8 * 3_600_000);
+}
+
+/** "30 Nov" for a timestamp, on the Manila calendar. */
+export const dayMonth = (timestamp: string) => { const date = manila(timestamp); return date ? `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}` : ""; };
+
+/** "30 Nov 2026" for a timestamp, on the Manila calendar. */
+export const dayMonthYear = (timestamp: string) => { const date = manila(timestamp); return date ? `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}` : ""; };
+
+/** The Submit dialog's confirmation: what is met, with the rating, and that all four are needed. */
+export function submitSummary(detail: Pick<EvaluationDetail, "attendance" | "counts" | "rating">): string {
+  const attendance = detail.attendance.confirmedNone && !detail.attendance.imported ? "Attendance is confirmed as none" : `Attendance is imported (${detail.counts?.present ?? 0} days)`;
+  return `${attendance}, the shift is set, attendance issues are resolved and your rating (${detail.rating?.value ?? "—"} / 100) is entered. All four are needed to submit.`;
 }
 
 /** A weight or percentage to one decimal, with the decimal dropped when it is whole: 30, 35.3. */
@@ -34,8 +45,8 @@ const MET: Record<SubmitCheckId, string> = {
 };
 
 /** The banner's sentence: that Submit is unlocked, or which checks are missing and which are met. */
-export function bannerText(detail: Pick<EvaluationDetail, "submit" | "attendance"> & { submitted: unknown }): string {
-  if (detail.submitted) return "This evaluation is submitted and locked. Its results, weights and formulas are saved as submitted.";
+export function bannerText(detail: Pick<EvaluationDetail, "submit" | "attendance"> & { submitted: Pick<NonNullable<EvaluationDetail["submitted"]>, "submittedByName" | "submittedAt"> | null }): string {
+  if (detail.submitted) return `Evaluated and locked on ${dayMonthYear(detail.submitted.submittedAt)} by ${detail.submitted.submittedByName}. The score, KPI results and weights used are saved.`;
   const { checks, unlocked } = detail.submit;
   if (unlocked) return "Submit is unlocked: attendance is imported, the shift is set, attendance issues are resolved and the rating is entered. Submitting locks this evaluation.";
   const missing = checks.filter((check) => !check.passed).map((check) => {

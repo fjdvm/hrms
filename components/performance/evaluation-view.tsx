@@ -9,6 +9,7 @@ import type { EvaluationDetail } from "@/lib/performance-evaluations";
 import { dayMonth } from "@/lib/performance-evaluation-view";
 import { Banner, Checklist, KpiResults, PeriodCard, StatusBadge } from "./evaluation-parts";
 import { AttendanceIssuesCard } from "./attendance-issues-card";
+import { SubmitEvaluationDialog } from "./submit-evaluation-dialog";
 import { RatingDialog } from "./rating-dialog";
 import { ResolveIssueDialog, type ResolveTarget } from "./resolve-issue-dialog";
 
@@ -33,25 +34,29 @@ function EvaluationCard({ detail }: { detail: EvaluationDetail }) {
 /**
  * One Employee's evaluation for a period: the status and who they are, the banner, the period card, the KPI results, the rating
  * and the Submit checklist. The rating form is opened from the banner and from the KPI results, and saving refreshes the page.
- * Submit evaluation is faded while locked; submitting and reopening are separate tickets, and Print report, Flag development need,
- * History and the Development needs list belong to the later spec.
+ * Submit evaluation is faded until all four checks pass, then opens the confirmation dialog; once submitted the page shows the locked
+ * Evaluated state with a Reopen button (the dialog behind it is its own ticket). Print report, Flag development need, History and the
+ * Development needs list belong to the later spec.
  */
-export function EvaluationView({ detail, onSubmit }: { detail: EvaluationDetail; /** Wired by the Submit evaluation dialog; without it the button is shown but cannot act. */ onSubmit?: () => void }) {
+export function EvaluationView({ detail, onReopen }: { detail: EvaluationDetail; /** Wired by the Reopen evaluation dialog; without it the button is shown but cannot act. */ onReopen?: () => void }) {
   const [ratingOpen, setRatingOpen] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
   const [resolving, setResolving] = useState<ResolveTarget | null>(null);
   const subtitle = [detail.employeeNumber, detail.position, detail.branch, detail.period.name].join(" · ");
   const canEditRating = !detail.submitted;
-  const canSubmit = detail.submit.unlocked && onSubmit !== undefined;
+  const canSubmit = detail.submit.unlocked;
   const hasRating = detail.rating !== null;
 
   return (
     <>
       <PageHeader title={detail.name} subtitle={subtitle} badge={<StatusBadge status={detail.status} />}>
-        <Button type="button" disabled={!canSubmit} onClick={onSubmit} className="h-auto gap-[6px] rounded-lg bg-[#5b2a86] px-[14px] py-[9px] font-medium shadow-none disabled:opacity-40">
-          <Check aria-hidden className="size-4" />Submit evaluation
-        </Button>
+        {!detail.submitted && (
+          <Button type="button" disabled={!canSubmit} onClick={() => setSubmitOpen(true)} className="h-auto gap-[6px] rounded-lg bg-[#5b2a86] px-[14px] py-[9px] font-medium shadow-none disabled:opacity-40">
+            <Check aria-hidden className="size-4" />Submit evaluation
+          </Button>
+        )}
       </PageHeader>
-      <Banner detail={detail} onEnterRating={() => setRatingOpen(true)} />
+      <Banner detail={detail} onEnterRating={() => setRatingOpen(true)} onReopen={onReopen} />
       <ProfileColumns
         main={
           <>
@@ -67,6 +72,7 @@ export function EvaluationView({ detail, onSubmit }: { detail: EvaluationDetail;
         }
         aside={<Checklist detail={detail} />}
       />
+      {!detail.submitted && <SubmitEvaluationDialog detail={detail} open={submitOpen} onOpenChange={setSubmitOpen} />}
       <ResolveIssueDialog employeeId={detail.employeeId} periodId={detail.period.id} employeeName={detail.name} periodName={detail.period.name}
         countedDays={detail.scheduledDays.length - detail.excusedDays.length} target={resolving} onClose={() => setResolving(null)} />
       {canEditRating && (
