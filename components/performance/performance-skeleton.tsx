@@ -7,6 +7,9 @@ const ROWS = 6;
 export const PERFORMANCE_TITLE = "Performance";
 export const PERFORMANCE_SUBTITLE = "Evaluate each Employee against their KPIs";
 
+/** The Set up period button while its data loads. */
+export const SetUpPeriodSkeleton = () => <Skeleton className="h-[38px] w-[130px] rounded-lg" />;
+
 /** The tabs and table card of the Performance list while its data loads: the Suspense fallback under the static header. */
 export function PerformanceListSkeleton() {
   return (
@@ -35,6 +38,8 @@ export function PerformanceSkeleton() {
   return (
     <div className={PAGE} aria-busy="true" aria-label="Loading performance">
       <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE}>
+        <SetUpPeriodSkeleton />
+        <Skeleton className="h-[38px] w-[150px] rounded-lg" />
         <Skeleton className="h-[38px] w-[108px] rounded-lg" />
       </PageHeader>
       <PerformanceListSkeleton />

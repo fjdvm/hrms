@@ -17,7 +17,7 @@ import type { Actor } from "./performance-kpis";
 export type PeriodType = "Month" | "Quarter" | "Custom";
 export type Period = { id: number; type: PeriodType; kind: "Company" | "Employee"; employeeId: number | null; start: string; end: string; graceMinutes: number; name: string; createdByName: string };
 export type CalendarType = "Holiday" | "Closure" | "Other";
-export type CalendarEntry = { id: number; date: string; name: string; type: CalendarType; notes: string | null; addedByName: string };
+export type CalendarEntry = { id: number; date: string; name: string; type: CalendarType; notes: string | null; addedByName: string; /** The Manila date it was added. */ addedOn: string };
 
 export type OpenPeriodInput =
   | { type: "Month"; year: number; month: number; graceMinutes?: number }
@@ -28,7 +28,7 @@ export type CalendarInput = { date: string; name: string; type: string; notes?: 
 export type PeriodProblem =
   | "type-invalid" | "year-invalid" | "dates-invalid" | "end-before-start" | "range-too-long" | "grace-invalid" | "overlap"
   | "date-invalid" | "name-empty" | "name-too-long" | "name-characters" | "calendar-type-invalid" | "notes-invalid" | "date-taken"
-  | "unknown-period" | "unknown-employee" | "day-outside-period";
+  | "unknown-period" | "unknown-employee" | "day-outside-period" | "unknown-entry";
 
 export class PeriodError extends Error {
   /** `overlaps` names the period an overlapping one runs into; `existing` names the calendar entry that already has the date. */
@@ -142,7 +142,7 @@ export function periodsModule(db: Database) {
   async function listNonWorkingDates(range?: { from: string; to: string }): Promise<CalendarEntry[]> {
     if (range && (!isCalendarDate(range.from) || !isCalendarDate(range.to) || range.to < range.from)) throw new PeriodError("dates-invalid");
     const { rows } = await db.query<CalendarEntry>(`
-      SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName" FROM public.hrms_company_calendar
+      SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM public.hrms_company_calendar
       WHERE $1::date IS NULL OR date BETWEEN $1::date AND $2::date ORDER BY date`, [range?.from ?? null, range?.to ?? null]);
     return rows;
   }
@@ -160,13 +160,55 @@ export function periodsModule(db: Database) {
         ), logged AS (
           INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
           SELECT $5, $6, 'non-working-date-added', 'calendar', id::text, jsonb_build_object('date', date, 'name', name, 'type', type) FROM added
-        ) SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName" FROM added`,
+        ) SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM added`,
       [entry.date, entry.name, entry.type, entry.notes, actor.id, actor.name]);
       return rows[0];
     } catch (error) {
       if (isCode(error, "23505")) throw new PeriodError("date-taken", { existing: (await taken()) ?? entry.name });
       throw error;
     }
+  }
+
+  const entryOf = async (id: number): Promise<CalendarEntry | undefined> => {
+    if (!validId(id)) return undefined;
+    return (await db.query<CalendarEntry>(`SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM public.hrms_company_calendar WHERE id = $1`, [id])).rows[0];
+  };
+
+  /**
+   * Edits a non-working date. An evaluation already submitted keeps the scheduled days it was submitted with, so this changes
+   * only what is still being worked on. The new date must not already be on the calendar.
+   */
+  async function updateNonWorkingDate(actor: Actor, id: number, input: CalendarInput): Promise<CalendarEntry> {
+    const entry = readCalendarEntry(input);
+    const before = await entryOf(id);
+    if (!before) throw new PeriodError("unknown-entry");
+    const clash = (await db.query<{ name: string }>(`SELECT name FROM public.hrms_company_calendar WHERE date = $1 AND id <> $2`, [entry.date, id])).rows[0];
+    if (clash) throw new PeriodError("date-taken", { existing: clash.name });
+    try {
+      const { rows } = await db.query<CalendarEntry>(`
+        WITH changed AS (
+          UPDATE public.hrms_company_calendar SET date = $2, name = $3, type = $4, notes = $5 WHERE id = $1 RETURNING *
+        ), logged AS (
+          INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+          SELECT $6, $7, 'non-working-date-updated', 'calendar', id::text, jsonb_build_object('before', $8::jsonb, 'after', jsonb_build_object('date', date, 'name', name, 'type', type, 'notes', notes)) FROM changed
+        ) SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM changed`,
+      [id, entry.date, entry.name, entry.type, entry.notes, actor.id, actor.name, JSON.stringify({ date: before.date, name: before.name, type: before.type, notes: before.notes })]);
+      if (!rows[0]) throw new PeriodError("unknown-entry");
+      return rows[0];
+    } catch (error) {
+      if (isCode(error, "23505")) throw new PeriodError("date-taken", { existing: entry.name });
+      throw error;
+    }
+  }
+
+  /** Removes a non-working date from the company calendar, recording who removed it and what it was. */
+  async function removeNonWorkingDate(actor: Actor, id: number): Promise<void> {
+    const before = await entryOf(id);
+    if (!before) throw new PeriodError("unknown-entry");
+    await db.query(`
+      WITH removed AS (DELETE FROM public.hrms_company_calendar WHERE id = $1 RETURNING *)
+      INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+      SELECT $2, $3, 'non-working-date-removed', 'calendar', id::text, jsonb_build_object('date', date, 'name', name, 'type', type) FROM removed`, [id, actor.id, actor.name]);
   }
 
   async function requirePeriod(periodId: number): Promise<Period> {
@@ -218,5 +260,5 @@ export function periodsModule(db: Database) {
     };
   }
 
-  return { listPeriods, openPeriod, listNonWorkingDates, addNonWorkingDate, excuseDays, scheduleFor, requirePeriod };
+  return { listPeriods, openPeriod, listNonWorkingDates, addNonWorkingDate, updateNonWorkingDate, removeNonWorkingDate, excuseDays, scheduleFor, requirePeriod };
 }
