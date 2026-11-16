@@ -186,6 +186,53 @@ describe("the company calendar", () => {
   });
 });
 
+describe("editing and removing company calendar dates", () => {
+  it("edits a date's details and records the change", async () => {
+    const entry = await performance().addNonWorkingDate({ date: "2026-11-30", name: "Bonifacio", type: "Holiday" });
+
+    const changed = await performance().updateNonWorkingDate(entry.id, { date: "2026-12-01", name: " Bonifacio  Day ", type: "Closure", notes: "Moved" });
+
+    expect(changed).toMatchObject({ id: entry.id, date: "2026-12-01", name: "Bonifacio Day", type: "Closure", notes: "Moved" });
+    expect(await performance().listNonWorkingDates()).toHaveLength(1);
+    expect(await audit()).toEqual([
+      expect.objectContaining({ action: "non-working-date-added" }),
+      { actor_name: "Ada Okafor", action: "non-working-date-updated", subject: "calendar", detail: { before: { date: "2026-11-30", name: "Bonifacio", type: "Holiday", notes: null }, after: { date: "2026-12-01", name: "Bonifacio Day", type: "Closure", notes: "Moved" } } },
+    ]);
+  });
+
+  it("keeps a date when it is saved unchanged, but not onto another entry's date, and validates like adding", async () => {
+    const first = await performance().addNonWorkingDate({ date: "2026-11-30", name: "Bonifacio Day", type: "Holiday" });
+    await performance().addNonWorkingDate({ date: "2026-12-25", name: "Christmas Day", type: "Holiday" });
+
+    expect((await performance().updateNonWorkingDate(first.id, { date: "2026-11-30", name: "Bonifacio Day", type: "Holiday" })).date).toBe("2026-11-30");
+    const taken = await problem(performance().updateNonWorkingDate(first.id, { date: "2026-12-25", name: "Bonifacio Day", type: "Holiday" }));
+    expect(taken.problem).toBe("date-taken");
+    expect(taken.extra.existing).toBe("Christmas Day");
+    expect((await problem(performance().updateNonWorkingDate(first.id, { date: "2026-11-30", name: "", type: "Holiday" }))).problem).toBe("name-empty");
+    expect((await problem(performance().updateNonWorkingDate(9999, { date: "2026-11-30", name: "X", type: "Holiday" }))).problem).toBe("unknown-entry");
+    expect((await problem(performance().updateNonWorkingDate("1" as never, { date: "2026-11-30", name: "X", type: "Holiday" }))).problem).toBe("unknown-entry");
+  });
+
+  it("removes a date and records what it was", async () => {
+    const entry = await performance().addNonWorkingDate({ date: "2026-11-30", name: "Bonifacio Day", type: "Holiday" });
+
+    await performance().removeNonWorkingDate(entry.id);
+
+    expect(await performance().listNonWorkingDates()).toEqual([]);
+    expect((await audit()).at(-1)).toEqual({ actor_name: "Ada Okafor", action: "non-working-date-removed", subject: "calendar", detail: { date: "2026-11-30", name: "Bonifacio Day", type: "Holiday" } });
+    expect((await problem(performance().removeNonWorkingDate(entry.id))).problem).toBe("unknown-entry");
+  });
+
+  it("needs the Performance Module to edit or remove", async () => {
+    const entry = await performance().addNonWorkingDate({ date: "2026-11-30", name: "Bonifacio Day", type: "Holiday" });
+    const denied = performance(portal.signIn({ ...staff, id: "u-bo", username: "bo" }, ["Training"]));
+
+    await expect(denied.updateNonWorkingDate(entry.id, { date: "2026-11-30", name: "X", type: "Holiday" })).rejects.toMatchObject({ reason: "denied" });
+    await expect(denied.removeNonWorkingDate(entry.id)).rejects.toMatchObject({ reason: "denied" });
+    expect(await performance().listNonWorkingDates()).toHaveLength(1);
+  });
+});
+
 describe("scheduled days", () => {
   it("works out a Mon–Fri and a Mon–Sat Employee's days in a month", async () => {
     const period = await performance().openPeriod(NOV);

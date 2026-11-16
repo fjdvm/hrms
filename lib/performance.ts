@@ -92,6 +92,10 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     listNonWorkingDates: async (range?: { from: string; to: string }) => { await acting(); return periods.listNonWorkingDates(range); },
     /** Adds a holiday, closure or other non-working date for the whole company. The same date cannot be added twice. */
     addNonWorkingDate: async (input: CalendarInput) => periods.addNonWorkingDate(await acting(), input),
+    /** Edits a non-working date. A submitted evaluation keeps the scheduled days it was submitted with. */
+    updateNonWorkingDate: async (id: number, input: CalendarInput) => periods.updateNonWorkingDate(await acting(), id, input),
+    /** Removes a non-working date from the company calendar, with an audit event. */
+    removeNonWorkingDate: async (id: number) => periods.removeNonWorkingDate(await acting(), id),
     /** Records excused days for an Employee in a period. They are subtracted from the scheduled days when the score is worked out. */
     excuseDays: async (employeeId: number, periodId: number, dates: readonly string[]) => periods.excuseDays(await acting(), employeeId, periodId, dates),
     /** An Employee's scheduled and excused days in a period, or not scorable when they have no shift. */

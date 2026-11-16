@@ -83,7 +83,7 @@ describe("activating and deactivating a KPI", () => {
   it("refuses an unknown KPI or status, and offers no delete", async () => {
     expect((await problem(performance().setKpiStatus("nope", "Active"))).problem).toBe("unknown-kpi");
     expect((await problem(performance().setKpiStatus("punctuality", "Deleted"))).problem).toBe("unknown-status");
-    expect(Object.keys(performance()).filter((name) => /delete|remove/i.test(name))).toEqual([]);
+    expect(Object.keys(performance()).filter((name) => /delete|remove/i.test(name) && /kpi|weight/i.test(name))).toEqual([]);
     expect((await db.query(`SELECT 1 FROM hrms_kpis`)).rows).toHaveLength(5);
   });
 });

@@ -47,6 +47,7 @@ const PAGES: [path: string, module: string][] = [
 const NO_ACCESS: Record<string, { module: string; screen: string }> = {
   performance: { module: "Performance", screen: "PerformanceNoAccess" },
   "performance/kpis": { module: "Performance", screen: "PerformanceNoAccess" },
+  "performance/calendar": { module: "Performance", screen: "PerformanceNoAccess" },
 };
 
 /** Training pages render their own No access screen, so Staff without the Module keep the shell. */
