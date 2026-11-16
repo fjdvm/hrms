@@ -34,7 +34,9 @@ export function PerformanceListSkeleton() {
 export function PerformanceSkeleton() {
   return (
     <div className={PAGE} aria-busy="true" aria-label="Loading performance">
-      <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE} />
+      <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE}>
+        <Skeleton className="h-[38px] w-[108px] rounded-lg" />
+      </PageHeader>
       <PerformanceListSkeleton />
     </div>
   );
