@@ -31,11 +31,11 @@ export const DialogBody = ({ children }: { children: React.ReactNode }) => (
   <div className="flex max-h-[calc(100vh-220px)] flex-col gap-[16px] overflow-y-auto px-[24px] py-[20px]">{children}</div>
 );
 
-export function DialogActions({ submit, canSubmit, pending, note = "Not saved yet" }: { submit: string; canSubmit: boolean; pending: boolean; note?: string }) {
+export function DialogActions({ submit, canSubmit, pending, note = "Not saved yet", cancel = "Cancel" }: { submit: string; canSubmit: boolean; pending: boolean; note?: string; cancel?: string }) {
   return (
     <div className="flex items-center gap-sm border-t border-[#ebebeb] bg-zinc-50 px-[24px] py-[14px]">
       <p className="mr-auto text-xs text-zinc-500">{note}</p>
-      <DialogClose asChild><Button type="button" variant="outline" disabled={pending} className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] shadow-none">Cancel</Button></DialogClose>
+      <DialogClose asChild><Button type="button" variant="outline" disabled={pending} className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] shadow-none">{cancel}</Button></DialogClose>
       <Button type="submit" disabled={!canSubmit || pending} className="h-auto rounded-lg bg-[#5b2a86] px-[16px] py-[9px]">{pending && <Loader2 className="animate-spin" />}{submit}</Button>
     </div>
   );
