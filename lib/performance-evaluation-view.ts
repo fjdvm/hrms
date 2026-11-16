@@ -41,13 +41,14 @@ export function bannerText(detail: Pick<EvaluationDetail, "submit" | "attendance
   const missing = checks.filter((check) => !check.passed).map((check) => {
     if (check.id === "attendance-imported") return "attendance is not imported yet";
     if (check.id === "shift-set") return "the shift is not set";
-    if (check.id === "issues-resolved") return `${detail.attendance.openIssues} attendance ${detail.attendance.openIssues === 1 ? "issue is" : "issues are"} not resolved`;
+    if (check.id === "issues-resolved") return `${detail.attendance.openIssues} attendance ${detail.attendance.openIssues === 1 ? "issue is" : "issues are"} open`;
     return "the rating is not entered yet";
   });
   const met = checks.filter((check) => check.passed).map((check) => MET[check.id]);
   const join = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0]);
   const rest = met.length ? ` ${join(met).replace(/^./, (c) => c.toUpperCase())}.` : "";
-  return `Submit is locked: ${join(missing)}.${rest}`;
+  const resolve = detail.attendance.openIssues > 0 ? " Resolve each one below, or re-import a corrected file." : "";
+  return `Submit is locked: ${join(missing)}.${resolve}${rest}`;
 }
 
 /** The rating, once entered or while submitted, is what completes the score; until then the page says "incomplete". */
@@ -115,7 +116,7 @@ export function checklist(detail: Pick<EvaluationDetail, "submit" | "attendance"
     let text: string;
     if (check.id === "attendance-imported") text = check.passed ? (detail.attendance.confirmedNone && !detail.attendance.imported ? "Confirmed: no attendance this period" : `${detail.counts?.present ?? 0} days matched`) : "Not imported yet";
     else if (check.id === "shift-set") text = detail.shift ? `${shiftText(detail.shift)} · ${formatWorkingDays(detail.shift.workingDays)}` : "No shift on the Employee record";
-    else if (check.id === "issues-resolved") text = detail.attendance.openIssues === 0 ? "No open issues" : `${detail.attendance.openIssues} open ${detail.attendance.openIssues === 1 ? "issue" : "issues"}`;
+    else if (check.id === "issues-resolved") text = detail.attendance.openIssues === 0 ? "No open issues" : `${detail.attendance.openIssues} open · see Attendance issues`;
     else text = detail.rating ? `${detail.rating.value} / 100 · entered ${dayMonth(detail.rating.savedAt)}` : "Not entered yet";
     return { id: check.id, label: check.label, passed: check.passed, detail: text };
   });

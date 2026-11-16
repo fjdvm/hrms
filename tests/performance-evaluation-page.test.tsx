@@ -65,7 +65,7 @@ describe("the Employee evaluation page", () => {
 
     const banner = screen.getByTestId("submit-banner");
     expect(banner.textContent).toContain("attendance is not imported yet");
-    expect(banner.textContent).toContain("2 attendance issues are not resolved");
+    expect(banner.textContent).toContain("2 attendance issues are open");
     expect(within(banner).queryByRole("button")).toBeNull();
   });
 
@@ -158,7 +158,7 @@ describe("the Employee evaluation page", () => {
     expect(items.map((item) => [item.textContent, item.getAttribute("data-passed")])).toEqual([
       ["DoneAttendance imported25 days matched", "true"],
       ["DoneShift set6 AM – 2 PM · Mon, Tue, Wed, Thu, Fri, Sat", "true"],
-      ["Not doneAttendance issues resolved3 open issues", "false"],
+      ["Not doneAttendance issues resolved3 open · see Attendance issues", "false"],
       ["DoneRating entered85 / 100 · entered 30 Nov", "true"],
     ]);
   });

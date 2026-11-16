@@ -4,6 +4,7 @@ import { MAX_BATCH_ROWS, coverageOf, numberKey, validateRows, type Coverage, typ
 import type { Actor } from "./performance-kpis";
 import { PeriodError, type periodsModule } from "./performance-periods";
 import type { AttendanceRow } from "./performance-scoring";
+import { REASON_MAX_LENGTH } from "./performance-attendance-terms";
 import { cleanText, hasControlCharacters } from "./validators/text";
 
 /**
@@ -64,7 +65,6 @@ export type AttendanceState = {
 };
 
 export const REJECTED_SHOWN = 500;
-export const REASON_MAX_LENGTH = 500;
 export const FILE_NAME_MAX_LENGTH = 255;
 export const SOURCE_REF_MAX_LENGTH = 500;
 
