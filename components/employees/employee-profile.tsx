@@ -15,7 +15,7 @@ import { Contract, DocumentsCard, DocumentsTable, EmergencyContact, Employment, 
 export function EmployeeProfile({ employee, history, activity, training }: { employee: EmployeeDetail; history: EmployeeHistory[]; activity: EmployeeAudit[]; training?: React.ReactNode }) {
   const { personal, employment, documents, canEdit } = employee;
   const edit = (section: Parameters<typeof initialValues>[0], allowed = true) => allowed
-    ? <EditSectionButton employeeId={employee.id} section={section} initial={initialValues(section, employee)} /> : undefined;
+    ? <EditSectionButton employeeId={employee.id} section={section} initial={initialValues(section, employee)} subject={`${personal.name} · ${employee.employeeNumber}`} /> : undefined;
   return (
     <>
       <BackLink href="/employee-information">Employee information</BackLink>
