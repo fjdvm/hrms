@@ -2,9 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { KpiError, PerformanceError, PeriodError, type CalendarInput, type OpenPeriodInput } from "@/lib/performance";
+import { KpiError, PerformanceError, PeriodError, RatingError, RosterError, type CalendarInput, type OpenPeriodInput } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
+import { ratingMessage } from "@/lib/performance-rating-terms";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { performanceForRequest } from "@/lib/portal/performance";
 
@@ -18,6 +19,8 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
+    if (error instanceof RatingError) return { ok: false, error: ratingMessage(error.problem) };
+    if (error instanceof RosterError) return { ok: false, error: ratingMessage(error.problem) };
     if (error instanceof PerformanceError) {
       if (error.reason === "denied") redirect(NO_ACCESS_PATH);
       if (error.reason === "invalid") redirect(LOGIN_PATH);
@@ -60,4 +63,12 @@ export async function editNonWorkingDate(id: number, input: CalendarInput): Prom
 /** Removes a non-working date. */
 export async function removeNonWorkingDate(id: number): Promise<PeriodActionResult> {
   return run(async () => (await performanceForRequest()).removeNonWorkingDate(id), PERIOD_PATHS);
+}
+
+/**
+ * Saves the rating (0 to 100) and the comments for an Employee in a period. The first save moves the status from Draft to In review.
+ * The page is refreshed so the banner, the checklist and the score follow the rating.
+ */
+export async function saveEvaluationRating(employeeId: number, periodId: number, input: { rating: number; comments: string }): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).saveRating(employeeId, periodId, input), ["/performance", `/performance/evaluation/${employeeId}`]);
 }

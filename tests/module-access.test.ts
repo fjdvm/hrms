@@ -48,12 +48,13 @@ const NO_ACCESS: Record<string, { module: string; screen: string }> = {
   performance: { module: "Performance", screen: "PerformanceNoAccess" },
   "performance/kpis": { module: "Performance", screen: "PerformanceNoAccess" },
   "performance/calendar": { module: "Performance", screen: "PerformanceNoAccess" },
+  "performance/evaluation/[employeeId]": { module: "Performance", screen: "PerformanceNoAccess" },
 };
 
 /** Training pages render their own No access screen, so Staff without the Module keep the shell. */
 const TRAINING_PAGES = ["training", "training/new", "training/[id]", "training/[id]/log", "training/[id]/results", "training/calendar", "training/history"];
 
-const props = { params: Promise.resolve({ id: "1", jobPostingId: "a" }), searchParams: Promise.resolve({}) };
+const props = { params: Promise.resolve({ id: "1", jobPostingId: "a", employeeId: "1" }), searchParams: Promise.resolve({}) };
 const pageFiles = import.meta.glob<{ default: (props: unknown) => Promise<unknown> }>("../app/[(]hrms[)]/**/page.tsx");
 const run = async (path: string) => {
   const { default: Page } = await pageFiles[`../app/(hrms)/${path}/page.tsx`]();
