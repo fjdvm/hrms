@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "./database";
 import { retryJobPostingAudit } from "./job-posting-audit";
-import type { evaluationsModule, EvaluationDetail, Figures, SnapshotFormulas } from "./performance-evaluations";
+import type { evaluationsModule, EvaluationDetail, Figures } from "./performance-evaluations";
 import type { SubmitCheck } from "./performance-evaluations-terms";
 import type { Actor } from "./performance-kpis";
-import { INSUFFICIENT_DATA_FLOOR_PERCENT, SCORING_FORMULAS, SCORING_RULES_VERSION } from "./performance-scoring";
 
 /**
  * Submitting an evaluation. One of the small domain modules behind the Performance interface; it takes the Staff member and
@@ -34,11 +33,6 @@ export type SubmittedEvaluation = {
   /** The weighted score out of 100 to one decimal, or null when the result was Insufficient data. */
   score: number | null; outcome: "scored" | "insufficient-data"; weightSetName: string; submittedByName: string; submittedAt: string;
 };
-
-/** The formulas in force, as saved with a submission. */
-export const formulasInForce = (graceMinutes: number): SnapshotFormulas => ({
-  version: SCORING_RULES_VERSION, kpis: { ...SCORING_FORMULAS }, graceMinutes, floorPercent: INSUFFICIENT_DATA_FLOOR_PERCENT,
-});
 
 /** The figures behind the score, as saved with a submission. */
 export const figuresOf = (detail: EvaluationDetail): Figures => ({
@@ -94,7 +88,7 @@ export function submitModule(db: Database, deps: { evaluations: ReturnType<typeo
         SELECT $14, $15, 'evaluation-submitted', 'evaluation', $19, jsonb_build_object('employeeId', $20::int, 'periodId', $21::int, 'version', saved.version, 'outcome', $5::text) FROM saved
       ) SELECT version, submitted_at::text AS "submittedAt" FROM saved`,
     [evaluation.id, detail.rating.value, detail.rating.comments, detail.rating.savedAt, scored ? "scored" : "insufficient-data", detail.score.outcome === "scored" ? detail.score.value : null,
-      detail.weightSet.id, detail.weightSet.name, detail.weightSet.isDefault, JSON.stringify(detail.weights), JSON.stringify(detail.weightsUsed), JSON.stringify(formulasInForce(detail.graceMinutes)), JSON.stringify(figuresOf(detail)),
+      detail.weightSet.id, detail.weightSet.name, detail.weightSet.isDefault, JSON.stringify(detail.weights), JSON.stringify(detail.weightsUsed), JSON.stringify(detail.formulas), JSON.stringify(figuresOf(detail)),
       actor.id, actor.name, JSON.stringify(results), auditId, JSON.stringify(event), `${employee.id}:${periodId}`, employee.id, periodId]);
 
     if (!rows[0]) {

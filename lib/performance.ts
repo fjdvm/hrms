@@ -8,6 +8,7 @@ import { attendanceModule, type Resolution } from "./performance-attendance";
 import { evaluationsModule } from "./performance-evaluations";
 import { ratingModule } from "./performance-rating";
 import { submitModule } from "./performance-submit";
+import { reopenModule } from "./performance-reopen";
 import type { EvaluationTab } from "./performance-evaluations-terms";
 
 /**
@@ -18,6 +19,7 @@ import type { EvaluationTab } from "./performance-evaluations-terms";
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
 export { SubmitError, type SubmitProblem, type SubmittedEvaluation } from "./performance-submit";
 export { COMMENTS_MAX_LENGTH, RatingError, type RatingProblem, type SavedRating } from "./performance-rating";
 export { RosterError, type EvaluationDetail, type KpiLine, type Roster, type RosterRow, type Score, type Shift } from "./performance-evaluations";
@@ -46,6 +48,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const evaluations = evaluationsModule(db, { periods, attendance, training, kpis });
   const rating = ratingModule(db, periods);
   const submit = submitModule(db, { evaluations });
+  const reopen = reopenModule(db, { evaluations });
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -124,5 +127,10 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
      * that changes later can alter it. The audit event is queued with the change; no email or notification is sent.
      */
     submitEvaluation: async (employeeId: number, periodId: number) => submit.submitEvaluation(await acting(), employeeId, periodId),
+    /**
+     * Reopens an Evaluated evaluation with a required reason. It returns to In review, its results are recomputed from current data with
+     * the weights and formulas saved at the first submission, and the submitted version is kept. Submitting again saves a new version.
+     */
+    reopenEvaluation: async (employeeId: number, periodId: number, reason: string) => reopen.reopenEvaluation(await acting(), employeeId, periodId, reason),
   };
 }

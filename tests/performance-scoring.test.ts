@@ -317,3 +317,15 @@ describe("an inactive KPI", () => {
     expect(scoreEvaluation(input({ inactiveKpis: [] }))).toEqual(scoreEvaluation(input()));
   });
 });
+
+describe("the floor in force", () => {
+  it("is the saved floor when one is given, so a reopened evaluation keeps the floor it was first submitted with", () => {
+    // Training is not due: 85 of 100 remains.
+    const base = input({ training: { completed: 0, due: 0 } });
+
+    expect(scoreEvaluation(base).outcome).toBe("scored");
+    expect(scoreEvaluation({ ...base, floorPercent: 85 }).outcome).toBe("scored");
+    expect(scoreEvaluation({ ...base, floorPercent: 90 }).outcome).toBe("insufficient-data");
+    expect(scoreEvaluation({ ...base, floorPercent: 0 }).outcome).toBe("scored");
+  });
+});

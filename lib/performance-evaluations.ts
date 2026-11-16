@@ -3,7 +3,7 @@ import { isEvaluationTab, isOnRoster, statusOf, progressOf, submitReadiness, tab
 import type { attendanceModule, AttendanceIssue } from "./performance-attendance";
 import type { Kpi, kpiModule, WeightSet } from "./performance-kpis";
 import { PeriodError, type Period, type periodsModule } from "./performance-periods";
-import { KPI_IDS, scoreEvaluation, type KpiId, type NotApplicableReason } from "./performance-scoring";
+import { INSUFFICIENT_DATA_FLOOR_PERCENT, KPI_IDS, SCORING_FORMULAS, SCORING_RULES_VERSION, scoreEvaluation, type KpiId, type NotApplicableReason } from "./performance-scoring";
 import { RESULTS_NOT_MARKED, type trainingCompletionModule } from "./performance-training";
 
 /**
@@ -12,7 +12,9 @@ import { RESULTS_NOT_MARKED, type trainingCompletionModule } from "./performance
  * writes nothing. Saving a rating and submitting are their own modules.
  *
  * An Evaluated evaluation is read from the version saved when it was submitted (the KPI results, the weights, the weight set's
- * name, the figures), never recomputed, so nothing that changes afterwards can alter it.
+ * name, the figures), never recomputed, so nothing that changes afterwards can alter it. A reopened one is recomputed from
+ * current attendance, Training results and rating, but with the weights, the weight set, the deactivated KPIs, the grace period
+ * and the floor saved at its first submission, so a weight or formula change made since has no effect.
  *
  * The roster of a period is every Active Employee whose start date is on or before the period's end date, so an Employee who
  * becomes Active or gets a shift mid-period appears with no enrolment and an Onboarding Employee does not. An Employee with a
@@ -47,8 +49,20 @@ export type RosterRow = Common & { scheduledDays: number | null; excusedDays: nu
 export type SubmittedVersion = { version: number; submittedByName: string; submittedAt: string; formulas: SnapshotFormulas };
 export type SnapshotFormulas = { version: string; kpis: Record<string, string>; graceMinutes: number; floorPercent: number };
 export type DayCounts = { counted: number; present: number; late: number; earlyOut: number };
+/** One submitted version of an evaluation, kept for good, with the reopen that followed it if there was one. */
+export type VersionSummary = {
+  version: number; outcome: "scored" | "insufficient-data"; score: number | null; rating: number; weightSetName: string;
+  submittedByName: string; submittedAt: string;
+  reopened: { reason: string; reopenedByName: string; reopenedAt: string } | null;
+};
 export type EvaluationDetail = Common & {
   period: Period;
+  /** The formulas, grace period and floor this evaluation is scored with. */
+  formulas: SnapshotFormulas;
+  /** True when a reopened evaluation is scored with the weights and formulas saved at its first submission. */
+  rulesFrozen: boolean;
+  /** Every submitted version so far, oldest first. Empty until the first submit. */
+  history: VersionSummary[];
   /** The day figures behind the score, null when the Employee has no shift. */
   counts: DayCounts | null;
   /** The saved version when the evaluation has been submitted; null while it is still being worked on. */
@@ -105,6 +119,11 @@ export type EvaluationDeps = {
   kpis: ReturnType<typeof kpiModule>;
 };
 
+/** The formulas, grace period and floor in force today, as saved with a submission. */
+export const formulasInForce = (graceMinutes: number): SnapshotFormulas => ({
+  version: SCORING_RULES_VERSION, kpis: { ...SCORING_FORMULAS }, graceMinutes, floorPercent: INSUFFICIENT_DATA_FLOOR_PERCENT,
+});
+
 export function evaluationsModule(db: Database, deps: EvaluationDeps) {
   const EMPLOYEE_COLUMNS = `id, employee_number AS "employeeNumber", full_name AS name, position, branch, status, start_date::text AS start,
     to_char(shift_start, 'HH24:MI') AS "shiftStart", to_char(shift_end, 'HH24:MI') AS "shiftEnd", working_days::int[] AS "workingDays"`;
@@ -140,10 +159,34 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
 
   const num = (value: string | null) => (value === null ? null : Number(value));
 
+  type FrozenRules = { weightSet: { id: number; name: string; isDefault: boolean }; weights: WeightSet["weights"]; inactive: KpiId[]; formulas: SnapshotFormulas };
+
+  /** The weights and formulas saved at the first submission, for a reopened evaluation; null when it was never submitted. */
+  async function firstSubmission(evaluationId: number): Promise<FrozenRules | null> {
+    const row = (await db.query<{ weightSetId: number | null; weightSetName: string; weightSetDefault: boolean; weights: WeightSet["weights"]; formulas: SnapshotFormulas; inactive: KpiId[] | null }>(`
+      SELECT s.weight_set_id AS "weightSetId", s.weight_set_name AS "weightSetName", s.weight_set_default AS "weightSetDefault", s.weights, s.formulas,
+        (SELECT array_agg(r.kpi_id) FROM public.hrms_evaluation_results r WHERE r.submission_id = s.id AND r.reason = 'inactive') AS inactive
+      FROM public.hrms_evaluation_submissions s WHERE s.evaluation_id = $1 AND s.version = 1`, [evaluationId])).rows[0];
+    return row ? { weightSet: { id: row.weightSetId ?? 0, name: row.weightSetName, isDefault: row.weightSetDefault }, weights: row.weights, inactive: row.inactive ?? [], formulas: row.formulas } : null;
+  }
+
+  /** Every submitted version of an evaluation, oldest first, with the reopen that followed it. */
+  async function historyOf(evaluationId: number): Promise<VersionSummary[]> {
+    const { rows } = await db.query<{ version: number; outcome: "scored" | "insufficient-data"; score: string | null; rating: number; weightSetName: string; submittedByName: string; submittedAt: string; reason: string | null; reopenedByName: string | null; reopenedAt: string | null }>(`
+      SELECT s.version, s.outcome, s.score::text AS score, s.rating, s.weight_set_name AS "weightSetName", s.submitted_by_name AS "submittedByName", s.submitted_at::text AS "submittedAt",
+        o.reason, o.reopened_by_name AS "reopenedByName", o.reopened_at::text AS "reopenedAt"
+      FROM public.hrms_evaluation_submissions s LEFT JOIN public.hrms_evaluation_reopens o ON o.evaluation_id = s.evaluation_id AND o.version = s.version
+      WHERE s.evaluation_id = $1 ORDER BY s.version`, [evaluationId]);
+    return rows.map((row) => ({
+      version: row.version, outcome: row.outcome, score: num(row.score), rating: row.rating, weightSetName: row.weightSetName, submittedByName: row.submittedByName, submittedAt: row.submittedAt,
+      reopened: row.reason === null ? null : { reason: row.reason, reopenedByName: row.reopenedByName!, reopenedAt: row.reopenedAt! },
+    }));
+  }
+
   type Assessed = {
     common: Common; scheduled: string[]; excused: string[]; weightsUsed: Partial<Record<KpiId, number>>; weights: WeightSet["weights"] | null;
     issues: AttendanceIssue[]; resultsNotMarked: number; shift: Shift | null; counts: DayCounts | null; graceMinutes: number;
-    rating: number | null; comments: string | null; submitted: SubmittedVersion | null;
+    rating: number | null; comments: string | null; submitted: SubmittedVersion | null; formulas: SnapshotFormulas; rulesFrozen: boolean;
   };
 
   /** What was saved when the evaluation was submitted, shaped like a live assessment. */
@@ -165,6 +208,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
       resultsNotMarked: figures.resultsNotMarked, shift: figures.shift, counts: figures.counts, graceMinutes: figures.graceMinutes,
       rating: submission.rating, comments: submission.comments,
       submitted: { version: submission.version, submittedByName: submission.submittedByName, submittedAt: submission.submittedAt, formulas: submission.formulas },
+      formulas: submission.formulas, rulesFrozen: false,
     };
   }
 
@@ -178,11 +222,16 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
       if (saved) return fromSubmission(employee, evaluation, saved);
     }
     const shift = shiftOf(employee);
-    const [attendance, training, weightSet] = await Promise.all([
+    // A reopened evaluation keeps the weights and formulas it was first submitted with.
+    const frozen = evaluation ? await firstSubmission(evaluation.id) : null;
+    const graceMinutes = frozen ? frozen.formulas.graceMinutes : period.graceMinutes;
+    const [attendance, training, current] = await Promise.all([
       deps.attendance.attendanceFor(employee.id, period.id),
       deps.training.trainingCompletion(employee.id, { from: period.start, to: period.end }),
-      deps.kpis.weightSetFor(employee.position),
+      frozen ? Promise.resolve(null) : deps.kpis.weightSetFor(employee.position),
     ]);
+    const weightSet = frozen ? { ...frozen.weightSet, weights: frozen.weights } : current!;
+    const inactiveKpis = frozen ? frozen.inactive : kpiList.filter((kpi) => kpi.status === "Inactive").map((kpi) => kpi.id);
     const schedule = shift ? await deps.periods.scheduleFor(employee.id, period.id) : null;
     const scheduled = schedule?.scorable ? schedule.scheduledDays : [];
     const excused = schedule?.scorable ? schedule.excusedDays : [];
@@ -193,9 +242,9 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     let counts: DayCounts | null = null;
     if (shift) {
       const scoring = scoreEvaluation({
-        rows: attendance.rows, shift: { start: shift.start, end: shift.end }, graceMinutes: period.graceMinutes, scheduledDays: scheduled, excusedDays: excused,
+        rows: attendance.rows, shift: { start: shift.start, end: shift.end }, graceMinutes, scheduledDays: scheduled, excusedDays: excused,
         training: { completed: training.completion?.completed ?? 0, due: training.completion?.due ?? 0 }, rating: evaluation?.rating ?? null,
-        weights: weightSet.weights, noAttendanceConfirmed: attendance.noAttendanceConfirmed, inactiveKpis: kpiList.filter((kpi) => kpi.status === "Inactive").map((kpi) => kpi.id),
+        weights: weightSet.weights, noAttendanceConfirmed: attendance.noAttendanceConfirmed, inactiveKpis, floorPercent: frozen?.formulas.floorPercent,
       });
       score = scoring.outcome === "scored" ? { outcome: "scored", value: scoring.score } : { outcome: "insufficient-data" };
       weightsUsed = scoring.weightsUsed;
@@ -218,7 +267,8 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     };
     return {
       common, scheduled, excused, weightsUsed, weights: weightSet.weights, issues: attendance.issues, resultsNotMarked: training.resultsNotMarked, shift, counts,
-      graceMinutes: period.graceMinutes, rating: evaluation?.rating ?? null, comments: evaluation?.comments ?? null, submitted: null,
+      graceMinutes, rating: evaluation?.rating ?? null, comments: evaluation?.comments ?? null, submitted: null,
+      formulas: frozen ? frozen.formulas : formulasInForce(period.graceMinutes), rulesFrozen: frozen !== null,
     };
   }
 
@@ -266,11 +316,14 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     return { period, employee: found, evaluation };
   }
 
-  function detailOf(period: Period, assessed: Assessed, evaluation: EvaluationRow | undefined): EvaluationDetail {
+  async function detailOf(period: Period, assessed: Assessed, evaluation: EvaluationRow | undefined): Promise<EvaluationDetail> {
     const submit = submitReadiness({ attendanceImported: assessed.common.attendance.imported, shiftSet: assessed.shift !== null, openIssues: assessed.issues.length, ratingEntered: evaluation !== undefined });
     return {
       ...assessed.common,
       period,
+      formulas: assessed.formulas,
+      rulesFrozen: assessed.rulesFrozen,
+      history: evaluation ? await historyOf(evaluation.id) : [],
       counts: assessed.counts,
       submitted: assessed.submitted,
       scheduledDays: assessed.scheduled,
@@ -289,7 +342,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
   /** Everything the Evaluation page needs for one Employee: the period figures, the KPI results, the weight set and the four Submit checks. */
   async function evaluationFor(employeeId: number, periodId: number): Promise<EvaluationDetail> {
     const { period, employee, evaluation } = await locate(employeeId, periodId);
-    return detailOf(period, await assess(employee, period, evaluation, await deps.kpis.listKpis()), evaluation);
+    return await detailOf(period, await assess(employee, period, evaluation, await deps.kpis.listKpis()), evaluation);
   }
 
   /**
@@ -299,7 +352,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
   async function liveDetail(employeeId: number, periodId: number) {
     const { period, employee, evaluation } = await locate(employeeId, periodId);
     const assessed = await assess(employee, period, evaluation, await deps.kpis.listKpis(), { live: true });
-    return { detail: detailOf(period, { ...assessed, submitted: null }, evaluation), evaluation, employee: { id: employee.id, name: employee.name, employeeNumber: employee.employeeNumber } };
+    return { detail: await detailOf(period, { ...assessed, submitted: null }, evaluation), evaluation, employee: { id: employee.id, name: employee.name, employeeNumber: employee.employeeNumber } };
   }
 
   return { roster, evaluationFor, liveDetail };
