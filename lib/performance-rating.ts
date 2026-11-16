@@ -3,7 +3,10 @@ import { isOnRoster } from "./performance-evaluations-terms";
 import { RosterError } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
 import { PeriodError, type periodsModule } from "./performance-periods";
+import { COMMENTS_MAX_LENGTH, RATING_MAX, RATING_MIN } from "./performance-rating-terms";
 import { cleanMultiline, hasDisallowedText } from "./validators/text";
+
+export { COMMENTS_MAX_LENGTH, RATING_MAX, RATING_MIN };
 
 /**
  * Saving the rating and comments for an Employee in a period. One of the small domain modules behind the Performance
@@ -24,10 +27,6 @@ export class RatingError extends Error {
 }
 
 export type SavedRating = { employeeId: number; periodId: number; rating: number; comments: string; status: "In review"; savedByName: string; savedAt: string };
-
-export const RATING_MIN = 0;
-export const RATING_MAX = 100;
-export const COMMENTS_MAX_LENGTH = 2000;
 
 /** A rating is a whole number from 0 to 100. */
 export function readRating(value: unknown): number {
