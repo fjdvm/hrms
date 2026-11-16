@@ -5,6 +5,8 @@ import { kpiModule, type Actor } from "./performance-kpis";
 import { trainingCompletionModule } from "./performance-training";
 import { periodsModule, type CalendarInput, type OpenPeriodInput } from "./performance-periods";
 import { attendanceModule, type Resolution } from "./performance-attendance";
+import { evaluationsModule } from "./performance-evaluations";
+import type { EvaluationTab } from "./performance-evaluations-terms";
 
 /**
  * The Performance interface: the single seam every Performance ticket extends. It owns the access rule and composes the
@@ -14,6 +16,8 @@ import { attendanceModule, type Resolution } from "./performance-attendance";
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { RosterError, type EvaluationDetail, type KpiLine, type Roster, type RosterRow, type Score, type Shift } from "./performance-evaluations";
+export { EVALUATION_TABS, type EvaluationStatus, type EvaluationTab, type SubmitCheck, type SubmitCheckId, type SubmitReadiness } from "./performance-evaluations-terms";
 export { AttendanceError, type AttendanceImport, type AttendanceIssue, type AttendancePreview, type AttendanceProblem, type AttendanceState, type EmployeeWithoutRecords, type Resolution } from "./performance-attendance";
 export { REJECTION_REASONS, type RawAttendanceRow, type RejectedRow, type RowRejection } from "./performance-attendance-rows";
 export { PeriodError, type CalendarEntry, type CalendarInput, type OpenPeriodInput, type Period, type PeriodProblem, type Schedule } from "./performance-periods";
@@ -35,6 +39,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const training = trainingCompletionModule(db, now);
   const periods = periodsModule(db);
   const attendance = attendanceModule(db, periods);
+  const evaluations = evaluationsModule(db, { periods, attendance, training, kpis });
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -94,5 +99,12 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     resolveDay: async (employeeId: number, periodId: number, date: string, resolution: Resolution) => attendance.resolveDay(await acting(), employeeId, periodId, date, resolution),
     /** Confirms an Employee had no attendance in the period, with a required reason. It counts as full absence. */
     confirmNoAttendance: async (employeeId: number, periodId: number, reason: string) => attendance.confirmNoAttendance(await acting(), employeeId, periodId, reason),
+    /**
+     * Everyone being evaluated in a period with their derived status and score, the tab counts, the progress ("3 of 8 evaluated")
+     * and the Employees not scored for a missing shift. Reads only; it writes no evaluation.
+     */
+    roster: async (periodId: number, tab?: EvaluationTab) => { await acting(); return evaluations.roster(periodId, tab); },
+    /** Everything the Evaluation page needs for one Employee: the period figures, KPI results, weight set and the four Submit checks. */
+    evaluationFor: async (employeeId: number, periodId: number) => { await acting(); return evaluations.evaluationFor(employeeId, periodId); },
   };
 }

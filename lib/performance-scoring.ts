@@ -29,7 +29,8 @@
  *   Evaluator rating    the rating, 0 to 100, as entered.
  *
  * Not applicable. A result that cannot be worked out is left out, never counted as 0: no Training due, no present
- * day (Punctuality and Full shift), no rows at all (the three attendance KPIs), or no rating yet. The weights of the
+ * day (Punctuality and Full shift), no rows at all (the three attendance KPIs), no rating yet, or the KPI is inactive
+ * (HR deactivated it, so it is not scored at all). The weights of the
  * results that remain are rescaled in proportion so they still add up to the set's total; the weights actually used
  * are returned with the result so the score stays explainable.
  *
@@ -64,9 +65,11 @@ export type ScoringInput = {
   weights: Readonly<Record<KpiId, number>>;
   /** HR confirmed this Employee had no attendance for the period. It only matters when there are no rows at all. */
   noAttendanceConfirmed?: boolean;
+  /** KPIs HR has deactivated: they are left out like a Not-applicable result, and the other weights are rescaled. */
+  inactiveKpis?: readonly KpiId[];
 };
 
-export type NotApplicableReason = "no-attendance" | "no-present-days" | "no-training-due" | "no-rating";
+export type NotApplicableReason = "no-attendance" | "no-present-days" | "no-training-due" | "no-rating" | "inactive";
 
 export type KpiResult =
   | { kpi: KpiId; status: "scored"; result: number; weight: number; weightUsed: number; points: number }
@@ -137,7 +140,8 @@ export function scoreEvaluation(input: ScoringInput): Scoring {
   const percent = (part: number, whole: number) => (part / whole) * 100;
   const noAttendance = (rows.length === 0 && !confirmedAbsent) || counted.length === 0;
   type Raw = { result: number } | { reason: NotApplicableReason };
-  const raw: Record<KpiId, Raw> = {
+  const inactive = new Set(input.inactiveKpis ?? []);
+  const worked: Record<KpiId, Raw> = {
     attendanceRate: noAttendance ? { reason: "no-attendance" } : { result: percent(present, counted.length) },
     punctuality: noAttendance ? { reason: "no-attendance" } : present === 0 ? { reason: "no-present-days" } : { result: percent(present - late, present) },
     fullShift: noAttendance ? { reason: "no-attendance" } : present === 0 ? { reason: "no-present-days" } : { result: percent(present - earlyOut, present) },
@@ -145,6 +149,7 @@ export function scoreEvaluation(input: ScoringInput): Scoring {
     evaluatorRating: rating === null ? { reason: "no-rating" } : { result: rating },
   };
 
+  const raw = Object.fromEntries(KPI_IDS.map((kpi) => [kpi, inactive.has(kpi) ? { reason: "inactive" as const } : worked[kpi]])) as Record<KpiId, Raw>;
   const total = KPI_IDS.reduce((sum, kpi) => sum + weights[kpi], 0);
   const remaining = KPI_IDS.reduce((sum, kpi) => sum + ("result" in raw[kpi] ? weights[kpi] : 0), 0);
   const scale = remaining > 0 ? total / remaining : 0;
