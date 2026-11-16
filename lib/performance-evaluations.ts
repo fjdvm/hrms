@@ -1,5 +1,5 @@
 import type { Database } from "./database";
-import { isEvaluationTab, statusOf, progressOf, submitReadiness, tabCounts, type EvaluationStatus, type EvaluationTab, type SubmitReadiness } from "./performance-evaluations-terms";
+import { isEvaluationTab, isOnRoster, statusOf, progressOf, submitReadiness, tabCounts, type EvaluationStatus, type EvaluationTab, type SubmitReadiness } from "./performance-evaluations-terms";
 import type { attendanceModule, AttendanceIssue } from "./performance-attendance";
 import type { Kpi, kpiModule, WeightSet } from "./performance-kpis";
 import { PeriodError, type Period, type periodsModule } from "./performance-periods";
@@ -48,7 +48,7 @@ export type EvaluationDetail = Common & {
   /** The weights actually used after leaving out Not-applicable results. */
   weightsUsed: Partial<Record<KpiId, number>>;
   weights: WeightSet["weights"] | null;
-  rating: { value: number; comments: string } | null;
+  rating: { value: number; comments: string; savedByName: string; savedAt: string } | null;
   issues: AttendanceIssue[];
   resultsNotMarked: number;
   submit: SubmitReadiness;
@@ -73,7 +73,7 @@ type EmployeeRow = {
   id: number; employeeNumber: string; name: string; position: string; branch: string; status: string; start: string;
   shiftStart: string | null; shiftEnd: string | null; workingDays: number[] | null;
 };
-type EvaluationRow = { employeeId: number; rating: number; comments: string; status: "In review" | "Evaluated" };
+type EvaluationRow = { employeeId: number; rating: number; comments: string; status: "In review" | "Evaluated"; savedByName: string; savedAt: string };
 const CHUNK = 8;
 
 export type EvaluationDeps = {
@@ -88,7 +88,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     to_char(shift_start, 'HH24:MI') AS "shiftStart", to_char(shift_end, 'HH24:MI') AS "shiftEnd", working_days::int[] AS "workingDays"`;
 
   async function evaluationsOf(periodId: number): Promise<Map<number, EvaluationRow>> {
-    const { rows } = await db.query<EvaluationRow>(`SELECT employee_id AS "employeeId", rating, comments, status FROM public.hrms_evaluations WHERE period_id = $1`, [periodId]);
+    const { rows } = await db.query<EvaluationRow>(`SELECT employee_id AS "employeeId", rating, comments, status, rated_by_name AS "savedByName", rated_at::text AS "savedAt" FROM public.hrms_evaluations WHERE period_id = $1`, [periodId]);
     return new Map(rows.map((row) => [row.employeeId, row]));
   }
 
@@ -185,7 +185,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     const found = (await db.query<EmployeeRow>(`SELECT ${EMPLOYEE_COLUMNS} FROM public.hrms_employees WHERE id = $1`, [employeeId])).rows[0];
     if (!found) throw new PeriodError("unknown-employee");
     const evaluation = evaluations.get(employeeId);
-    if (!evaluation && !(found.status === "Active" && found.start <= period.end)) throw new RosterError("not-in-roster");
+    if (!isOnRoster(found, period, evaluation !== undefined)) throw new RosterError("not-in-roster");
 
     const assessed = await assess(found, period, evaluation, await deps.kpis.listKpis());
     return {
@@ -196,7 +196,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
       graceMinutes: period.graceMinutes,
       weightsUsed: assessed.weightsUsed,
       weights: assessed.weights,
-      rating: evaluation ? { value: evaluation.rating, comments: evaluation.comments } : null,
+      rating: evaluation ? { value: evaluation.rating, comments: evaluation.comments, savedByName: evaluation.savedByName, savedAt: evaluation.savedAt } : null,
       issues: assessed.issues,
       resultsNotMarked: assessed.resultsNotMarked,
       submit: submitReadiness({ attendanceImported: assessed.common.attendance.imported, shiftSet: assessed.shift !== null, openIssues: assessed.issues.length, ratingEntered: evaluation !== undefined }),
