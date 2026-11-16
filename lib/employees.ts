@@ -1,4 +1,6 @@
 import { documentZip } from "./employee-document-zip";
+import { isClockTime } from "./validators/time";
+import { isWorkingDays } from "./validators/weekdays";
 import { encryptEmployeeId, decryptEmployeeId } from "./employee-encryption";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
@@ -100,7 +102,6 @@ export type EmployeeHistory = Omit<EmployeeAudit,'actorId'> & { effectiveDate: s
 function validDate(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
 }
-const SHIFT_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 /** The shift constraints, by name, and the specific problem each one reports when a write breaks it. */
 const SHIFT_PROBLEMS: Record<string, ShiftProblem> = {
   hrms_employee_shift_complete: "shift-incomplete", hrms_employee_shift_order: "shift-order", hrms_employee_working_days: "shift-days",
@@ -475,13 +476,13 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       const shift = Object.fromEntries(entries.filter(([key]) => ['shiftStart','shiftEnd','workingDays'].includes(key)));
       for (const key of ['shiftStart','shiftEnd']) {
         const value = shift[key];
-        if (value !== undefined && value !== null && (typeof value !== 'string' || !SHIFT_TIME.test(value))) throw new EmployeeError('validation');
+        if (value !== undefined && value !== null && (typeof value !== 'string' || !isClockTime(value))) throw new EmployeeError('validation');
       }
       // Overnight shifts are refused here for a bypassing request; the database refuses the one-sided cases against the stored shift.
       if (typeof shift.shiftStart === 'string' && typeof shift.shiftEnd === 'string' && shift.shiftEnd <= shift.shiftStart) throw new EmployeeError('validation','shift-order');
       if (shift.workingDays !== undefined && shift.workingDays !== null) {
         const days = shift.workingDays;
-        if (!Array.isArray(days) || days.length === 0 || days.some(day => !Number.isInteger(day) || day < 1 || day > 7)) throw new EmployeeError('validation','shift-days');
+        if (!isWorkingDays(days)) throw new EmployeeError('validation','shift-days');
       }
       for (const [key,value] of entries) {
         if (['shiftStart','shiftEnd','workingDays'].includes(key)) continue;

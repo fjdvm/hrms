@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { EmployeeError, type EmployeeSection, type GovernmentIds, type ShiftProblem } from "@/lib/employees";
+import { SHIFT_ORDER_MESSAGE } from "@/lib/employee-edit-form";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
 import { employeesForRequest } from "@/lib/portal/employees";
 
@@ -17,7 +18,7 @@ const MESSAGES: Record<EmployeeError["reason"], string> = {
 
 const SHIFT_MESSAGES: Record<ShiftProblem, string> = {
   "shift-incomplete": "Set the Shift start, Shift end and Working days together, or clear all three.",
-  "shift-order": "Shift end must be after Shift start. Overnight shifts are not supported.",
+  "shift-order": SHIFT_ORDER_MESSAGE,
   "shift-days": "Choose at least one Working day.",
 };
 
