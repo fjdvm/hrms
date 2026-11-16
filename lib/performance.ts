@@ -6,6 +6,7 @@ import { trainingCompletionModule } from "./performance-training";
 import { periodsModule, type CalendarInput, type OpenPeriodInput } from "./performance-periods";
 import { attendanceModule, type Resolution } from "./performance-attendance";
 import { evaluationsModule } from "./performance-evaluations";
+import { ratingModule } from "./performance-rating";
 import type { EvaluationTab } from "./performance-evaluations-terms";
 
 /**
@@ -16,6 +17,7 @@ import type { EvaluationTab } from "./performance-evaluations-terms";
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { COMMENTS_MAX_LENGTH, RatingError, type RatingProblem, type SavedRating } from "./performance-rating";
 export { RosterError, type EvaluationDetail, type KpiLine, type Roster, type RosterRow, type Score, type Shift } from "./performance-evaluations";
 export { EVALUATION_TABS, type EvaluationStatus, type EvaluationTab, type SubmitCheck, type SubmitCheckId, type SubmitReadiness } from "./performance-evaluations-terms";
 export { AttendanceError, type AttendanceImport, type AttendanceIssue, type AttendancePreview, type AttendanceProblem, type AttendanceState, type EmployeeWithoutRecords, type Resolution } from "./performance-attendance";
@@ -40,6 +42,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const periods = periodsModule(db);
   const attendance = attendanceModule(db, periods);
   const evaluations = evaluationsModule(db, { periods, attendance, training, kpis });
+  const rating = ratingModule(db, periods);
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -106,5 +109,11 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     roster: async (periodId: number, tab?: EvaluationTab) => { await acting(); return evaluations.roster(periodId, tab); },
     /** Everything the Evaluation page needs for one Employee: the period figures, KPI results, weight set and the four Submit checks. */
     evaluationFor: async (employeeId: number, periodId: number) => { await acting(); return evaluations.evaluationFor(employeeId, periodId); },
+    /**
+     * Saves the rating (0 to 100) and the comments for an Employee in a period. The first save pins the Employee to the period and
+     * moves the status from Draft to In review. They can be changed until the evaluation is submitted. Any order relative to the
+     * attendance import and the shift.
+     */
+    saveRating: async (employeeId: number, periodId: number, input: { rating: unknown; comments?: unknown }) => rating.saveRating(await acting(), employeeId, periodId, input),
   };
 }

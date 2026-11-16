@@ -57,3 +57,10 @@ export function submitReadiness(facts: ReadinessFacts): SubmitReadiness {
   const blocked = checks.find((check) => !check.passed);
   return { checks, unlocked: !blocked, reason: blocked?.reason ?? null, action: blocked?.id === "rating-entered" ? "enter-rating" : null };
 }
+
+/**
+ * Whether an Employee is on a period's roster: Active with a start date on or before the period's end, or already holding a
+ * saved evaluation in it, whatever later happened to their record. An Onboarding Employee is not on it.
+ */
+export const isOnRoster = (employee: { status: string; start: string }, period: { end: string }, hasEvaluation: boolean) =>
+  hasEvaluation || (employee.status === "Active" && employee.start <= period.end);
