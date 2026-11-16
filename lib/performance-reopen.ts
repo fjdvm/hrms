@@ -3,7 +3,10 @@ import type { Database } from "./database";
 import { retryJobPostingAudit } from "./job-posting-audit";
 import type { evaluationsModule } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
+import { REASON_MAX_LENGTH } from "./performance-reopen-terms";
 import { cleanMultiline, hasDisallowedText } from "./validators/text";
+
+export { REASON_MAX_LENGTH };
 
 /**
  * Reopening an evaluated evaluation. One of the small domain modules behind the Performance interface; it takes the Staff
@@ -28,8 +31,6 @@ export class ReopenError extends Error {
 }
 
 export type ReopenedEvaluation = { employeeId: number; periodId: number; status: "In review"; version: number; reason: string; reopenedByName: string; reopenedAt: string };
-
-export const REASON_MAX_LENGTH = 500;
 
 /** The reason is required: cleaned, but refused (not quietly changed) when it holds characters that do not belong in it. */
 export function readReopenReason(value: unknown): string {

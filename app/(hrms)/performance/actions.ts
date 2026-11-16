@@ -2,10 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, KpiError, PerformanceError, PeriodError, RatingError, RosterError, SubmitError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
+import { AttendanceError, KpiError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
+import { reopenMessage } from "@/lib/performance-reopen-terms";
 import { submitMessage } from "@/lib/performance-submit-messages";
 import { ratingMessage } from "@/lib/performance-rating-terms";
 import { LOGIN_PATH, NO_ACCESS_PATH } from "@/lib/portal/config";
@@ -21,6 +22,7 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
+    if (error instanceof ReopenError) return { ok: false, error: reopenMessage(error.problem) };
     if (error instanceof SubmitError) return { ok: false, error: submitMessage(error.problem, error.missing) };
     if (error instanceof AttendanceError) return { ok: false, error: attendanceMessage(error.problem) };
     if (error instanceof RatingError) return { ok: false, error: ratingMessage(error.problem) };
@@ -98,4 +100,12 @@ export async function confirmNoAttendance(employeeId: number, periodId: number, 
  */
 export async function submitEvaluation(employeeId: number, periodId: number): Promise<PeriodActionResult> {
   return run(async () => (await performanceForRequest()).submitEvaluation(employeeId, periodId), evaluationPaths(employeeId));
+}
+
+/**
+ * Reopens an evaluated evaluation with a required reason. It returns to In review; the submitted version is kept and the score is
+ * recalculated from current data with the same weights. No email is sent. The page is refreshed so it shows In review.
+ */
+export async function reopenEvaluation(employeeId: number, periodId: number, reason: string): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).reopenEvaluation(employeeId, periodId, reason), evaluationPaths(employeeId));
 }

@@ -142,3 +142,15 @@ export function periodFigures(detail: Pick<EvaluationDetail, "period" | "shift" 
     grace: `${detail.graceMinutes} ${detail.graceMinutes === 1 ? "minute" : "minutes"}`,
   };
 }
+
+export const REOPENING_NOTE = "Any Staff member who holds Performance can reopen a submitted evaluation, with a recorded reason. The previous version is kept.";
+
+/** After a reopen: who reopened it, when and why, and which submitted version is kept. Null while it is submitted or never was. */
+export function keptVersionNote(detail: Pick<EvaluationDetail, "history" | "submitted">): string | null {
+  if (detail.submitted) return null;
+  const last = detail.history.at(-1);
+  if (!last) return null;
+  const score = last.score === null ? "Insufficient data" : last.score.toFixed(1);
+  const reopened = last.reopened ? `Reopened by ${last.reopened.reopenedByName} on ${dayMonthYear(last.reopened.reopenedAt)}: ${last.reopened.reason} ` : "";
+  return `${reopened}Version ${last.version}, submitted on ${dayMonthYear(last.submittedAt)} (${score}), is kept.`;
+}

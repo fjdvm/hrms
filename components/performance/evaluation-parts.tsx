@@ -5,21 +5,21 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { HEAD } from "@/components/hiring/parts";
 import type { EvaluationDetail } from "@/lib/performance-evaluations";
-import { bannerText, checklist, lineFigures, overallFigures, periodFigures, scoreHeadline, scoredWeight } from "@/lib/performance-evaluation-view";
+import { REOPENING_NOTE, bannerText, checklist, keptVersionNote, lineFigures, overallFigures, periodFigures, scoreHeadline, scoredWeight } from "@/lib/performance-evaluation-view";
 import { cn } from "@/lib/utils";
 
 const TITLE = "text-[15px] font-semibold text-foreground";
 const CAPTION = "text-xs text-muted-foreground";
 
 /** The banner: whether Submit is unlocked, or why it is locked, with an Enter rating button when the rating is what is missing. */
-export function Banner({ detail, onEnterRating, onReopen }: { detail: EvaluationDetail; onEnterRating: () => void; /** Wired by the Reopen evaluation dialog; without it the button is shown but cannot act. */ onReopen?: () => void }) {
+export function Banner({ detail, onEnterRating, onReopen }: { detail: EvaluationDetail; onEnterRating: () => void; onReopen: () => void }) {
   const locked = !detail.submit.unlocked && !detail.submitted;
   return (
     <div role="status" data-testid="submit-banner" className="flex flex-wrap items-center gap-sm rounded-xl bg-[#fdf1d8] px-[20px] py-[14px] text-[13px] text-[#8a5a00]">
       <TriangleAlert aria-hidden className="size-4 shrink-0" />
       <p className="min-w-[240px] flex-1">{bannerText(detail)}</p>
       {detail.submitted && (
-        <Button type="button" variant="outline" disabled={!onReopen} onClick={onReopen} className="h-auto gap-[6px] rounded-lg border-[#e6e1ee] bg-white px-[14px] py-[8px] text-[#1f1a2e] shadow-none disabled:opacity-40"><RotateCcw aria-hidden className="size-4" />Reopen evaluation</Button>
+        <Button type="button" variant="outline" onClick={onReopen} className="h-auto gap-[6px] rounded-lg border-[#e6e1ee] bg-white px-[14px] py-[8px] text-[#1f1a2e] shadow-none"><RotateCcw aria-hidden className="size-4" />Reopen evaluation</Button>
       )}
       {locked && detail.submit.action === "enter-rating" && (
         <Button type="button" variant="outline" onClick={onEnterRating} className="h-auto rounded-lg border-[#e6e1ee] bg-white px-[14px] py-[8px] text-[#1f1a2e] shadow-none">Enter rating</Button>
@@ -114,6 +114,18 @@ export function Checklist({ detail }: { detail: EvaluationDetail }) {
           </li>
         ))}
       </ul>
+    </Card>
+  );
+}
+
+/** The Reopening note, and after a reopen which submitted version is kept. The full History panel belongs to the later spec. */
+export function ReopeningCard({ detail }: { detail: EvaluationDetail }) {
+  const kept = keptVersionNote(detail);
+  return (
+    <Card className="flex flex-col gap-[8px] rounded-xl p-[20px] shadow-none">
+      <h2 className={TITLE}>Reopening</h2>
+      <p className="text-sm text-muted-foreground">{REOPENING_NOTE}</p>
+      {kept && <p data-testid="kept-version" className="text-sm text-foreground">{kept}</p>}
     </Card>
   );
 }

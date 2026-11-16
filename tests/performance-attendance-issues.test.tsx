@@ -6,7 +6,7 @@ import { EvaluationView } from "@/components/performance/evaluation-view";
 import type { EvaluationDetail, KpiLine } from "@/lib/performance-evaluations";
 import { submitReadiness } from "@/lib/performance-evaluations-terms";
 
-const actions = vi.hoisted(() => ({ saveEvaluationRating: vi.fn(), submitEvaluation: vi.fn(), resolveAttendanceDay: vi.fn(), confirmNoAttendance: vi.fn() }));
+const actions = vi.hoisted(() => ({ saveEvaluationRating: vi.fn(), submitEvaluation: vi.fn(), reopenEvaluation: vi.fn(), resolveAttendanceDay: vi.fn(), confirmNoAttendance: vi.fn() }));
 vi.mock("@/app/(hrms)/performance/actions", () => actions);
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
