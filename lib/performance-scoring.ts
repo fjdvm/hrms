@@ -39,6 +39,21 @@
  * result is "Insufficient data" and no score is returned.
  */
 
+/**
+ * The version of these rules. A submitted evaluation stores the formulas below with it, so a later change to a rule never alters it;
+ * change this when a formula, the grace handling or the floor changes.
+ */
+export const SCORING_RULES_VERSION = "2026-11";
+
+/** The formulas as HR reads them. Saved with every submitted evaluation. */
+export const SCORING_FORMULAS = {
+  attendanceRate: "Days with a time-in and a time-out ÷ (scheduled days − excused days) × 100",
+  punctuality: "(Present days − late days) ÷ present days × 100. Late: a time-in after the shift start plus the grace period; exactly at that time is on time.",
+  fullShift: "(Present days − early-out days) ÷ present days × 100. Early-out: a time-out before the shift end.",
+  trainingCompletion: "Trainings completed ÷ Trainings due in the period × 100. Not applicable when none were due.",
+  evaluatorRating: "The evaluator's rating, from 0 to 100.",
+} as const;
+
 export const KPI_IDS = ["attendanceRate", "punctuality", "fullShift", "trainingCompletion", "evaluatorRating"] as const;
 export type KpiId = (typeof KPI_IDS)[number];
 

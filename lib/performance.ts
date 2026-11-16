@@ -7,6 +7,7 @@ import { periodsModule, type CalendarInput, type OpenPeriodInput } from "./perfo
 import { attendanceModule, type Resolution } from "./performance-attendance";
 import { evaluationsModule } from "./performance-evaluations";
 import { ratingModule } from "./performance-rating";
+import { submitModule } from "./performance-submit";
 import type { EvaluationTab } from "./performance-evaluations-terms";
 
 /**
@@ -17,6 +18,7 @@ import type { EvaluationTab } from "./performance-evaluations-terms";
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { SubmitError, type SubmitProblem, type SubmittedEvaluation } from "./performance-submit";
 export { COMMENTS_MAX_LENGTH, RatingError, type RatingProblem, type SavedRating } from "./performance-rating";
 export { RosterError, type EvaluationDetail, type KpiLine, type Roster, type RosterRow, type Score, type Shift } from "./performance-evaluations";
 export { EVALUATION_TABS, type EvaluationStatus, type EvaluationTab, type SubmitCheck, type SubmitCheckId, type SubmitReadiness } from "./performance-evaluations-terms";
@@ -43,6 +45,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const attendance = attendanceModule(db, periods);
   const evaluations = evaluationsModule(db, { periods, attendance, training, kpis });
   const rating = ratingModule(db, periods);
+  const submit = submitModule(db, { evaluations });
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -115,5 +118,11 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
      * attendance import and the shift.
      */
     saveRating: async (employeeId: number, periodId: number, input: { rating: unknown; comments?: unknown }) => rating.saveRating(await acting(), employeeId, periodId, input),
+    /**
+     * Submits an evaluation: allowed only when attendance is imported, the shift is set, attendance issues are resolved and the rating
+     * is entered. It locks the evaluation and saves the KPI results, score, weights, formulas, weight set name and rating, so nothing
+     * that changes later can alter it. The audit event is queued with the change; no email or notification is sent.
+     */
+    submitEvaluation: async (employeeId: number, periodId: number) => submit.submitEvaluation(await acting(), employeeId, periodId),
   };
 }
