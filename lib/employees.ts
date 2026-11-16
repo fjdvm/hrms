@@ -67,9 +67,11 @@ const csvCell = (value: string) => {
   const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   return /[",\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
 };
+/** Why a shift was refused, when that is the reason a "validation" error was raised. */
+export type ShiftProblem = "shift-incomplete" | "shift-order" | "shift-days";
 export class EmployeeError extends Error {
-  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found") {
-    super(`Employee: ${reason}`);
+  constructor(public readonly reason: "denied" | "invalid" | "unavailable" | "validation" | "not-found", public readonly detail?: ShiftProblem) {
+    super(`Employee: ${reason}${detail ? ` (${detail})` : ""}`);
   }
 }
 type EmployeeRow = {
@@ -78,6 +80,7 @@ type EmployeeRow = {
   position: string; department: string | null; branch: string; startDate: string; status: string;
   probationEndDate: string | null; offerId: number; applicationId: number; employmentType: string;
   schedule: string; reportsTo: string; monthlyPay: number; signed: boolean;
+  shiftStart: string | null; shiftEnd: string | null; workingDays: number[] | null;
 };
 export type GovernmentIds = { sss: string | null; philhealth: string | null; pagibigMid: string | null; tin: string | null };
 const ID_FIELDS = ["sss", "philhealth", "pagibigMid", "tin"] as const;
@@ -87,7 +90,7 @@ type StoredDocument = { type: string; source: string; fileId: string | null; fil
 
 const SECTION_FIELDS: Record<string, Record<string,string>> = {
   personal: { name: 'full_name',email: 'email',birthday: 'birthday',sex: 'sex',civilStatus: 'civil_status',mobile: 'mobile',homeAddress: 'home_address' },
-  employment: { position: 'position',department: 'department',branch: 'branch',employmentType: 'employment_type',startDate: 'start_date',probationEndDate: 'probation_end_date',reportsTo: 'reports_to',schedule: 'schedule' },
+  employment: { position: 'position',department: 'department',branch: 'branch',employmentType: 'employment_type',startDate: 'start_date',probationEndDate: 'probation_end_date',reportsTo: 'reports_to',schedule: 'schedule',shiftStart: 'shift_start',shiftEnd: 'shift_end',workingDays: 'working_days' },
   emergencyContact: { name: 'name',relationship: 'relationship',mobile: 'mobile' },
   contract: { monthlyPay: 'monthly_salary' },
 };
@@ -97,6 +100,11 @@ export type EmployeeHistory = Omit<EmployeeAudit,'actorId'> & { effectiveDate: s
 function validDate(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
 }
+const SHIFT_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** The shift constraints, by name, and the specific problem each one reports when a write breaks it. */
+const SHIFT_PROBLEMS: Record<string, ShiftProblem> = {
+  hrms_employee_shift_complete: "shift-incomplete", hrms_employee_shift_order: "shift-order", hrms_employee_working_days: "shift-days",
+};
 async function requireEmployee(id: number, db: Database) {
   if (!validId(id)) throw new EmployeeError('validation');
   if (!(await db.query('SELECT id FROM public.hrms_employees WHERE id=$1',[id])).rows.length) throw new EmployeeError('not-found');
@@ -464,7 +472,19 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       if (!entries.length || entries.some(([key]) => !Object.hasOwn(fields,key))) throw new EmployeeError('validation');
       const today = now().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
       if (effectiveDate !== undefined && !validDate(effectiveDate)) throw new EmployeeError('validation');
+      const shift = Object.fromEntries(entries.filter(([key]) => ['shiftStart','shiftEnd','workingDays'].includes(key)));
+      for (const key of ['shiftStart','shiftEnd']) {
+        const value = shift[key];
+        if (value !== undefined && value !== null && (typeof value !== 'string' || !SHIFT_TIME.test(value))) throw new EmployeeError('validation');
+      }
+      // Overnight shifts are refused here for a bypassing request; the database refuses the one-sided cases against the stored shift.
+      if (typeof shift.shiftStart === 'string' && typeof shift.shiftEnd === 'string' && shift.shiftEnd <= shift.shiftStart) throw new EmployeeError('validation','shift-order');
+      if (shift.workingDays !== undefined && shift.workingDays !== null) {
+        const days = shift.workingDays;
+        if (!Array.isArray(days) || days.length === 0 || days.some(day => !Number.isInteger(day) || day < 1 || day > 7)) throw new EmployeeError('validation','shift-days');
+      }
       for (const [key,value] of entries) {
+        if (['shiftStart','shiftEnd','workingDays'].includes(key)) continue;
         if (key === 'monthlyPay') {
           if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 2147483647) throw new EmployeeError('validation');
         } else if (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 1000)) throw new EmployeeError('validation');
@@ -475,8 +495,8 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       }
       const values: unknown[] = [id,staff.id ?? staff.username,staff.name,effectiveDate ?? today];
       const columns = entries.map(([key,value]) => {
-        values.push(typeof value === 'string' ? value.trim() : value);
-        return { column: fields[key], parameter: `$${values.length}` };
+        values.push(typeof value === 'string' ? value.trim() : key === 'workingDays' && Array.isArray(value) ? [...new Set(value as number[])].sort((a,b) => a-b) : value);
+        return { column: fields[key], parameter: `$${values.length}${key === 'workingDays' ? '::smallint[]' : ''}` };
       });
       const actor = `WITH actor AS MATERIALIZED (SELECT set_config('hrms.actor_id',$2,true),set_config('hrms.actor_name',$3,true),set_config('hrms.effective_date',$4,true))`;
       const sql = section === 'emergencyContact'
@@ -487,7 +507,9 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
       try {
         if (!(await db.query(sql,values)).rows.length) throw new EmployeeError('not-found');
       } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === '23514') throw new EmployeeError('validation');
+        if (error && typeof error === 'object' && 'code' in error && error.code === '23514') {
+          throw new EmployeeError('validation', 'constraint' in error && typeof error.constraint === 'string' ? SHIFT_PROBLEMS[error.constraint] : undefined);
+        }
         throw error;
       }
     },
@@ -535,7 +557,8 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
         e.email, e.birthday::text, e.sex, e.civil_status AS "civilStatus", e.mobile, e.home_address AS "homeAddress",
         e.position, e.department, e.branch, e.start_date::text AS "startDate", e.status,
         e.probation_end_date::text AS "probationEndDate", e.offer_id AS "offerId", e.application_id AS "applicationId",
-        e.employment_type AS "employmentType", e.schedule, e.reports_to AS "reportsTo", e.monthly_salary AS "monthlyPay",
+        e.employment_type AS "employmentType", e.schedule, e.reports_to AS "reportsTo",
+        to_char(e.shift_start,'HH24:MI') AS "shiftStart", to_char(e.shift_end,'HH24:MI') AS "shiftEnd", e.working_days::int[] AS "workingDays", e.monthly_salary AS "monthlyPay",
         o.status = 'Accepted' AS signed FROM public.hrms_employees e JOIN public.hrms_offers o ON o.id = e.offer_id WHERE e.id = $1`, [id]);
       const e = rows[0];
       if (!e) throw new EmployeeError("not-found");
@@ -563,6 +586,7 @@ export function employeesFor(sessionHandle: string | undefined, db: Database = d
         personal: { name: e.name, email: e.email, birthday: e.birthday, age, sex: e.sex, civilStatus: e.civilStatus, mobile: e.mobile, homeAddress: e.homeAddress },
         employment: { position: e.position, department: e.department, branch: e.branch, startDate: e.startDate, status: e.status,
           probationEndDate: e.probationEndDate, reportsTo: e.reportsTo, schedule: e.schedule,
+          shiftStart: e.shiftStart, shiftEnd: e.shiftEnd, workingDays: e.workingDays,
           hiredFrom: { offerId: e.offerId, applicationId: e.applicationId, offerUrl: `/offers/${e.offerId}`, applicationUrl: `/applicants/${e.applicationId}` } },
         governmentIds,
         canEdit: { personal: true, employment: true, emergencyContact: true, governmentIds: sensitive, contract: sensitive },
