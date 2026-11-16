@@ -82,6 +82,8 @@ export type ScoringInput = {
   noAttendanceConfirmed?: boolean;
   /** KPIs HR has deactivated: they are left out like a Not-applicable result, and the other weights are rescaled. */
   inactiveKpis?: readonly KpiId[];
+  /** The floor in force, as a percent of the weight remaining. Defaults to {@link INSUFFICIENT_DATA_FLOOR_PERCENT}; a reopened evaluation passes the one saved when it was first submitted. */
+  floorPercent?: number;
 };
 
 export type NotApplicableReason = "no-attendance" | "no-present-days" | "no-training-due" | "no-rating" | "inactive";
@@ -186,7 +188,7 @@ export function scoreEvaluation(input: ScoringInput): Scoring {
     weightRemainingPercent: total > 0 ? (remaining / total) * 100 : 0,
   };
   // Compared without division so exactly 60% of the weight is enough and a hair under is not.
-  if (total <= 0 || remaining * 100 < INSUFFICIENT_DATA_FLOOR_PERCENT * total) return { ...common, outcome: "insufficient-data" };
+  if (total <= 0 || remaining * 100 < (input.floorPercent ?? INSUFFICIENT_DATA_FLOOR_PERCENT) * total) return { ...common, outcome: "insufficient-data" };
   const score = results.reduce((sum, result) => sum + (result.status === "scored" ? result.points : 0), 0);
   return { ...common, outcome: "scored", score: roundScore(score) };
 }
