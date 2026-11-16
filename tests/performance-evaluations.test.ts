@@ -371,8 +371,8 @@ describe("a read model that writes nothing", () => {
     await performance().roster(period.id);
     await performance().evaluationFor(ana, period.id);
     expect(await tableCounts()).toBe(before);
-    // Saving a rating is its own operation (#420); submit and reopen come later. Reading is what must write nothing.
-    expect(Object.keys(performance()).filter((name) => /^(saveEvaluation|submit|reopen)/i.test(name))).toEqual([]);
+    // Saving a rating (#420) and submitting (#424) are their own operations; reopen comes later. Reading is what must write nothing.
+    expect(Object.keys(performance()).filter((name) => /^(saveEvaluation|reopen)/i.test(name))).toEqual([]);
   });
 });
 
