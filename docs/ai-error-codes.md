@@ -25,8 +25,26 @@ feature is recorded separately in the usage log.
 | `AI-0092` | Timed out | The call took longer than 30 seconds. | That took too long. Please try again. | Red |
 | `AI-0093` | Draft not usable | The output failed the schema or wording checks twice. | The AI draft couldn't be used. Please try again or write it yourself. | Red |
 | `AI-0094` | Feature off | The feature's switch is off. | None: the button is hidden or disabled with a tooltip. | None |
+| `AI-0100` | Not available for this evaluation | Development suggestions only: the Evaluation has Insufficient data, so there are too few KPI results to suggest from. | Suggestions aren't available for this evaluation: it has Insufficient data, so there are too few KPI results to suggest from. | Grey (info) |
 
-`AI-0095` to `AI-0099` are held for further Job description drafter codes. Later features take the next free numbers.
+`AI-0095` to `AI-0099` are held for further Job description drafter codes. Later features take the next free numbers, starting at `AI-0100`.
+
+### Wording per feature
+
+The code and its meaning are the same in every feature; only the noun and the "what you can still do" sentence change.
+
+| Code | Job description drafter | Development suggestions |
+| --- | --- | --- |
+| `AI-0089` | You've used all 20 AI drafts today. The limit resets at 12:00 AM Manila time. You can still write the posting yourself. | You've used all 60 AI suggestions today. The limit resets at 12:00 AM Manila time. You can still flag development needs yourself. |
+| `AI-0090` | AI drafting is unavailable right now. Please try again tomorrow. | AI suggestions are unavailable right now. Please try again tomorrow. |
+| `AI-0091` | The AI service is busy. Please try again in a moment. | The AI service is busy. Please try again in a moment. |
+| `AI-0092` | That took too long. Please try again. | That took too long. Please try again. |
+| `AI-0093` | The AI draft couldn't be used. Please try again or write it yourself. | The AI suggestions couldn't be used. Please try again or flag a development need yourself. |
+| `AI-0094` | Button hidden or disabled with a tooltip. | Button hidden or disabled with a tooltip. |
+| `AI-0100` | Not used. | Suggestions aren't available for this evaluation: it has Insufficient data, so there are too few KPI results to suggest from. |
+
+Development suggestions are only offered on a submitted (Evaluated) Evaluation, so the button is hidden on one that is still in review
+(that is not an error, so it has no code). An Evaluation with Insufficient data shows `AI-0100` in place of the suggestions.
 
 ### Rules for the codes
 
@@ -65,12 +83,23 @@ the time. The log holds no prompt text and no drafted text.
 
 ## Where it is designed
 
-The proposal frames are in the HRMS page of the Bren Raphael's CRM Figma file, in the row titled "AI · Job description drafter
-(proposal)":
+The proposal frames are in the HRMS page of the Bren Raphael's CRM Figma file, in two rows below the existing frames. Existing frames
+are unchanged; every proposal layer is named "(proposal)".
+
+**AI · Job description drafter**
 
 - **Dialog · Draft with AI · Limit reached** shows `AI-0089`.
 - **Dialog · Draft with AI · Unavailable** shows `AI-0091`.
-- **Reference · AI error codes · Job description drafter** is the table above.
+- **Reference · AI error codes · Job description drafter** is the table of codes and messages.
+
+**AI · Development suggestions**
+
+- **Evaluation · AI suggestions · Limit reached** shows `AI-0089`.
+- **Evaluation · AI suggestions · Unavailable** shows `AI-0091`.
+- **Evaluation · AI suggestions · Not available** shows `AI-0100`.
+- **Reference · AI error codes · Development suggestions** is the table with this feature's wording.
+
+`AI-0090`, `AI-0092` and `AI-0093` have no frame of their own: they reuse the same banner with the message in the tables above.
 
 ## Tests
 
