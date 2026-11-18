@@ -169,6 +169,11 @@ describe("an unusable result (AI-0093)", () => {
     expect(await rows()).toMatchObject([{ outcome: "success", input_tokens: 240, output_tokens: 160 }]);
     expect(await draftsLeft(db, "u-ada", "job-draft", config(), NOW)).toBe(19);
   });
+  it("tells the validator which try it is: 0 for the first, 1 for the regeneration", async () => {
+    const attempts: number[] = [];
+    await run({ client: answer(good), parse: (_output: unknown, attempt?: number) => { attempts.push(attempt as number); return attempts.length === 1 ? null : { summary: "ok" }; } });
+    expect(attempts).toEqual([0, 1]);
+  });
   it("treats a provider answer with nothing usable like an unusable result", async () => {
     const client = answer({ ok: false, reason: "bad-response", inputTokens: 10, outputTokens: 0 });
     expect(await failure(run({ client }))).toMatchObject({ code: "AI-0093" });

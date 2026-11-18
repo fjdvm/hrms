@@ -13,8 +13,8 @@ export type RunAiInput<T> = {
   feature: AiFeature;
   /** The model is filled in from the config. */
   request: Omit<AiRequest, "model">;
-  /** Checks the provider's output against our own schema (and any wording check). Returns the usable value, or null when it cannot be used. */
-  parse: (output: unknown) => T | null;
+  /** Checks the provider's output against our own schema (and any wording check). Returns the usable value, or null when it cannot be used. `attempt` is 0 for the first try and 1 for the regeneration. */
+  parse: (output: unknown, attempt: number) => T | null;
   /** The provider seam. Defaults to a real OpenAI client; tests pass a fake. */
   client?: AiClient;
   config?: AiConfig;
@@ -54,7 +54,7 @@ export async function runAi<T>(input: RunAiInput<T>): Promise<AiResult<T>> {
       inputTokens += result.ok ? result.inputTokens : (result.inputTokens ?? 0);
       outputTokens += result.ok ? result.outputTokens : (result.outputTokens ?? 0);
       if (result.ok) {
-        try { value = input.parse(result.output); } catch { value = null; }
+        try { value = input.parse(result.output, attempt); } catch { value = null; }
         reason = "unusable";
       } else if (result.reason === "bad-response") {
         reason = "unusable";
