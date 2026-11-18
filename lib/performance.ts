@@ -20,7 +20,7 @@ import type { NeedInput } from "./performance-needs";
  */
 
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
-export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
+export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion, type TrainingForSuggestions, type TrainingTitle } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
 export { NeedError, ACTION_MAX_LENGTH, GAP_MAX_LENGTH, type DevelopmentNeed, type NeedInput, type NeedProblem } from "./performance-needs";
 export { SubmitError, type SubmitProblem, type SubmittedEvaluation } from "./performance-submit";
@@ -88,6 +88,16 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
      * as the Trainings card. Needs Performance only, and returns figures only, never the Trainings themselves.
      */
     trainingCompletion: async (employeeId: number, range: { from: string; to: string }) => { await acting(); return training.trainingCompletion(employeeId, range); },
+    /**
+     * The titles of scheduled Trainings (not cancelled, not yet held), nearest first, as `{ id, title }` and nothing else: no trainer, date, time,
+     * venue, assignee or result. It needs Performance and not Training (ADR-0004, amended). It is what the Flag development need dialog offers.
+     */
+    scheduledTrainingTitles: async () => { await acting(); return training.scheduledTitles(); },
+    /**
+     * The same Trainings with their objectives, `{ id, title, objectives }`, for building the AI suggestions request only. A screen never shows it.
+     * Needs Performance and not Training.
+     */
+    scheduledTrainingsForSuggestions: async () => { await acting(); return training.scheduledForSuggestions(); },
     /** The Evaluation periods, latest first. */
     listPeriods: async () => { await acting(); return periods.listPeriods(); },
     /** Opens a company-wide period (Month, Quarter or Custom). One that overlaps another by date is refused, naming it. */
