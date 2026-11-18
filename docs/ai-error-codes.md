@@ -4,16 +4,24 @@
 > rules, written before the code so the screens, the server and support all use the same numbers. Update it in the same change
 > that adds, renames or retires a code.
 
-Every refusal or failure of an AI feature (the Job description drafter now, Development suggestions later) shows one short
-message and one **error code** under it. The code is for support and logs; the wording can change, the number never does.
+Every refusal or failure of an AI feature (the Job description drafter now, Development suggestions later) has an **internal error
+code**. Staff never see the code. They see one short message that says exactly what happened, and on a red error they also see a
+short **Reference ID** for that attempt.
 
 ```
-You've used all 20 AI drafts today. The limit resets at 12:00 AM Manila time.
-Error code AI-0089
+Yellow (expected, nothing to report):
+  You've used all 20 AI drafts today. The limit resets at 12:00 AM Manila time. You can still write the posting yourself.
+
+Red (unexpected):
+  The AI service is busy. Please try again in a moment.
+  Reference 7F3K2A · give this to support if the problem continues
 ```
 
-The format is `AI-` and four digits. All AI features share one list: `AI-0089` means "daily limit reached" for any of them, and the
-feature is recorded separately in the usage log.
+- **The code** (`AI-` and four digits) is used in logs, the usage table, the code-to-message map and these docs. The wording can
+  change; the number never does. All AI features share one list: `AI-0089` means "daily limit reached" for any of them.
+- **The Reference ID** is a random six-character id made for each failed attempt. Support searches the usage log for it to find that
+  exact attempt and its code. It is shown only on red banners (`AI-0091`, `AI-0092`, `AI-0093`), where Staff may need to report a
+  problem. Yellow banners and the "Not available" notice already say everything, so they show no code and no reference.
 
 ## Codes
 
@@ -48,12 +56,14 @@ Development suggestions are only offered on a submitted (Evaluated) Evaluation, 
 
 ### Rules for the codes
 
+- **Staff never see a code.** The message carries the meaning; the Reference ID on a red banner carries the lookup.
 - **Never reuse or renumber a code.** Retire it in the table (keep the row, mark it Retired) and add a new one.
-- **No billing or quota wording reaches Staff.** A provider quota or billing error is shown as `AI-0091` with the generic message;
+- **No billing or quota wording reaches Staff.** A provider quota or billing error is shown with the generic "busy" message (`AI-0091`);
   the real provider detail is logged on the server only.
 - **No personal data in a message or a log row.** Prompts and drafted text are not stored in the usage log.
 - **Wording that is not an error is not a code.** The "Needs a look" notice on a draft (a flagged phrase such as a gender preference)
   is a warning on a usable draft, not a failure, so it has no code.
+- **A Reference ID holds no personal data and no meaning.** It is random, so it cannot be guessed from a Staff member or a posting.
 - **One place in code maps a reason to a code and a message,** beside the other `*-messages.ts` maps. Screens never write a
   code or a message themselves.
 
@@ -73,13 +83,14 @@ Development suggestions are only offered on a submitted (Evaluated) Evaluation, 
 - **No overshoot.** The check and the usage row are written in one SQL statement, so two clicks at the same moment cannot both
   take the last slot.
 - **The dialog shows what is left**, for example "17 of 20 drafts left today". At zero the Generate button is disabled and the
-  `AI-0089` message shows.
+  limit message (`AI-0089`) shows.
 
-## Where the code is stored
+## Where the code and the Reference ID are stored
 
-The AI usage log (`hrms_ai_usage`) records, for each call: the Staff member, the feature, the model, token counts, the outcome
-and the error code when there is one. Support can find a Staff member's report ("I saw AI-0091 at about 10:15") by the code and
-the time. The log holds no prompt text and no drafted text.
+The AI usage log (`hrms_ai_usage`) records, for each call: the Staff member, the feature, the model, token counts, the outcome, the
+internal error code when there is one, and the Reference ID. Support finds a Staff member's report by the Reference ID they read out
+("7F3K2A"), or by the time when they have no ID. Counting by code (how often `AI-0091` happened this week) is for the team, not
+shown to Staff. The log holds no prompt text and no drafted text.
 
 ## Where it is designed
 
@@ -88,21 +99,27 @@ are unchanged; every proposal layer is named "(proposal)".
 
 **AI · Job description drafter**
 
-- **Dialog · Draft with AI · Limit reached** shows `AI-0089`.
-- **Dialog · Draft with AI · Unavailable** shows `AI-0091`.
+- **Dialog · Draft with AI · Limit reached** shows the yellow limit message (`AI-0089`), with no code on screen.
+- **Dialog · Draft with AI · Unavailable** shows the red busy message (`AI-0091`) and a Reference ID.
 - **Reference · AI error codes · Job description drafter** is the table of codes and messages.
 
 **AI · Development suggestions**
 
-- **Evaluation · AI suggestions · Limit reached** shows `AI-0089`.
-- **Evaluation · AI suggestions · Unavailable** shows `AI-0091`.
-- **Evaluation · AI suggestions · Not available** shows `AI-0100`.
+- **Evaluation · AI suggestions · Limit reached** shows the yellow limit message (`AI-0089`), with no code on screen.
+- **Evaluation · AI suggestions · Unavailable** shows the red busy message (`AI-0091`) and a Reference ID.
+- **Evaluation · AI suggestions · Not available** shows the grey notice (`AI-0100`), with no code on screen.
 - **Reference · AI error codes · Development suggestions** is the table with this feature's wording.
 
-`AI-0090`, `AI-0092` and `AI-0093` have no frame of their own: they reuse the same banner with the message in the tables above.
+`AI-0090`, `AI-0092` and `AI-0093` have no frame of their own: they reuse the same banner with the message in the tables above
+(`AI-0092` and `AI-0093` are red and show a Reference ID; `AI-0090` is yellow and does not).
+
+Every new frame carries a purple **NEW** tag in the top bar, so it is easy to tell from the original frames. The tag is an
+annotation, named "Tag · NEW AI proposal"; delete it when the frame is folded into the main design.
 
 ## Tests
 
 The AI layer's tests cover each code: the 20th call succeeds and the 21st returns `AI-0089`; the count resets at Manila midnight;
 a provider quota error returns `AI-0091` without using a slot; a call over 30 seconds returns `AI-0092`; two bad outputs in a row
 return `AI-0093`; with the switch off the call returns `AI-0094`; and two simultaneous calls at the boundary never both succeed.
+A red error (`AI-0091`, `AI-0092`, `AI-0093`) returns a Reference ID that matches a usage-log row; a yellow or grey one returns none; and no
+message ever contains an internal code.
