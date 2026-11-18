@@ -286,3 +286,32 @@ Rerunning against a drained outbox sends nothing.
 The parent spec excludes production database changes. The configured local
 `DATABASE_URL` was confirmed to point at the ATS production branch; draining
 that outbox requires explicit production authorization.
+
+## AI job description drafter (#448)
+
+> **Status.** The server side is built: the AI layer (#449) and the drafting action with its wording check (#451). The Draft with AI dialog on the
+> forms follows in #456; until then this section describes what the feature does.
+
+Staff who hold the Job Postings Module get a **Draft with AI** button in the Job description card. They send a job title and a few notes
+(up to 1,000 characters) and get back a draft of four fields, which they read in a preview and choose to use:
+
+| Field | Form field | Saved as |
+| --- | --- | --- |
+| Summary | `summary` | `description` |
+| Responsibilities | `responsibilities` (one per line) | `responsibilities` list |
+| Qualifications | `qualifications` (one per line) | `requirements`, under a `Qualifications:` heading |
+| Benefits | `benefits` (one per line) | `benefits` list |
+
+- **Nothing else is filled.** Pay, openings, work schedule, deadline, required documents and screening criteria are never written by
+  the AI, and the rest of the form stays as the Staff member typed it. Benefits are only drafted when the notes mention them.
+- **Where it is offered.** On a new posting, on a Draft and on a Job template form. It is hidden on Open, Closed and Filled postings,
+  because saving an Open posting goes live on Careers at once.
+- **The AI never saves or publishes.** Using a draft only fills the form; Staff save as a Draft or publish with the existing buttons, so
+  validation, audit events and the announcement are unchanged. Nothing about AI is stored on the posting, which Careers owns
+  ([ADR 0006](adr/0006-ai-is-advisory-only.md), [ADR 0001](adr/0001-hrms-and-careers-share-one-database.md)).
+- **Wording check.** The AI's output (never the Staff member's own text) is checked for gender, age, marital status, appearance, religion and
+  nationality wording. A match is underlined in the preview ("Needs a look") and can still be used.
+- **Limits and errors.** 20 drafts per Staff member per Manila day and a company-wide daily cap; refusals and failures are plain messages, and
+  unexpected errors show a Reference ID. See [docs/ai-error-codes.md](ai-error-codes.md).
+- **Careers.** The saved text shows in the right Careers sections; Careers skips the `Qualifications:` label line the form saves (a small fix in
+  `brenraphaels-ecommerce`, #337).
