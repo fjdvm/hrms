@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { DeleteTemplateButton } from "@/components/job-postings/delete-template-button";
 import { JobPostingForm } from "@/components/job-postings/job-posting-form";
+import { readAiConfig } from "@/lib/ai/config";
 import { requireModule } from "@/lib/portal/staff";
 import { templatesForRequest } from "@/lib/portal/templates";
 import { removeTemplate, updateTemplate } from "../actions";
@@ -34,6 +35,7 @@ export default async function Page({
       </div>
       <JobPostingForm
         template
+        canDraftWithAi={readAiConfig().enabled["job-draft"]}
         posting={template}
         action={updateTemplate.bind(null, id)}
         templateActions={

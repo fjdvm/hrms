@@ -7,6 +7,7 @@ import { editFooter, statusActions } from "@/lib/job-posting-form";
 import { PostingStatusButton } from "@/components/job-postings/posting-status-button";
 import { JobPostingForm } from "@/components/job-postings/job-posting-form";
 import { postingsForRequest } from "@/lib/portal/postings";
+import { readAiConfig } from "@/lib/ai/config";
 import { requireModule } from "@/lib/portal/staff";
 import {
   closePosting,
@@ -93,6 +94,7 @@ export default async function Page({
         canPublish={footer.publish}
         readOnly={!footer.saveAsDraft && !footer.saveChanges}
         canSaveTemplate={footer.saveAsDraft}
+        canDraftWithAi={readAiConfig().enabled["job-draft"]}
       />
     </div>
   );

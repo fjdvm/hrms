@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { JobPostingForm } from "@/components/job-postings/job-posting-form";
 import { JobTemplateError } from "@/lib/job-postings";
+import { readAiConfig } from "@/lib/ai/config";
 import { requireModule } from "@/lib/portal/staff";
 import { templatesForRequest } from "@/lib/portal/templates";
 import { createDraft } from "../actions";
@@ -34,6 +35,7 @@ export default async function Page() {
         isNew
         canSaveTemplate
         templates={templates}
+        canDraftWithAi={readAiConfig().enabled["job-draft"]}
       />
     </div>
   );

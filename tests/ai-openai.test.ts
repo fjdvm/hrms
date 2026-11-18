@@ -70,12 +70,19 @@ describe("the key stays on the server", () => {
         else if (/\.(tsx?|mjs|md|example)$/.test(entry.name) && !entry.name.includes(".test.")) {
           const text = await readFile(target, "utf8");
           if (/NEXT_PUBLIC_OPENAI/.test(text)) hits.push(`${target.pathname}: NEXT_PUBLIC_OPENAI`);
-          if (/^["']use client["']/.test(text) && /from ["']@\/lib\/ai(\/|["'])/.test(text)) hits.push(`${target.pathname}: client component imports lib/ai`);
+          // A client component may import only lib/ai/messages: the one module with no imports, so no key, environment or database.
+          if (/^["']use client["']/.test(text) && /from ["']@\/lib\/ai(?!\/messages["'])(\/|["'])/.test(text)) hits.push(`${target.pathname}: client component imports lib/ai`);
         }
       }
     };
     const hits: string[] = [];
     for (const dir of ["../app/", "../components/", "../lib/", "../hooks/"]) await scan(new URL(dir, import.meta.url), hits);
     expect(hits).toEqual([]);
+  });
+
+  it("keeps lib/ai/messages free of imports, so a client component can use it without reaching the key, the environment or the database", async () => {
+    const text = await readFile(new URL("../lib/ai/messages.ts", import.meta.url), "utf8");
+    expect(text).not.toMatch(/^\s*import\s/m);
+    expect(text).not.toMatch(/process\.env/);
   });
 });
