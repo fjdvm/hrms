@@ -24,6 +24,14 @@ _Avoid_: ATS app, recruitment app
 One open role that Staff author in HR-ATS and Applicants see on the Careers site. It can be started from a Job Template or typed from scratch, and is Draft, Open, Closed or Filled. Staff see the Open status labelled "Published", and publishing a Draft is what makes it Open. Filled means the role was filled by a hire (it becomes Filled when the number of Hired Applications for it reaches its openings; a Closed one stays Closed), and Closed means it ended otherwise (Staff closed it or its deadline passed). Only an Open Job Posting is visible on Careers. HRMS and Careers share one database, so a Job Posting is one record seen by both.
 _Avoid_: Job, listing, vacancy
 
+**AI draft**:
+Text an AI feature suggests for Staff to read, edit and choose to use: the Summary, Responsibilities, Qualifications and Benefits of a Job Posting (the Job description drafter), or development areas for an Evaluation (Development suggestions). It is shown as a preview first, and nothing changes until a Staff member chooses to use it; using it only fills the form's text fields, which Staff then save or publish with the usual buttons. It is never stored on the Job Posting or shown to Applicants as AI-made. The AI never changes a score, rating, status or published Job Posting and never assigns anyone (ADR 0006). A draft with a flagged phrase (gender, age, marital status, appearance, religion or nationality) is marked "Needs a look" but can still be used.
+_Avoid_: Generated posting, AI posting, auto-fill
+
+**Reference ID**:
+A random six-character code shown to Staff on an unexpected AI error (the service is busy, the call timed out, or the draft could not be used), so they can give it to support. Support finds that exact attempt in the AI usage log by it. It carries no meaning and no personal data, and is not shown on a refusal such as a reached daily limit. Not the internal error code (`AI-0091` and so on), which Staff never see (`docs/ai-error-codes.md`).
+_Avoid_: Error code (to Staff), ticket number, incident ID
+
 **Applicant**:
 A person who applies for a job at Bren Raphael's. An Applicant is a person, not a row in the Applicants list; one Applicant who applies to two Job Postings has two Applications. Unrelated to Staff, even for the same person.
 _Avoid_: Candidate, user

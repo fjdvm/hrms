@@ -4,6 +4,8 @@
 > Development suggestions that use it are built in their own tickets. This page is the agreed list of codes and rules, so the
 > screens, the server and support all use the same numbers. Update it in the same change that adds, renames or retires a code.
 
+AI only ever suggests and a person decides: see [ADR 0006, AI is advisory only](adr/0006-ai-is-advisory-only.md).
+
 Every refusal or failure of an AI feature (the Job description drafter now, Development suggestions later) has an **internal error
 code**. Staff never see the code. They see one short message that says exactly what happened, and on a red error they also see a
 short **Reference ID** for that attempt.
