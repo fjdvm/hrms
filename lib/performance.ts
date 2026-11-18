@@ -9,7 +9,9 @@ import { evaluationsModule } from "./performance-evaluations";
 import { ratingModule } from "./performance-rating";
 import { submitModule } from "./performance-submit";
 import { reopenModule } from "./performance-reopen";
+import { needsModule } from "./performance-needs";
 import type { EvaluationTab } from "./performance-evaluations-terms";
+import type { NeedInput } from "./performance-needs";
 
 /**
  * The Performance interface: the single seam every Performance ticket extends. It owns the access rule and composes the
@@ -20,6 +22,7 @@ import type { EvaluationTab } from "./performance-evaluations-terms";
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
+export { NeedError, ACTION_MAX_LENGTH, GAP_MAX_LENGTH, type DevelopmentNeed, type NeedInput, type NeedProblem } from "./performance-needs";
 export { SubmitError, type SubmitProblem, type SubmittedEvaluation } from "./performance-submit";
 export { COMMENTS_MAX_LENGTH, RatingError, type RatingProblem, type SavedRating } from "./performance-rating";
 export { RosterError, type EvaluationDetail, type KpiLine, type Roster, type RosterRow, type Score, type Shift } from "./performance-evaluations";
@@ -49,6 +52,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const rating = ratingModule(db, periods);
   const submit = submitModule(db, { evaluations });
   const reopen = reopenModule(db, { evaluations });
+  const needs = needsModule(db, { evaluations, periods });
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -136,5 +140,13 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
      * the weights and formulas saved at the first submission, and the submitted version is kept. Submitting again saves a new version.
      */
     reopenEvaluation: async (employeeId: number, periodId: number, reason: string) => reopen.reopenEvaluation(await acting(), employeeId, periodId, reason),
+    /**
+     * Flags a development need for an Employee in a period: the Gap and the Recommended action or Training (both required), and the id of a
+     * scheduled Training when one was picked. It works while the Evaluation is In review or Evaluated, never changes the score, the rating or
+     * the status, sends no email, and is recorded in the Performance audit with the Staff member. Submit and Reopen leave needs as they are.
+     */
+    flagDevelopmentNeed: async (employeeId: number, periodId: number, input: NeedInput) => needs.flagNeed(await acting(), employeeId, periodId, input),
+    /** The development needs flagged for an Employee in a period, newest first, with who flagged each and when. */
+    listDevelopmentNeeds: async (employeeId: number, periodId: number) => { await acting(); return needs.listNeeds(employeeId, periodId); },
   };
 }
