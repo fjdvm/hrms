@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { JobPostingForm } from "@/components/job-postings/job-posting-form";
 import { requireModule } from "@/lib/portal/staff";
+import { readAiConfig } from "@/lib/ai/config";
 import { createTemplate } from "../actions";
 
 export default async function Page() {
@@ -21,7 +22,7 @@ export default async function Page() {
           Save a role you post often. Nothing is required.
         </p>
       </div>
-      <JobPostingForm template action={createTemplate} />
+      <JobPostingForm template action={createTemplate} canDraftWithAi={readAiConfig().enabled["job-draft"]} />
     </div>
   );
 }

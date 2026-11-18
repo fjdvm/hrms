@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
+import { Sparkles, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -9,11 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { hasTypedText, mergeDraft, templateChoiceFrom } from "@/lib/job-draft-form";
 import { DEFAULT_REQUIRED_DOCUMENTS, EMPLOYMENT_TYPES, splitRequirements } from "@/lib/job-posting-form";
 import type { JobPosting, JobTemplate } from "@/lib/job-postings";
 import type { FormState } from "@/app/(hrms)/job-postings/actions";
 import { DeadlinePicker } from "./deadline-picker";
 import { DeleteDraftButton } from "./delete-draft-button";
+import { DraftWithAiButton } from "./draft-with-ai";
 import { RequiredDocuments } from "./required-documents";
 import { TemplatePicker } from "./template-picker";
 
@@ -37,6 +40,8 @@ type Props = {
   templates?: JobTemplate[];
   /** Extra template-only action, e.g. delete. */
   templateActions?: React.ReactNode;
+  /** The Job description drafter is switched on. It is still never offered on a Published, Closed or Filled posting. */
+  canDraftWithAi?: boolean;
 };
 
 const noAction = async (): Promise<FormState> => ({});
@@ -78,17 +83,23 @@ function Field({
 function Section({
   title,
   description,
+  action,
   children,
 }: {
   title: string;
   description?: string;
+  /** A control in the card header, beside the title. */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="flex flex-col gap-[14px] rounded-xl border bg-card px-[20px] py-[18px]">
-      <div className="flex flex-col gap-[2px]">
-        <h2 className="text-[15px] font-semibold text-[#18181b]">{title}</h2>
-        {description && <p className="text-xs text-[#71717a]">{description}</p>}
+      <div className="flex items-start justify-between gap-sm">
+        <div className="flex flex-col gap-[2px]">
+          <h2 className="text-[15px] font-semibold text-[#18181b]">{title}</h2>
+          {description && <p className="text-xs text-[#71717a]">{description}</p>}
+        </div>
+        {action}
       </div>
       {children}
     </section>
@@ -178,8 +189,8 @@ function PesoInput({
 }
 
 /** "Save as template" and, once ticked, the name to save it under. */
-function TemplateSection({ defaultName, error }: { defaultName?: string; error?: string }) {
-  const [checked, setChecked] = useState(false);
+function TemplateSection({ defaultName, error, initial }: { defaultName?: string; error?: string; initial?: { saveAsTemplate: boolean; templateName: string } }) {
+  const [checked, setChecked] = useState(initial?.saveAsTemplate ?? false);
   return (
     <Section title="Template" description="Reuse this job’s details for future postings.">
       <CheckRow
@@ -198,7 +209,7 @@ function TemplateSection({ defaultName, error }: { defaultName?: string; error?:
             name="templateName"
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "templateName-error" : undefined}
-            defaultValue={defaultName}
+            defaultValue={initial?.templateName || defaultName}
             className={controlClass}
           />
           <p className="text-xs text-[#71717a]">Shown in the Templates dropdown of the Job title field.</p>
@@ -228,11 +239,19 @@ export function JobPostingForm({
   canSaveTemplate,
   templates,
   templateActions,
+  canDraftWithAi,
 }: Props) {
   // Choosing a template refills the fields below; the deadline stays as it was.
   const [deadline, setDeadline] = useState(posting?.deadline ?? null);
   const [picked, setPicked] = useState<{ template: JobTemplate; count: number }>();
   const [state, submit, pending] = useActionState(action ?? noAction, {});
+  // Using an AI draft refills the four description fields through the same path as a template, after merging in what is on the form now.
+  const formRef = useRef<HTMLFormElement>(null);
+  const [title, setTitle] = useState(posting?.title ?? "");
+  const [aiNote, setAiNote] = useState(false);
+  const [templateChoice, setTemplateChoice] = useState<{ saveAsTemplate: boolean; templateName: string }>();
+  const offerDrafter = Boolean(canDraftWithAi) && !readOnly && !published;
+  const formData = () => new FormData(formRef.current ?? undefined);
   const errors = Object.fromEntries(
     Object.keys(state.fieldErrors ?? {}).map((field) => [
       field,
@@ -252,7 +271,7 @@ export function JobPostingForm({
       : {};
 
   return (
-    <form action={submit} className="flex flex-col gap-md">
+    <form action={submit} ref={formRef} className="flex flex-col gap-md">
       <fieldset disabled={readOnly} className="contents" key={picked?.count ?? 0}>
         {state.error && (
           <Alert variant="destructive">
@@ -269,15 +288,17 @@ export function JobPostingForm({
                     name="title"
                     {...invalid("title")}
                     defaultValue={values?.title}
+                    onChange={(event) => setTitle(event.target.value)}
                     placeholder="e.g. Production Staff"
                     className="min-w-0 flex-1 bg-transparent px-[12px] py-[10px] text-sm text-[#18181b] outline-none placeholder:text-[#a1a1aa]"
                   />
                   {templates && !template && !readOnly && (
                     <TemplatePicker
                       templates={templates}
-                      onPick={(chosen) =>
-                        setPicked((previous) => ({ template: chosen, count: (previous?.count ?? 0) + 1 }))
-                      }
+                      onPick={(chosen) => {
+                        setTitle(chosen.title);
+                        setPicked((previous) => ({ template: chosen, count: (previous?.count ?? 0) + 1 }));
+                      }}
                     />
                   )}
                 </div>
@@ -330,9 +351,39 @@ export function JobPostingForm({
                 </Field>
               </div>
             </Section>
+            {aiNote && (
+              <div role="status" className="flex items-start gap-[8px] rounded-xl bg-[#f4f1f7] px-[16px] py-[12px]">
+                <Sparkles aria-hidden className="mt-[2px] size-[16px] shrink-0 text-primary" />
+                <p className="flex-1 text-[13px] leading-[19px] text-[#5b2a86]">
+                  AI-drafted from your notes. Check every line before you save or publish. Pay and deadline were not filled in.
+                </p>
+                <button type="button" onClick={() => setAiNote(false)} className="flex shrink-0 items-center gap-[4px] text-[13px] font-medium text-primary hover:underline">
+                  Dismiss<X aria-hidden className="size-[14px]" />
+                </button>
+              </div>
+            )}
             <Section
               title="Job description"
               description="Shown on the careers page and in the applicant’s confirmation email."
+              action={
+                offerDrafter ? (
+                  <DraftWithAiButton
+                    title={title}
+                    getContext={() => {
+                      const data = formData();
+                      const text = (name: string) => String(data.get(name) ?? "").trim();
+                      return { title: text("title"), department: text("department"), employmentType: text("employmentType"), location: text("location") };
+                    }}
+                    hasExistingText={() => hasTypedText(formData())}
+                    onUse={(draft) => {
+                      const data = formData();
+                      setTemplateChoice(templateChoiceFrom(data));
+                      setPicked((previous) => ({ template: mergeDraft(data, draft), count: (previous?.count ?? 0) + 1 }));
+                      setAiNote(true);
+                    }}
+                  />
+                ) : undefined
+              }
             >
               <Field name="summary" label="Summary" required error={errors.description}>
                 <Textarea
@@ -432,7 +483,7 @@ export function JobPostingForm({
               </Field>
             </Section>
             {canSaveTemplate && !readOnly && (
-              <TemplateSection defaultName={values?.title} error={errors.templateName} />
+              <TemplateSection defaultName={values?.title} error={errors.templateName} initial={templateChoice} />
             )}
           </div>
         </div>
