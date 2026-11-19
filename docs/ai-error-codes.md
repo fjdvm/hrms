@@ -1,7 +1,9 @@
 # AI error codes
 
-> **Status: the AI layer is built** (`lib/ai/`; the usage log is migration `0049-ai-usage.sql`). The Job description drafter and
-> Development suggestions that use it are built in their own tickets. This page is the agreed list of codes and rules, so the
+> **Status: the AI layer is built** (`lib/ai/`; the usage log is migration `0049-ai-usage.sql`). The Job description drafter
+> (`lib/job-drafter.ts`) is built. Development suggestions are built on the server (`lib/performance-suggestions.ts`; the sets are migration
+> `0051-development-suggestions.sql`), and their screens follow in their own ticket. The suggestions messages below were checked against
+> `lib/ai/messages.ts` and match. This page is the agreed list of codes and rules, so the
 > screens, the server and support all use the same numbers. Update it in the same change that adds, renames or retires a code.
 
 AI only ever suggests and a person decides: see [ADR 0006, AI is advisory only](adr/0006-ai-is-advisory-only.md).

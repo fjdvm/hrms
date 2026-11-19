@@ -10,6 +10,8 @@ import { ratingModule } from "./performance-rating";
 import { submitModule } from "./performance-submit";
 import { reopenModule } from "./performance-reopen";
 import { needsModule } from "./performance-needs";
+import { suggestionsModule, type SuggestionStatus } from "./performance-suggestions";
+import type { AiClient, AiConfig } from "./ai";
 import type { EvaluationTab } from "./performance-evaluations-terms";
 import type { NeedInput } from "./performance-needs";
 
@@ -23,6 +25,7 @@ export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, ty
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion, type TrainingForSuggestions, type TrainingTitle } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
 export { NeedError, ACTION_MAX_LENGTH, GAP_MAX_LENGTH, type DevelopmentNeed, type NeedInput, type NeedProblem } from "./performance-needs";
+export { SuggestionError, type GenerateResult, type Suggestion, type SuggestionFailure, type SuggestionProblem, type SuggestionSet, type SuggestionStatus, type SuggestionView } from "./performance-suggestions";
 export { SubmitError, type SubmitProblem, type SubmittedEvaluation } from "./performance-submit";
 export { COMMENTS_MAX_LENGTH, RatingError, type RatingProblem, type SavedRating } from "./performance-rating";
 export { RosterError, type EvaluationDetail, type KpiLine, type Roster, type RosterRow, type Score, type Shift } from "./performance-evaluations";
@@ -43,7 +46,7 @@ export type PerformanceAccess = { decision: "allowed"; staff: Staff } | { decisi
  * Server-side boundary. Rechecks the Portal on every operation; `db` and `now` are injectable so tests control the
  * database and the clock. Later domain modules take the same `db` and `now`.
  */
-export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date()) {
+export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date(), ai: { client?: AiClient; config?: AiConfig } = {}) {
   const kpis = kpiModule(db);
   const training = trainingCompletionModule(db, now);
   const periods = periodsModule(db);
@@ -53,6 +56,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const submit = submitModule(db, { evaluations });
   const reopen = reopenModule(db, { evaluations });
   const needs = needsModule(db, { evaluations, periods });
+  const suggestions = suggestionsModule(db, { evaluations, training }, { ...ai, now });
 
   /**
    * The Performance Module grant alone decides (ADR-0004): no manager permission, no role names. A session the Portal
@@ -158,5 +162,22 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     flagDevelopmentNeed: async (employeeId: number, periodId: number, input: NeedInput) => needs.flagNeed(await acting(), employeeId, periodId, input),
     /** The development needs flagged for an Employee in a period, newest first, with who flagged each and when. */
     listDevelopmentNeeds: async (employeeId: number, periodId: number) => { await acting(); return needs.listNeeds(employeeId, periodId); },
+    /** Whether suggestions are switched on and how many runs the Staff member has left today. Read when the page loads (a user action); nothing polls it. */
+    suggestionStatus: async (): Promise<SuggestionStatus> => suggestions.status(await acting()),
+    /**
+     * The suggested development areas saved for an Employee in a period: the current set of the latest version that has one, with its version,
+     * who generated it and when, and whether it can still be flagged or dismissed (not after a Reopen, and not from an earlier version).
+     */
+    listSuggestions: async (employeeId: number, periodId: number) => { await acting(); return suggestions.suggestionsFor(employeeId, periodId); },
+    /**
+     * Asks the AI for suggested development areas on an Evaluated evaluation, from its locked KPI results (no name, employee number, branch
+     * or comments are sent). Insufficient data is Not available (AI-0100) and every KPI at or above target is Nothing to suggest, both with no AI
+     * call and no slot used. It saves a new set and marks the old one superseded; nothing is deleted, and no score, rating or status changes.
+     */
+    generateSuggestions: async (employeeId: number, periodId: number) => suggestions.generate(await acting(), employeeId, periodId),
+    /** Flags a Pending suggestion as a development need (AI source, linked to it) and marks it Flagged. The Gap and action can be edited first. Not twice. */
+    flagSuggestion: async (suggestionId: number, input?: Partial<NeedInput>) => suggestions.flagSuggestion(await acting(), suggestionId, input),
+    /** Dismisses a Pending suggestion. */
+    dismissSuggestion: async (suggestionId: number) => suggestions.dismissSuggestion(await acting(), suggestionId),
   };
 }
