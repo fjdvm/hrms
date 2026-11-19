@@ -1,0 +1,220 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { Check, CircleAlert, Info, Sparkles, TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { dismissSuggestion, generateSuggestions } from "@/app/(hrms)/performance/actions";
+import { aiMessage } from "@/lib/ai/messages";
+import type { AiBanner } from "@/lib/ai/messages";
+import type { EvaluationDetail } from "@/lib/performance-evaluations";
+import { dayMonth } from "@/lib/performance-evaluation-view";
+import type { DevelopmentNeed } from "@/lib/performance-needs";
+import type { Suggestion, SuggestionSet, SuggestionStatus, SuggestionView } from "@/lib/performance-suggestions";
+import type { TrainingTitle } from "@/lib/performance-training";
+import { cn } from "@/lib/utils";
+import { FlagNeedDialog, type FlagFromSuggestion } from "./flag-need-dialog";
+
+type Props = {
+  detail: EvaluationDetail;
+  needs: readonly DevelopmentNeed[];
+  trainings: readonly TrainingTitle[];
+  suggestions: SuggestionView;
+  status: SuggestionStatus;
+};
+
+/** What the last Suggest with AI press ended as, when it did not save a set. The internal code never gets here, only the banner, the message and the Reference ID. */
+type Outcome =
+  | { kind: "nothing" }
+  | { kind: "failure"; banner: Exclude<AiBanner, "none">; message: string; referenceId: string | null }
+  | { kind: "error"; message: string };
+
+const NOTICE_STYLE = {
+  yellow: { box: "bg-[#fdf1d8] text-[#8a5a00]", Icon: TriangleAlert },
+  red: { box: "bg-[#fdeceb] text-[#b42318]", Icon: CircleAlert },
+  grey: { box: "bg-[#f4f4f5] text-zinc-700", Icon: Info },
+} as const;
+
+/** A one-line notice in the suggestions block: yellow for a limit, red for an error, grey for information. */
+function Notice({ tone, children }: { tone: keyof typeof NOTICE_STYLE; children: React.ReactNode }) {
+  const { box, Icon } = NOTICE_STYLE[tone];
+  return (
+    <div role={tone === "red" ? "alert" : "status"} className={cn("flex items-start gap-[8px] rounded-lg px-[12px] py-[10px]", box)}>
+      <Icon aria-hidden className="mt-[2px] size-[16px] shrink-0" />
+      <p className="text-[13px] leading-[19px]">{children}</p>
+    </div>
+  );
+}
+
+const targetShown = (target: string) => target.replace(/%$/, "");
+const trainingAction = (suggestion: Suggestion) => (suggestion.trainingTitle ? `Training: ${suggestion.trainingTitle}` : suggestion.recommendation);
+const topic = (text: string) => text.replace(/[.\s]+$/, "");
+
+function SuggestionCard({ suggestion, kpiName, actionable, pending, onFlag, onDismiss }: {
+  suggestion: Suggestion; kpiName: string; actionable: boolean; pending: boolean; onFlag: () => void; onDismiss: () => void;
+}) {
+  return (
+    <li className="flex flex-col gap-[6px] rounded-lg border border-[#e6e1ee] bg-card px-[14px] py-[12px]" data-testid="suggestion">
+      <div className="flex flex-wrap items-start gap-[8px]">
+        <p className="flex-1 text-sm font-medium text-foreground">{suggestion.gap}</p>
+        <span className="rounded-full bg-[#f1f1f3] px-[8px] py-[2px] text-[11px] text-muted-foreground">{kpiName} {suggestion.result.toFixed(1)} · target {targetShown(suggestion.target)}</span>
+      </div>
+      <p className="text-[13px] text-foreground">
+        {suggestion.trainingTitle ? `Recommended Training: ${suggestion.trainingTitle}` : `No matching Training. Consider a session on ${topic(suggestion.recommendation)}.`}
+      </p>
+      <p className="text-xs text-muted-foreground">{suggestion.reason}</p>
+      {suggestion.status === "Flagged" ? (
+        <p className="flex items-center gap-[4px] self-end text-[13px] font-medium text-[#1a7f37]"><Check aria-hidden className="size-[14px]" />Flagged as a development need</p>
+      ) : actionable && (
+        <div className="flex items-center justify-end gap-[8px]">
+          <button type="button" disabled={pending} onClick={onDismiss} className="px-[8px] py-[6px] text-[13px] text-muted-foreground hover:text-foreground disabled:opacity-50">Dismiss</button>
+          <Button type="button" variant="outline" disabled={pending} onClick={onFlag} className="h-auto rounded-lg border-[#e6e1ee] px-[12px] py-[6px] text-[13px] font-medium text-primary shadow-none">Flag as need</Button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function Generating() {
+  return (
+    <div aria-busy="true" aria-label="Generating suggestions" className="flex flex-col gap-[10px]">
+      {[0, 1].map((i) => (
+        <div key={i} className="flex flex-col gap-[8px] rounded-lg border border-[#e6e1ee] bg-card px-[14px] py-[14px]">
+          <Skeleton className="h-3 w-1/3" /><Skeleton className="h-3 w-2/3" /><Skeleton className="h-3 w-1/2" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function caption(set: SuggestionSet) {
+  return `AI-generated from this evaluation’s KPI results · version ${set.version} · generated by ${set.generatedByName}, ${dayMonth(set.generatedAt)}. It never changes the score.`;
+}
+
+/**
+ * The Development needs part of the Evaluation card: the label with Suggest with AI (Regenerate once there is a set), the flagged needs with an
+ * AI-suggested tag on those that came from a suggestion, and under them the AI suggestions block.
+ *
+ * Suggest with AI is a button press and nothing here is fetched on a timer, on focus or on visibility. It is offered only on an Evaluated evaluation
+ * and only when the feature is switched on. A set from an earlier version, or one shown while the evaluation is back In review, is read-only
+ * and labelled with its version. The block never shows an internal code: yellow and grey outcomes show a message, red ones a message and a
+ * Reference ID with Try again.
+ */
+export function DevelopmentNeedsSection({ detail, needs, trainings, suggestions, status }: Props) {
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  // What is left after a press that did not save a set (a failed call gives its slot back), until the page is read again.
+  const [leftAfterPress, setLeftAfterPress] = useState<number | null>(null);
+  const [flagging, setFlagging] = useState<FlagFromSuggestion | null>(null);
+  const [problem, setProblem] = useState<string>();
+  const [pending, start] = useTransition();
+
+  const set = suggestions.set;
+  const evaluated = detail.status === "Evaluated";
+  const offered = status.enabled && evaluated;
+  const notAvailable = evaluated && detail.score.outcome !== "scored";
+  const left = leftAfterPress ?? status.left;
+  const limitReached = status.enabled && left <= 0;
+  const hasCurrentSet = set !== null && set.version === suggestions.currentVersion;
+  const kpiNames = new Map(detail.kpis.map((kpi) => [kpi.id as string, kpi.name]));
+  const visible = (set?.suggestions ?? []).filter((suggestion) => suggestion.status !== "Dismissed");
+  const showBlock = pending || outcome !== null || set !== null || (offered && (limitReached || notAvailable));
+  const showLabel = needs.length > 0 || offered || showBlock;
+
+  const generate = () => {
+    setOutcome(null);
+    setProblem(undefined);
+    start(async () => {
+      const result = await generateSuggestions(detail.employeeId, detail.period.id);
+      if (result.ok) { setLeftAfterPress(null); return; }
+      if (result.kind === "error") { setOutcome({ kind: "error", message: result.error }); return; }
+      setLeftAfterPress(result.left);
+      if (result.kind === "nothing") { setOutcome({ kind: "nothing" }); return; }
+      const { banner, message, referenceId } = result.failure;
+      setOutcome(banner === "none" || message === null ? null : { kind: "failure", banner, message, referenceId });
+    });
+  };
+
+  const dismiss = (suggestion: Suggestion) => {
+    setProblem(undefined);
+    start(async () => {
+      const result = await dismissSuggestion(detail.employeeId, suggestion.id);
+      if (!result.ok) setProblem(result.error);
+    });
+  };
+
+  return (
+    <>
+      {showLabel && (
+        <div className="flex flex-col gap-[8px]" data-testid="development-needs">
+          <div className="flex items-center gap-[8px]">
+            <h3 className="flex-1 text-xs text-muted-foreground">Development needs</h3>
+            {offered && (
+              <Button type="button" variant="outline" disabled={pending || limitReached || notAvailable} onClick={generate}
+                className="h-auto gap-[6px] rounded-lg border-[#e6e1ee] px-[12px] py-[6px] text-[13px] font-medium shadow-none">
+                <Sparkles aria-hidden className="size-[14px] text-primary" />{hasCurrentSet ? "Regenerate" : "Suggest with AI"}
+              </Button>
+            )}
+          </div>
+          {needs.length > 0 && (
+            <ul className="flex flex-col gap-[8px]">
+              {needs.map((need) => (
+                <li key={need.id} className="flex flex-col text-sm text-foreground">
+                  <span>
+                    {need.gap} · recommended {need.action}
+                    {need.source === "ai" && <span className="ml-[8px] rounded-full bg-[#f4f1f7] px-[8px] py-[2px] text-[11px] font-medium text-[#5b2a86]">AI-suggested</span>}
+                  </span>
+                  <span className="text-xs text-muted-foreground">Flagged by {need.flaggedByName} on {dayMonth(need.flaggedAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {showBlock && (
+            <section aria-label="AI suggestions" className="flex flex-col gap-[10px] rounded-xl border border-[#e6e1ee] bg-[#f9f7fc] px-[14px] py-[12px]">
+              <h4 className="flex items-center gap-[6px] text-[13px] font-semibold text-[#5b2a86]"><Sparkles aria-hidden className="size-[14px]" />AI suggestions</h4>
+              {pending ? <Generating /> : (
+                <>
+                  {outcome?.kind === "nothing" && (
+                    <>
+                      <p className="text-xs text-muted-foreground">Checked from this evaluation’s KPI results · version {detail.submitted?.version ?? 1}. It never changes the score.</p>
+                      <Notice tone="grey">All KPIs are at or above target, so there is nothing to suggest for this evaluation.</Notice>
+                    </>
+                  )}
+                  {outcome?.kind === "failure" && (
+                    <>
+                      <Notice tone={outcome.banner}>{outcome.message}</Notice>
+                      {outcome.banner === "red" && (
+                        <>
+                          {outcome.referenceId && <p className="text-xs text-muted-foreground">Reference {outcome.referenceId} · give this to support if the problem continues</p>}
+                          <Button type="button" variant="outline" onClick={generate} className="h-auto rounded-lg border-[#e6e1ee] px-[12px] py-[8px] text-[13px] font-medium shadow-none">Try again</Button>
+                        </>
+                      )}
+                    </>
+                  )}
+                  {outcome?.kind === "error" && <Notice tone="red">{outcome.message}</Notice>}
+                  {outcome === null && notAvailable && offered && <Notice tone="grey">{aiMessage("not-available", "suggestions", status.limit)}</Notice>}
+                  {outcome === null && !notAvailable && limitReached && <Notice tone="yellow">{aiMessage("limit-reached", "suggestions", status.limit)}</Notice>}
+                  {set && (
+                    <>
+                      <p className="text-xs text-muted-foreground">{caption(set)}</p>
+                      {problem && <Notice tone="red">{problem}</Notice>}
+                      {visible.length > 0 ? (
+                        <ul className="flex flex-col gap-[10px]">
+                          {visible.map((suggestion) => (
+                            <SuggestionCard key={suggestion.id} suggestion={suggestion} kpiName={kpiNames.get(suggestion.kpiId) ?? suggestion.kpiId} actionable={suggestions.actionable} pending={pending}
+                              onDismiss={() => dismiss(suggestion)}
+                              onFlag={() => setFlagging({ id: suggestion.id, gap: suggestion.gap, action: trainingAction(suggestion), trainingId: suggestion.trainingId })} />
+                          ))}
+                        </ul>
+                      ) : <p className="text-[13px] text-muted-foreground">Every suggestion in this set has been dismissed.</p>}
+                    </>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+        </div>
+      )}
+      {flagging && <FlagNeedDialog key={flagging.id} detail={detail} trainings={trainings} suggestion={flagging} open onOpenChange={(open) => { if (!open) setFlagging(null); }} />}
+    </>
+  );
+}

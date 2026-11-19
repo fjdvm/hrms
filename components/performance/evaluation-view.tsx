@@ -7,38 +7,22 @@ import { Card } from "@/components/ui/card";
 import { PageHeader, ProfileColumns } from "@/components/hiring/parts";
 import type { EvaluationDetail } from "@/lib/performance-evaluations";
 import type { DevelopmentNeed } from "@/lib/performance-needs";
+import type { SuggestionStatus, SuggestionView } from "@/lib/performance-suggestions";
 import type { TrainingTitle } from "@/lib/performance-training";
 import { dayMonth } from "@/lib/performance-evaluation-view";
 import { Banner, Checklist, KpiResults, PeriodCard, ReopeningCard, StatusBadge } from "./evaluation-parts";
 import { AttendanceIssuesCard } from "./attendance-issues-card";
 import { SubmitEvaluationDialog } from "./submit-evaluation-dialog";
 import { ReopenEvaluationDialog } from "./reopen-evaluation-dialog";
+import { DevelopmentNeedsSection } from "./development-needs";
 import { FlagNeedDialog } from "./flag-need-dialog";
 import { RatingDialog } from "./rating-dialog";
 import { ResolveIssueDialog, type ResolveTarget } from "./resolve-issue-dialog";
 
 const NO_RATING = "No rating or comments yet. Enter a rating from 0 to 100 and comments, then submit.";
 
-/** The needs flagged for this Employee and period, newest first: the gap and its recommended action or Training, with who flagged it and when. */
-function DevelopmentNeeds({ needs }: { needs: readonly DevelopmentNeed[] }) {
-  if (needs.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-[8px]" data-testid="development-needs">
-      <h3 className="text-xs text-muted-foreground">Development needs</h3>
-      <ul className="flex flex-col gap-[8px]">
-        {needs.map((need) => (
-          <li key={need.id} className="flex flex-col text-sm text-foreground">
-            <span>{need.gap} · recommended {need.action}</span>
-            <span className="text-xs text-muted-foreground">Flagged by {need.flaggedByName} on {dayMonth(need.flaggedAt)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 /** The Evaluation section: the rating and comments, or the invitation to enter them, then the Development needs flagged for the period. */
-function EvaluationCard({ detail, needs }: { detail: EvaluationDetail; needs: readonly DevelopmentNeed[] }) {
+function EvaluationCard({ detail, needs, trainings, suggestions, status }: { detail: EvaluationDetail; needs: readonly DevelopmentNeed[]; trainings: readonly TrainingTitle[]; suggestions: SuggestionView; status: SuggestionStatus }) {
   const rating = detail.rating;
   return (
     <Card className="flex flex-col gap-[12px] rounded-xl p-[20px] shadow-none">
@@ -49,19 +33,26 @@ function EvaluationCard({ detail, needs }: { detail: EvaluationDetail; needs: re
           <p className="whitespace-pre-line text-sm text-foreground">{rating.comments || <span className="text-muted-foreground">No comments.</span>}</p>
         </>
       ) : <p className="text-sm text-foreground">{NO_RATING}</p>}
-      <DevelopmentNeeds needs={needs} />
+      <DevelopmentNeedsSection detail={detail} needs={needs} trainings={trainings} suggestions={suggestions} status={status} />
     </Card>
   );
 }
+
+/** What a page shows when suggestions are not loaded: no set, and the feature off (so no Suggest with AI button). */
+const NO_SUGGESTIONS: SuggestionView = { set: null, currentVersion: null, actionable: false };
+const SUGGESTIONS_OFF: SuggestionStatus = { enabled: false, left: 0, limit: 0 };
 
 /**
  * One Employee's evaluation for a period: the status and who they are, the banner, the period card, the KPI results, the rating
  * and the Submit checklist. The rating form is opened from the banner and from the KPI results, and saving refreshes the page.
  * Submit evaluation is faded until all four checks pass, then opens the confirmation dialog; once submitted the page shows the locked
  * Evaluated state with a Reopen button that opens the Reopen evaluation dialog. Flag development need is offered once a rating is saved
- * (In review or Evaluated) and adds to the Development needs list on the Evaluation card. Print report and History belong to the later spec.
+ * (In review or Evaluated) and adds to the Development needs list on the Evaluation card; on an Evaluated evaluation the same section offers Suggest with AI
+ * (see `development-needs.tsx`). Print report and History belong to the later spec.
  */
-export function EvaluationView({ detail, needs = [], trainings = [] }: { detail: EvaluationDetail; needs?: readonly DevelopmentNeed[]; trainings?: readonly TrainingTitle[] }) {
+export function EvaluationView({ detail, needs = [], trainings = [], suggestions = NO_SUGGESTIONS, suggestionStatus = SUGGESTIONS_OFF }: {
+  detail: EvaluationDetail; needs?: readonly DevelopmentNeed[]; trainings?: readonly TrainingTitle[]; suggestions?: SuggestionView; suggestionStatus?: SuggestionStatus;
+}) {
   const [ratingOpen, setRatingOpen] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -97,7 +88,7 @@ export function EvaluationView({ detail, needs = [], trainings = [] }: { detail:
                 <ClipboardCheck aria-hidden className="size-4" />{hasRating ? "Edit rating" : "Enter rating"}
               </Button>
             ) : null} />
-            <EvaluationCard detail={detail} needs={needs} />
+            <EvaluationCard detail={detail} needs={needs} trainings={trainings} suggestions={suggestions} status={suggestionStatus} />
           </>
         }
         aside={<><Checklist detail={detail} /><ReopeningCard detail={detail} /></>}

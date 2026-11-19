@@ -32,8 +32,11 @@ async function load(employeeId: number, requested: string | undefined) {
     if (!period) return { kind: "missing" as const };
     const detail = await performance.evaluationFor(employeeId, period.id);
     // The Training titles only help fill the Flag dialog; without them it still works with a typed action.
-    const [needs, trainings] = await Promise.all([performance.listDevelopmentNeeds(employeeId, period.id), performance.scheduledTrainingTitles().catch(() => [])]);
-    return { kind: "found" as const, detail, needs, trainings };
+    const [needs, trainings, suggestions, suggestionStatus] = await Promise.all([
+      performance.listDevelopmentNeeds(employeeId, period.id), performance.scheduledTrainingTitles().catch(() => []),
+      performance.listSuggestions(employeeId, period.id), performance.suggestionStatus(),
+    ]);
+    return { kind: "found" as const, detail, needs, trainings, suggestions, suggestionStatus };
   } catch (error) {
     if (error instanceof RosterError || error instanceof PeriodError) return { kind: "missing" as const };
     if (error instanceof PerformanceError) return { kind: "error" as const };
@@ -46,7 +49,7 @@ async function EvaluationContent({ employeeId, period }: { employeeId: number; p
   const result = await load(employeeId, period);
   if (result.kind === "error") return <Message retry>This evaluation could not be loaded. Please try again in a moment.</Message>;
   if (result.kind === "missing") return <Message>That evaluation could not be found. Choose an employee from the Performance list.</Message>;
-  return <EvaluationView detail={result.detail} needs={result.needs} trainings={result.trainings} />;
+  return <EvaluationView detail={result.detail} needs={result.needs} trainings={result.trainings} suggestions={result.suggestions} suggestionStatus={result.suggestionStatus} />;
 }
 
 export default async function Page({ params, searchParams }: PageProps<"/performance/evaluation/[employeeId]">) {

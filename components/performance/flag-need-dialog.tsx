@@ -1,28 +1,32 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { flagDevelopmentNeed } from "@/app/(hrms)/performance/actions";
+import { flagDevelopmentNeed, flagSuggestion } from "@/app/(hrms)/performance/actions";
 import type { EvaluationDetail } from "@/lib/performance-evaluations";
 import { ACTION_MAX_LENGTH, GAP_MAX_LENGTH, checkNeedText, needMessage } from "@/lib/performance-needs-terms";
 import type { TrainingTitle } from "@/lib/performance-training";
 import { cn } from "@/lib/utils";
 import { Callout, DialogActions, DialogBody, DialogFrame, FieldLabel, Help, PILL, PILL_ON } from "./dialog-frame";
 
-type Props = { detail: EvaluationDetail; trainings: readonly TrainingTitle[]; open: boolean; onOpenChange: (open: boolean) => void };
+/** A suggested development area being flagged: the dialog starts from its words and saves through the suggestion, so the need is linked to it. */
+export type FlagFromSuggestion = { id: number; gap: string; action: string; trainingId: number | null };
+
+type Props = { detail: EvaluationDetail; trainings: readonly TrainingTitle[]; suggestion?: FlagFromSuggestion | null; open: boolean; onOpenChange: (open: boolean) => void };
 
 const FIELD = "min-h-[64px] rounded-lg border-[#e4e4e7] px-[12px] py-[9px] text-sm shadow-none";
 /** How many scheduled Trainings are offered as quick picks; anything else is typed. */
 const MAX_PICKS = 6;
 const trainingAction = (title: string) => `Training: ${title}`;
 
-function Form({ detail, trainings, onDone }: { detail: EvaluationDetail; trainings: readonly TrainingTitle[]; onDone: () => void }) {
-  const [gap, setGap] = useState("");
-  const [action, setAction] = useState("");
+function Form({ detail, trainings, suggestion, onDone }: { detail: EvaluationDetail; trainings: readonly TrainingTitle[]; suggestion?: FlagFromSuggestion | null; onDone: () => void }) {
+  const [gap, setGap] = useState(suggestion?.gap ?? "");
+  const [action, setAction] = useState(suggestion?.action ?? "");
   // The Training picked from the list. Typing over the text makes it a described action again, so the two can never disagree.
-  const [trainingId, setTrainingId] = useState<number | null>(null);
+  const [trainingId, setTrainingId] = useState<number | null>(suggestion?.trainingId ?? null);
   const [touched, setTouched] = useState({ gap: false, action: false });
   const [failure, setFailure] = useState<string>();
   const [pending, start] = useTransition();
@@ -45,7 +49,8 @@ function Form({ detail, trainings, onDone }: { detail: EvaluationDetail; trainin
     setTouched({ gap: true, action: true });
     if (gapProblem !== null || actionProblem !== null || pending) return;
     start(async () => {
-      const result = await flagDevelopmentNeed(detail.employeeId, detail.period.id, { gap, action, trainingId });
+      const input = { gap, action, trainingId };
+      const result = suggestion ? await flagSuggestion(detail.employeeId, suggestion.id, input) : await flagDevelopmentNeed(detail.employeeId, detail.period.id, input);
       if (!result.ok) { setFailure(result.error); return; }
       toast.success("Development need flagged");
       onDone();
@@ -79,6 +84,12 @@ function Form({ detail, trainings, onDone }: { detail: EvaluationDetail; trainin
             </div>
           )}
         </div>
+        {suggestion && (
+          <div className="flex items-start gap-[8px] rounded-lg bg-[#f4f1f7] px-[12px] py-[10px]">
+            <Sparkles aria-hidden className="mt-[2px] size-[16px] shrink-0 text-primary" />
+            <p className="text-[13px] leading-[19px] text-[#5b2a86]">Suggested by AI from the KPI results. Edit anything before you flag it.</p>
+          </div>
+        )}
         <Callout>A flag is a recommendation for Staff to review. It never changes the score.</Callout>
         {failure && <Callout alert>{failure}</Callout>}
       </DialogBody>
@@ -92,11 +103,11 @@ function Form({ detail, trainings, onDone }: { detail: EvaluationDetail; trainin
  * subtitle. Nothing is saved until Flag need is confirmed; Cancel closes it and saves nothing. A refusal from the server is shown here
  * and the dialog stays open. It remounts on every open so each flag starts empty.
  */
-export function FlagNeedDialog({ detail, trainings, open, onOpenChange }: Props) {
+export function FlagNeedDialog({ detail, trainings, suggestion, open, onOpenChange }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogFrame title="Flag development need" description={`${detail.name} · ${detail.period.name}`}>
-        <Form detail={detail} trainings={trainings} onDone={() => onOpenChange(false)} />
+        <Form detail={detail} trainings={trainings} suggestion={suggestion} onDone={() => onOpenChange(false)} />
       </DialogFrame>
     </Dialog>
   );
