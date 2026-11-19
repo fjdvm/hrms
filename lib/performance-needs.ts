@@ -42,7 +42,7 @@ export type DevelopmentNeed = {
 export type NeedInput = { gap: unknown; action: unknown; trainingId?: unknown };
 
 type NeedRow = DevelopmentNeed;
-const COLUMNS = `id, employee_id AS "employeeId", period_id AS "periodId", gap, action, training_id AS "trainingId", source, suggestion_id AS "suggestionId",
+export const NEED_COLUMNS = `id, employee_id AS "employeeId", period_id AS "periodId", gap, action, training_id AS "trainingId", source, suggestion_id AS "suggestionId",
   flagged_by_id AS "flaggedById", flagged_by_name AS "flaggedByName", flagged_at::text AS "flaggedAt"`;
 
 /** A required text field: cleaned, but refused (not quietly changed) when it holds characters that do not belong in it. */
@@ -83,7 +83,7 @@ export function needsModule(db: Database, deps: { evaluations: ReturnType<typeof
         SELECT $6::text, $7::text, 'development-need-flagged', 'evaluation', $8::text,
           jsonb_build_object('employeeId', added.employee_id, 'periodId', added.period_id, 'needId', added.id, 'source', added.source, 'trainingId', added.training_id)
         FROM added
-      ) SELECT ${COLUMNS} FROM added`,
+      ) SELECT ${NEED_COLUMNS} FROM added`,
     [employeeId, periodId, gap, action, trainingId, actor.id, actor.name, `${employeeId}:${periodId}`]);
     if (!rows[0]) throw new NeedError("unknown-training");
     return rows[0];
@@ -96,7 +96,7 @@ export function needsModule(db: Database, deps: { evaluations: ReturnType<typeof
     const known = await db.query(`SELECT 1 FROM public.hrms_employees WHERE id = $1`, [employeeId]);
     if (known.rows.length === 0) throw new PeriodError("unknown-employee");
     const { rows } = await db.query<NeedRow>(
-      `SELECT ${COLUMNS} FROM public.hrms_development_needs WHERE employee_id = $1 AND period_id = $2 ORDER BY flagged_at DESC, id DESC`, [employeeId, periodId]);
+      `SELECT ${NEED_COLUMNS} FROM public.hrms_development_needs WHERE employee_id = $1 AND period_id = $2 ORDER BY flagged_at DESC, id DESC`, [employeeId, periodId]);
     return rows;
   }
 

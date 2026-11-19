@@ -296,10 +296,15 @@ describe("the table", () => {
     expect(rows.map((r) => r.column_name)).toEqual(["id", "employee_id", "period_id", "gap", "action", "training_id", "source", "suggestion_id", "flagged_by_id", "flagged_by_name", "flagged_at"]);
   });
   it("only lets a need linked to a suggestion be an AI need", async () => {
-    const { period, id } = await inReview();
-    const insert = (source: string, suggestion: number | null) => db.query(`INSERT INTO public.hrms_development_needs (employee_id, period_id, gap, action, source, suggestion_id, flagged_by_id, flagged_by_name) VALUES ($1, $2, 'g', 'a', $3, $4, 'u', 'U')`, [id, period.id, source, suggestion]);
-    await insert("ai", 5);
-    await expect(insert("manual", 5)).rejects.toThrow();
+    const { period, id } = await evaluated();
+    // The suggestions table exists since migration 0051, so the link must point at a real suggestion.
+    const evaluation = (await db.query<{ id: number }>(`SELECT id FROM public.hrms_evaluations WHERE employee_id = $1 AND period_id = $2`, [id, period.id])).rows[0].id;
+    const set = (await db.query<{ id: number }>(`INSERT INTO public.hrms_suggestion_sets (evaluation_id, version, model, generated_by_id, generated_by_name) VALUES ($1, 1, 'm', 'u', 'U') RETURNING id`, [evaluation])).rows[0].id;
+    const suggestion = (await db.query<{ id: number }>(`INSERT INTO public.hrms_suggestions (set_id, position, kpi_id, gap, kpi_result, kpi_target, recommendation, reason) VALUES ($1, 1, 'punctuality', 'g', 88, '100%', 'r', 'why') RETURNING id`, [set])).rows[0].id;
+    const insert = (source: string, link: number | null) => db.query(`INSERT INTO public.hrms_development_needs (employee_id, period_id, gap, action, source, suggestion_id, flagged_by_id, flagged_by_name) VALUES ($1, $2, 'g', 'a', $3, $4, 'u', 'U')`, [id, period.id, source, link]);
+    await insert("ai", suggestion);
+    await expect(insert("manual", suggestion)).rejects.toThrow();
     await expect(insert("other", null)).rejects.toThrow();
+    await expect(insert("ai", suggestion + 100)).rejects.toThrow();
   });
 });
