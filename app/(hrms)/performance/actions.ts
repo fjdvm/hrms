@@ -2,10 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, KpiError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
+import { AttendanceError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
+import { needMessage } from "@/lib/performance-needs-terms";
 import { reopenMessage } from "@/lib/performance-reopen-terms";
 import { submitMessage } from "@/lib/performance-submit-messages";
 import { ratingMessage } from "@/lib/performance-rating-terms";
@@ -22,6 +23,7 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
+    if (error instanceof NeedError) return { ok: false, error: needMessage(error.problem) };
     if (error instanceof ReopenError) return { ok: false, error: reopenMessage(error.problem) };
     if (error instanceof SubmitError) return { ok: false, error: submitMessage(error.problem, error.missing) };
     if (error instanceof AttendanceError) return { ok: false, error: attendanceMessage(error.problem) };
@@ -108,4 +110,12 @@ export async function submitEvaluation(employeeId: number, periodId: number): Pr
  */
 export async function reopenEvaluation(employeeId: number, periodId: number, reason: string): Promise<PeriodActionResult> {
   return run(async () => (await performanceForRequest()).reopenEvaluation(employeeId, periodId, reason), evaluationPaths(employeeId));
+}
+
+/**
+ * Flags a development need on an Employee's evaluation: the gap, and the recommended action or the scheduled Training picked for it. It never
+ * changes the score, rating or status and sends no email. The Evaluation page is refreshed so the Development needs list shows it.
+ */
+export async function flagDevelopmentNeed(employeeId: number, periodId: number, input: { gap: string; action: string; trainingId?: number | null }): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).flagDevelopmentNeed(employeeId, periodId, input), [`/performance/evaluation/${employeeId}`]);
 }
