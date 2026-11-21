@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "./database";
-import { retryJobPostingAudit } from "./job-posting-audit";
+import { deliverAuditEvents } from "./audit";
 import type { evaluationsModule, EvaluationDetail, Figures } from "./performance-evaluations";
 import type { SubmitCheck } from "./performance-evaluations-terms";
 import type { Actor } from "./performance-kpis";
@@ -96,7 +96,7 @@ export function submitModule(db: Database, deps: { evaluations: ReturnType<typeo
       throw new SubmitError(now?.status === "Evaluated" ? "already-submitted" : "changed");
     }
     // Delivery is isolated from the committed submit: a failure leaves the event queued for the next retry.
-    await retryJobPostingAudit(db, auditId);
+    await deliverAuditEvents(db, auditId);
     return {
       employeeId: employee.id, periodId, status: "Evaluated", version: rows[0].version, score: detail.score.outcome === "scored" ? detail.score.value : null,
       outcome: scored ? "scored" : "insufficient-data", weightSetName: detail.weightSet.name, submittedByName: actor.name, submittedAt: rows[0].submittedAt,

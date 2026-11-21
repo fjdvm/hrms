@@ -1,6 +1,6 @@
 import nextEnv from "@next/env";
 import pg from "pg";
-import { retryJobPostingAudit } from "../lib/job-posting-audit.ts";
+import { deliverAuditEvents } from "../lib/audit.ts";
 
 const args = process.argv.slice(2);
 if (args.length > 1 || (args.length === 1 && args[0] !== "--deliver")) {
@@ -28,7 +28,7 @@ try {
   await client.connect();
   const remaining = await count();
   if (deliver && remaining > 0) {
-    await retryJobPostingAudit(client);
+    await deliverAuditEvents(client);
     if (await count()) process.exitCode = 1;
   }
 } catch {

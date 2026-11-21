@@ -48,25 +48,53 @@ a Careers application can wait for one of those. The browser holds no key: it as
 WebSocket, refetching the inbox on connect and on pushed events, never on a timer.
 `NOTIFICATIONS_APP` (default `HRMS`) must equal the HRMS Caller's App in the gateway.
 
-### Recruitment audit delivery
+### Audit delivery
 
-Run `npm run db:migrate` before deploying recruitment changes. Migration 0003 adds
-`hrms_audit_outbox`; each successful Staff mutation commits its Audit Event with
-its data change. Set server-only `API_GATEWAY_URL` and `API_GATEWAY_KEY` to the
-HRMS Caller (with audit write access for HRMS). Delivery uses `/audit/events`.
-The existing authenticated `/api/cron/job-postings` maintenance route retries up
-to 50 due events per invocation. Failures are logged without payloads or credentials
-and retained with a delay of 1–60 minutes; configure `CRON_SECRET` and monitor logs
-and the outbox backlog. Gateway retries reuse the event's idempotency key.
+Run `npm run db:migrate` before deploying audit changes. Migration 0003 adds
+`hrms_audit_outbox`; each successful Staff action commits its Audit Event with
+its data change, through the shared helper in `lib/audit.ts`. Set server-only
+`API_GATEWAY_URL` and `API_GATEWAY_KEY` to the HRMS Caller (with audit write
+access for HRMS). Delivery uses `/audit/events`, inline right after the commit.
+A failure leaves the event queued, logged without payloads or credentials, and
+retried with a delay of 1–60 minutes by the authenticated `/api/cron/job-postings`
+maintenance route (up to 50 due events per invocation); configure `CRON_SECRET`
+and monitor logs and the outbox backlog. Retries reuse the event's idempotency
+key. The helper refuses metadata over 4 KB or with a key containing `password`,
+`token`, `secret`, `authorization`, `card` or `cvv`, so a bad event fails in HRMS
+and is not rejected by audit-logs. Metadata holds ids and counts, never
+Staff-typed free text.
 
-The audit-logs deployment must register `job_posting.created`,
-`job_posting.published`, `job_posting.updated`, `job_posting.closed`,
-`job_posting.filled`, `job_template.created`, `job_template.updated`, and
-`job_template.deleted` for Source HRMS. An older catalog rejects these requests;
-they remain queued until that service is updated. Draft deletion, views and
-scheduled deadline closure do not emit Staff action events. Applicant notification
-delivery is a separate part of parent ticket #28. Publication events explicitly
-record `applicants_notified: false` until that integration supplies a delivery result.
+HRMS sends these Actions for Source HRMS:
+
+- Job Postings: `job_posting.created`, `job_posting.updated`, `job_posting.published`,
+  `job_posting.closed`, `job_posting.filled`, `job_template.created`,
+  `job_template.updated` and `job_template.deleted`.
+- Performance submit and reopen: `record.updated`, with the operation in metadata.
+- Training (Module `Training`): `training.created`, `training.updated`,
+  `training.rescheduled`, `training.cancelled`, `training.employee_assigned`,
+  `training.employee_unassigned`, `training.results_marked`,
+  `training.feedback_recorded`, `training.reminder_sent`, `training.notice_retried`,
+  `training_material.uploaded` and `training_material.deleted`.
+- Performance (Module `Performance`): `kpi.activated`, `kpi.deactivated`,
+  `weight_set.created`, `weight_set.updated`, `performance_period.opened`,
+  `non_working_date.added`, `non_working_date.updated`, `non_working_date.removed`,
+  `attendance.imported`, `attendance_day.excused`, `attendance_day.marked_absent`,
+  `attendance.no_attendance_confirmed`, `rating.saved` and `development_need.flagged`.
+
+The audit-logs deployment must register every Action above for Source HRMS before
+HRMS sends it. An older catalog rejects the request, and the event stays queued
+until that service is updated. Draft deletion, views and scheduled deadline
+closure do not emit Staff action events. Publication events explicitly record
+`applicants_notified: false` until that integration supplies a delivery result.
+
+Only Audit events are delivered inline. Staff notifications are queued in the
+same statement as the change (a row with a stable id, `ON CONFLICT (id) DO
+NOTHING`) and are flushed when the bell opens, by the maintenance route, and by
+the 15-minute Training job, never by the Staff action itself. A notification of
+type `training` goes to the holders of the Training Module and one of type
+`performance` to the holders of the Performance Module, alongside the existing
+application, job-posting and offer types; one that names its recipients goes to
+them, and an unknown type stays queued for retry.
 
 ### Applicant counts on Job Postings
 

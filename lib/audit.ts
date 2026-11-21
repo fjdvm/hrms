@@ -1,13 +1,82 @@
 import { randomUUID } from "node:crypto";
-import type { PostingDatabase } from "./job-postings";
 import type { Staff } from "./portal/client";
+
+/** The only database surface the audit helper needs; every Module's database type satisfies it. */
+export type AuditDatabase = { query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> };
+
+/** audit-logs rejects larger metadata and these key names, so a bad event is refused here instead. */
+export const MAX_AUDIT_METADATA_BYTES = 4096;
+const SENSITIVE_KEY = /password|token|secret|authorization|card|cvv/i;
+
+export class AuditEventError extends Error {}
+
+function assertSafeKeys(value: unknown): void {
+  if (Array.isArray(value)) value.forEach(assertSafeKeys);
+  else if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      if (SENSITIVE_KEY.test(key)) throw new AuditEventError("Audit metadata has a sensitive-looking key");
+      assertSafeKeys(nested);
+    }
+  }
+}
+
+/** Throws AuditEventError for metadata over 4 KB (UTF-8, serialized) or with a sensitive-looking key at any depth. */
+export function assertAuditMetadata(metadata: unknown): void {
+  if (metadata === undefined) return;
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) throw new AuditEventError("Audit metadata must be an object");
+  assertSafeKeys(metadata);
+  if (Buffer.byteLength(JSON.stringify(metadata), "utf8") > MAX_AUDIT_METADATA_BYTES) throw new AuditEventError("Audit metadata is over 4 KB");
+}
+
+export type AuditEventInput = {
+  /** The Module name as audit-logs lists it for HRMS, for example "Training" or "Performance". */
+  module: string;
+  action: string;
+  /** The Staff member who acted: their Portal id is the Actor id so My logs can find them. */
+  staff: Pick<Staff, "id" | "username" | "name">;
+  target: { type: string; id: string; display_name: string };
+  description: string;
+  metadata?: Record<string, unknown>;
+  /** Stable per event; the outbox row and every retry reuse it. Generated when omitted. */
+  idempotencyKey?: string;
+};
+
+export function buildAuditEvent(input: AuditEventInput) {
+  assertAuditMetadata(input.metadata);
+  const id = input.idempotencyKey ?? randomUUID();
+  return {
+    id,
+    event: {
+      source: "HRMS", module: input.module, action: input.action, outcome: "success",
+      actor: { type: "user", id: input.staff.id ?? input.staff.username, display_name: input.staff.name },
+      target: input.target, description: input.description, customer_description: null,
+      occurred_at: new Date().toISOString(), idempotency_key: id,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    },
+  };
+}
+
+/**
+ * Queues an Audit event for any Module and Action in the same statement as the change: `sql` is a data-changing
+ * statement with RETURNING, and one event is queued when it returns rows. Delivery runs inline after the commit and a
+ * failure leaves the event queued. Returns the change's rows.
+ */
+export async function queueAuditedChange<T>(db: AuditDatabase, input: AuditEventInput, sql: string, values: unknown[] = []) {
+  const { id, event } = buildAuditEvent(input);
+  const result = await db.query<T>(`WITH changed AS (${sql}), queued AS (
+    INSERT INTO public.hrms_audit_outbox (id, payload) SELECT $${values.length + 1}, $${values.length + 2}::jsonb
+    WHERE EXISTS (SELECT 1 FROM changed) ON CONFLICT (id) DO NOTHING
+  ) SELECT * FROM changed`, [...values, id, JSON.stringify(event)]);
+  if (result.rows.length) await deliverAuditEvents(db, id);
+  return result;
+}
 
 type AuditAction = "job_posting.created" | "job_posting.updated" | "job_posting.published"
   | "job_posting.closed" | "job_posting.filled" | "job_template.created"
   | "job_template.updated" | "job_template.deleted";
 
 /** The mutation and its delivery record commit together in one SQL statement. */
-export async function auditedMutation<T>(db: PostingDatabase, staff: Staff, action: AuditAction, sql: string, values: unknown[], templateName?: string) {
+export async function auditedMutation<T>(db: AuditDatabase, staff: Staff, action: AuditAction, sql: string, values: unknown[], templateName?: string) {
   const id = randomUUID();
   const type = action.split(".")[0];
   const event = {
@@ -49,14 +118,17 @@ export async function auditedMutation<T>(db: PostingDatabase, staff: Staff, acti
   )${templateSql} SELECT * FROM changed`, [...values, id, JSON.stringify(event), type, action === "job_posting.published", ...templateValues]);
   // Delivery failure is isolated from the already committed Staff action.
   if (result.rows.length) {
-    await retryJobPostingAudit(db, id);
-    if (templateName !== undefined) await retryJobPostingAudit(db, templateAuditId);
+    await deliverAuditEvents(db, id);
+    if (templateName !== undefined) await deliverAuditEvents(db, templateAuditId);
   }
   return result;
 }
 
-/** A durable retry boundary, also run by the authenticated maintenance route. */
-export async function retryJobPostingAudit(db: PostingDatabase, eventId?: string): Promise<void> {
+/**
+ * Delivers due queued Audit events, up to 50 per call; a failure keeps the event and backs off 1-60 minutes. An event
+ * whose linked announcement is not complete is held back (the Job Posting guard). Also run by the maintenance route.
+ */
+export async function deliverAuditEvents(db: AuditDatabase, eventId?: string): Promise<void> {
   try {
     const { rows } = await db.query<{ id: string; payload: unknown }>(
       `SELECT id, payload FROM public.hrms_audit_outbox
@@ -76,13 +148,13 @@ export async function retryJobPostingAudit(db: PostingDatabase, eventId?: string
         if (!response.ok) throw new Error("Audit gateway rejected event");
         await db.query("DELETE FROM public.hrms_audit_outbox WHERE id = $1", [row.id]);
       } catch {
-        console.error("Job Posting audit delivery failed; retained for retry", { eventId: row.id });
+        console.error("Audit delivery failed; retained for retry", { eventId: row.id });
         await db.query(`UPDATE public.hrms_audit_outbox SET attempts = attempts + 1,
           next_attempt_at = clock_timestamp() + interval '1 minute' * LEAST(60, attempts + 1)
           WHERE id = $1`, [row.id]);
       }
     }
   } catch {
-    console.error("Job Posting audit retry unavailable; delivery records retained");
+    console.error("Audit retry unavailable; delivery records retained");
   }
 }

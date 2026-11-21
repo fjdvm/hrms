@@ -102,6 +102,36 @@ it("tells Offers holders, and only them, about an offer notification", async () 
   expect([...sends[0].body.userIds].sort()).toEqual(["hr-2", "offer-1"]);
 });
 
+it("tells Training holders, and only them, about a training notification", async () => {
+  portal.directory.push({ id: "train-1", username: "fay", modules: ["Training"] });
+  await db.query(`INSERT INTO hrms_staff_notifications (id, payload) VALUES ('training:1', '{"type":"training","title":"Training rescheduled","body":"b","link":"/training"}')`);
+  await deliverStaffNotifications(db);
+  expect(sends.map((s) => s.body.type)).toEqual(["training"]);
+  expect(sends[0].body.userIds).toEqual(["train-1"]);
+});
+
+it("tells Performance holders, and only them, about a performance notification", async () => {
+  await db.query(`INSERT INTO hrms_staff_notifications (id, payload) VALUES ('performance:1', '{"type":"performance","title":"Evaluation submitted","body":"b","link":"/performance"}')`);
+  await deliverStaffNotifications(db);
+  expect(sends.map((s) => s.body.type)).toEqual(["performance"]);
+  expect(sends[0].body.userIds).toEqual(["pay-1"]);
+});
+
+it("sends a training or performance notification that names its recipients to them alone", async () => {
+  await db.query(`INSERT INTO hrms_staff_notifications (id, payload) VALUES ('performance:named', '{"type":"performance","title":"t","body":"b","link":"/performance","recipientIds":["hr-1"]}')`);
+  await deliverStaffNotifications(db);
+  expect(sends[0].body.userIds).toEqual(["hr-1"]);
+  expect(sends[0].body).not.toHaveProperty("recipientIds");
+});
+
+it("queues a Staff notification row once with ON CONFLICT (id) DO NOTHING and does not flush it", async () => {
+  const insert = `INSERT INTO hrms_staff_notifications (id, payload) VALUES ('training.rescheduled:1', '{"type":"training","title":"t","body":"b","link":"/training"}') ON CONFLICT (id) DO NOTHING`;
+  await db.query(insert);
+  await db.query(insert);
+  expect((await db.query("SELECT 1 FROM hrms_staff_notifications WHERE id = 'training.rescheduled:1'")).rows).toHaveLength(1);
+  expect(sends).toHaveLength(0);
+});
+
 it("keeps a notification of an unknown type rather than telling the wrong people", async () => {
   await db.query(`INSERT INTO hrms_staff_notifications (id, payload) VALUES ('mystery:1', '{"type":"mystery.thing","title":"t","body":"b","link":"/"}')`);
   await deliverStaffNotifications(db);
