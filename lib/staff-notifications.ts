@@ -3,7 +3,7 @@ import { listModuleHolders } from "./portal/client";
 import { notificationsApp } from "./notifications/config";
 
 /** Who is told: Staff holding the Module for the notification's area when delivery runs. */
-const AUDIENCE_MODULES: Record<string, string> = { application: "Applications", "job-posting": "Job Postings", offer: "Offers" };
+const AUDIENCE_MODULES: Record<string, string> = { application: "Applications", "job-posting": "Job Postings", offer: "Offers", training: "Training", performance: "Performance" };
 
 const audienceModule = (payload: Record<string, unknown>) =>
   typeof payload.type === "string" ? AUDIENCE_MODULES[payload.type.split(".")[0]] : undefined;

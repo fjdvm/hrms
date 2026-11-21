@@ -1,7 +1,7 @@
 import { readApplicantDetails, employeeIdsFromDetails } from "./offer-applicant-details";
 import { randomUUID } from "node:crypto";
 import { database, type Database } from "./database";
-import { retryJobPostingAudit } from "./job-posting-audit";
+import { deliverAuditEvents } from "./audit";
 import { hiredEmail } from "./offer-reply";
 import { accessFor } from "./portal/access";
 import { listStaffNames } from "./portal/client";
@@ -525,7 +525,7 @@ export function offersFor(sessionHandle: string | undefined, db: Database = data
         SELECT (SELECT id FROM employee) AS "employeeId", EXISTS (SELECT 1 FROM filled) AS filled`,
       [id, staff.name, JSON.stringify(files), JSON.stringify(payload), auditId, JSON.stringify(event), snapshot.revision, employeeId, JSON.stringify(snapshot.details), ...governmentIds]);
       if (rows[0].employeeId === null) throw new OfferError("conflict");
-      if (rows[0].filled) await retryJobPostingAudit(db, auditId);
+      if (rows[0].filled) await deliverAuditEvents(db, auditId);
       return { employeeId: rows[0].employeeId };
     },
     /** The Hired list: real Employee records, newest first, with tab counts from the same snapshot. */

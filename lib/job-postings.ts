@@ -1,5 +1,5 @@
 import { deliverAnnouncements } from "./job-posting-announcements";
-import { auditedMutation, retryJobPostingAudit } from "./job-posting-audit";
+import { auditedMutation, deliverAuditEvents } from "./audit";
 import { randomUUID } from "node:crypto";
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
@@ -392,11 +392,11 @@ export function jobTemplatesFor(sessionHandle: string | undefined, db: PostingDa
 
 /** Called only after authenticating the maintenance request. */
 export async function retryJobPostingAuditDelivery(db: PostingDatabase = database) {
-  await retryJobPostingAudit(db);
+  await deliverAuditEvents(db);
 }
 
 /** Authenticated maintenance only; announcement delivery never runs on the publish path. */
 export async function retryJobPostingAnnouncements(db: PostingDatabase = database) {
   await deliverAnnouncements(db);
-  await retryJobPostingAudit(db);
+  await deliverAuditEvents(db);
 }

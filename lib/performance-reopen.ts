@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "./database";
-import { retryJobPostingAudit } from "./job-posting-audit";
+import { deliverAuditEvents } from "./audit";
 import type { evaluationsModule } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
 import { REASON_MAX_LENGTH } from "./performance-reopen-terms";
@@ -78,7 +78,7 @@ export function reopenModule(db: Database, deps: { evaluations: ReturnType<typeo
     if (!rows[0]) throw new ReopenError("not-evaluated");
 
     // Delivery is isolated from the committed reopen: a failure leaves the event queued for the next retry.
-    await retryJobPostingAudit(db, auditId);
+    await deliverAuditEvents(db, auditId);
     return { employeeId: employee.id, periodId, status: "In review", version: rows[0].version, reason, reopenedByName: actor.name, reopenedAt: rows[0].reopenedAt };
   }
 
