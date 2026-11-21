@@ -5,7 +5,7 @@ import { AuditEventError, assertAuditMetadata, deliverAuditEvents, queueAuditedC
 
 const staff = { id: "u-ada", name: "Ada Okafor", username: "ada", email: "ada@example.test", role: "HR Officer" };
 let db: PGlite;
-let sent: { body: Record<string, any>; auth: string | null }[];
+let sent: { body: Record<string, unknown>; auth: string | null }[];
 let gatewayStatus = 201;
 
 beforeEach(async () => {
