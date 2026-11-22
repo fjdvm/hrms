@@ -32,9 +32,8 @@ async function changePosition(id: number, position: string, date: string) {
   await db.query(`UPDATE hrms_employees SET position = $2 WHERE id = $1`, [id, position]);
   await db.query(`SELECT set_config('hrms.effective_date', '', false)`);
 }
-/** The sales KPI, and a position set that weighs it. The items carry the real weights (total 100); the legacy columns, which cannot hold a sixth weight, keep a valid total of their own. */
+/** A position set that weighs the sales KPI (which migration 0055 creates). The items carry the real weights (total 100); the legacy columns, which cannot hold a sixth weight, keep a valid total of their own. */
 async function salesSet(position: string, sales: number) {
-  await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('sales', 'Sales', 'Net sales per present day', 'POS', '100%', 6) ON CONFLICT DO NOTHING`);
   const id = (await db.query<{ id: number }>(`INSERT INTO hrms_weight_sets (name, position, position_key, attendance_rate, punctuality, full_shift, training_completion, evaluator_rating, created_by_id, created_by_name, updated_by_id, updated_by_name)
     VALUES ($1, $1, lower(btrim(regexp_replace($1, '\\s+', ' ', 'g'))), 20, 20, 20, 20, 20, 'u', 'U', 'u', 'U') RETURNING id`, [position])).rows[0].id;
   await db.query(`INSERT INTO hrms_weight_set_items (set_id, kpi_id, weight) VALUES ($1, 'attendanceRate', $2), ($1, 'punctuality', 20), ($1, 'fullShift', 10), ($1, 'trainingCompletion', 10), ($1, 'evaluatorRating', 20), ($1, 'sales', $3)`, [id, 40 - sales, sales]);
@@ -99,8 +98,6 @@ describe("the Cashier rule", () => {
   });
 
   it("never makes everyone a cashier through the default set", async () => {
-    await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('sales', 'Sales', 'x', 'POS', '100%', 6)`);
-    await db.query(`INSERT INTO hrms_weight_set_items (set_id, kpi_id, weight) SELECT id, 'sales', 0 FROM hrms_weight_sets`);
     await db.query(`UPDATE hrms_weight_set_items SET weight = CASE kpi_id WHEN 'sales' THEN 10 WHEN 'attendanceRate' THEN 20 ELSE weight END WHERE kpi_id IN ('sales', 'attendanceRate')`);
     const ben = await employee("Ben Reyes", "Barista");
 
