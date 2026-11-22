@@ -1,9 +1,12 @@
 import { database, type Database } from "./database";
 import { accessFor } from "./portal/access";
+import type { Staff } from "./portal/client";
+import { auditStep, deliverAuditEvents, type AuditEventInput } from "./audit";
 import { assignmentEmail, queueNotice, reminderEmail, scheduleChangedEmail, type NoticeTraining } from "./training-notices";
+import { scheduleLine } from "./training-email";
 import { gatewayMaterialFiles, type MaterialFiles } from "./training-material-files";
 import {
-  TRAINING_TABS, cancelledEmail, resultsDue, resultsNotRecorded, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
+  TRAINING_TABS, cancelledEmail, formatTrainingDate, resultsDue, resultsNotRecorded, formatMonth, readFeedback, readResultMarks, manilaToday, materialProblem, readCancelReason, readTrainingForm, tabOf, trainingStatus,
   HISTORY_TABS, MAX_SCHEDULE_TRAININGS, historyRowsFor, type PrintableTraining, type ScheduleItem, type ScheduleSheet, type HistoryEmployee, type HistoryRow, type HistoryTab, type TrainingHistory,
   scheduleDiffers, type LogEvent, type LogRow, type LogTab, type NotificationLog, type ScheduleChange, type UpdateResult,
   type AssignableEmployee, type AssignedEmployee, type AssignRequest, type AssignResult, type CancelRequest, type CancelResult, type MarkResultsResult, type ReminderResult, type TrainingFeedback, type ResultMark, type MaterialRequest, type TrainingMaterial, type TrainingMode, type TrainingStatus, type TrainingCompletion, type TrainingTab, type TrainingTerms,
@@ -137,10 +140,41 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
 
   async function requireTraining(id: number) {
     if (!validId(id)) throw new TrainingError("not-found");
-    const { rows } = await db.query<{ cancelled: boolean }>(`SELECT cancelled_at IS NOT NULL AS cancelled FROM public.hrms_trainings WHERE id = $1`, [id]);
+    const { rows } = await db.query<{ cancelled: boolean; title: string }>(`SELECT cancelled_at IS NOT NULL AS cancelled, title FROM public.hrms_trainings WHERE id = $1`, [id]);
     if (!rows[0]) throw new TrainingError("not-found");
     return rows[0];
   }
+
+  /**
+   * Every Training mutation is one SQL statement: the change, its Audit event and any Staff notification commit together, or
+   * not at all. A step of the statement that changes data is always gated on the main change having happened (it selects
+   * FROM that change), so a refused or lost mutation leaves no event and no notification. Delivery of the Audit event
+   * runs after the commit and never undoes the Staff action; Staff notifications are left for the bell, the maintenance
+   * route and the 15-minute job to flush.
+   */
+  function statement() {
+    const values: unknown[] = [];
+    const audits: string[] = [];
+    return {
+      values,
+      /** Binds a value and returns its placeholder. */
+      p: (value: unknown) => `$${values.push(value)}`,
+      /** The Audit event step for this statement; `from` is aliased `src` and yields one row when something changed. */
+      audit(input: AuditEventInput, from: string, extra?: string) {
+        const step = auditStep(input, values.length + 1, from, extra);
+        values.push(...step.values);
+        audits.push(step.id);
+        return step.sql;
+      },
+      deliver: () => Promise.all(audits.map((id) => deliverAuditEvents(db, id))),
+    };
+  }
+  const trainingEvent = (staff: Pick<Staff, "id" | "username" | "name">, action: string, training: { id: number | string; title: string }, description: string): AuditEventInput => ({
+    module: "Training", action, staff, target: { type: "training", id: String(training.id), display_name: training.title }, description,
+  });
+  /** Ids and counts only, never Staff-typed text. At most this many Employee ids are listed; the count is always exact. */
+  const IDS_LISTED = 100;
+  const idsOf = (column: string) => `(array_agg(${column} ORDER BY ${column}))[1:${IDS_LISTED}]`;
 
   /** How many Employees have a recorded result (Completed or Did not attend). */
   async function recordedResults(trainingId: number) {
@@ -204,16 +238,28 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const staff = await authorise();
       const { terms: checked } = readTrainingForm({ ...terms }, manilaToday(now()));
       if (!checked) throw new TrainingError("validation");
+      const s = statement();
+      const { p } = s;
+      // The Training, the claim on this Staff member's confirmed uploads (anyone else's, or already attached, stay untouched)
+      // and the Audit event commit together. The event's target is filled from the row that was inserted.
+      const audit = s.audit(
+        trainingEvent(staff, "training.created", { id: "new", title: checked.title }, `${staff.name} created the training "${checked.title}".`),
+        `(SELECT c.id, c.title, (SELECT count(*)::int FROM claimed) AS attached FROM created c) src`,
+        `jsonb_build_object('target', jsonb_build_object('type', 'training', 'id', src.id::text, 'display_name', src.title),
+          'metadata', jsonb_build_object('training_id', src.id, 'materials_attached', src.attached))`);
       const { rows } = await db.query<{ id: number }>(`
-        INSERT INTO public.hrms_trainings
-          (title, trainer, description, objectives, training_date, start_time, end_time, mode, location, created_by_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-      [checked.title, checked.trainer, checked.description, checked.objectives, checked.date, checked.startTime, checked.endTime, checked.mode, checked.location, staff.name]);
-      // Claim this Staff member's confirmed uploads from the form; anyone else's, or already attached, stay untouched.
-      if (materialIds.length > 0) {
-        await db.query(`UPDATE public.hrms_training_materials SET training_id = $1
-          WHERE file_id = ANY($2::text[]) AND training_id IS NULL AND status = 'Active' AND uploaded_by = $3`, [rows[0].id, materialIds, staff.username]);
-      }
+        WITH created AS (
+          INSERT INTO public.hrms_trainings
+            (title, trainer, description, objectives, training_date, start_time, end_time, mode, location, created_by_name)
+          VALUES (${p(checked.title)}, ${p(checked.trainer)}, ${p(checked.description)}, ${p(checked.objectives)}, ${p(checked.date)}, ${p(checked.startTime)}, ${p(checked.endTime)}, ${p(checked.mode)}, ${p(checked.location)}, ${p(staff.name)})
+          RETURNING id, title
+        ), claimed AS (
+          UPDATE public.hrms_training_materials m SET training_id = c.id FROM created c
+          WHERE m.file_id = ANY(${p(materialIds)}::text[]) AND m.training_id IS NULL AND m.status = 'Active' AND m.uploaded_by = ${p(staff.username)}
+          RETURNING m.file_id
+        ), audit AS (${audit})
+        SELECT id FROM created`, s.values);
+      await s.deliver();
       return rows[0].id;
     },
     /**
@@ -241,34 +287,61 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       // Only a new date makes a "Rescheduled from" caption; a time or venue change keeps whatever was there.
       const rescheduledFrom = terms.date !== current.date ? current.date : current.rescheduledFrom;
       const at = now().toISOString();
-      await db.query(`UPDATE public.hrms_trainings SET title = $2, trainer = $3, description = $4, objectives = $5, training_date = $6,
-        start_time = $7, end_time = $8, mode = $9, location = $10, rescheduled_from = $11, updated_at = $12::timestamptz WHERE id = $1`,
-      [id, terms.title, terms.trainer, terms.description, terms.objectives, terms.date, terms.startTime, terms.endTime, terms.mode, terms.location, rescheduledFrom, at]);
-      if (!rescheduled) return { changed: true, rescheduled: false, notified: 0, needPrintedSchedule: 0 };
+      const s = statement();
+      const { p } = s;
+      // A Training cancelled in the meantime, or (for a reschedule) one that has just got a recorded result, is refused: no row changes.
+      const guard = `id = ${p(id)} AND cancelled_at IS NULL${rescheduled ? ` AND NOT EXISTS (SELECT 1 FROM public.hrms_training_assignments r WHERE r.training_id = ${p(id)} AND r.status NOT IN ('Assigned', 'Cancelled'))` : ""}`;
+      const change = `UPDATE public.hrms_trainings SET title = ${p(terms.title)}, trainer = ${p(terms.trainer)}, description = ${p(terms.description)}, objectives = ${p(terms.objectives)}, training_date = ${p(terms.date)},
+        start_time = ${p(terms.startTime)}, end_time = ${p(terms.endTime)}, mode = ${p(terms.mode)}, location = ${p(terms.location)}, rescheduled_from = ${p(rescheduledFrom)}, updated_at = ${p(at)}::timestamptz
+        WHERE ${guard} RETURNING id, title`;
+
+      if (!rescheduled) {
+        const audit = s.audit(trainingEvent(staff, "training.updated", { id, title: terms.title }, `${staff.name} updated the training "${terms.title}".`),
+          `(SELECT c.id FROM changed c) src`, `jsonb_build_object('metadata', jsonb_build_object('training_id', src.id))`);
+        const { rows } = await db.query<{ id: number }>(`WITH changed AS (${change}), audit AS (${audit}) SELECT id FROM changed`, s.values);
+        if (!rows[0]) throw new TrainingError("conflict");
+        await s.deliver();
+        return { changed: true, rescheduled: false, notified: 0, needPrintedSchedule: 0 };
+      }
 
       const { rows: people } = await db.query<{ id: number; name: string; email: string | null }>(`
         SELECT e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 AND a.status <> 'Cancelled' ORDER BY a.assigned_at, e.id`, [id]);
       const noEmail = people.filter((person) => !person.email);
-      if (noEmail.length > 0) {
-        await db.query(`UPDATE public.hrms_training_assignments SET reprint_needed = true WHERE training_id = $1 AND employee_id = ANY($2::int[])`, [id, noEmail.map((person) => person.id)]);
-      }
-      let notified = 0;
-      if (notify) {
-        for (const person of people) {
+      // Each Employee's email is built first and passed in as JSON; the statement queues them with the change.
+      const notices = notify
+        ? people.flatMap((person) => {
           const notice = queueNotice("Schedule changed", person, scheduleChangedEmail(person.name, terms, current));
-          if (!notice) continue;
-          notified += 1;
-          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $6::timestamptz)`, [id, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), at]);
-        }
-      }
+          return notice ? [{ employee_id: person.id, kind: notice.kind, email: notice.email, payload: notice.payload }] : [];
+        })
+        : [];
       const pick = (t: { date: string; startTime: string; endTime: string; mode: TrainingMode; location: string }) => ({ date: t.date, startTime: t.startTime, endTime: t.endTime, mode: t.mode, location: t.location });
-      await db.query(`INSERT INTO public.hrms_training_events (training_id, kind, detail, notified, notified_count, needs_printed, actor_name, created_at)
-        VALUES ($1, 'Schedule changed', $2::jsonb, $3, $4, $5, $6, $7::timestamptz)`,
-      [id, JSON.stringify({ from: pick(current), to: pick(terms) }), notify, notified, noEmail.length, staff.name, at]);
-      return { changed: true, rescheduled: true, notified, needPrintedSchedule: noEmail.length };
+      const staffNote = { type: "training", title: "Training rescheduled", body: `${terms.title} is now on ${scheduleLine(terms)}.`, link: `/training/${id}` };
+      const audit = s.audit(trainingEvent(staff, "training.rescheduled", { id, title: terms.title }, `${staff.name} rescheduled the training "${terms.title}".`),
+        `(SELECT c.id, (SELECT count(*)::int FROM queued) AS notified FROM changed c) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', src.id, 'notified', ${p(notify)}::boolean, 'notices_queued', src.notified, 'needs_printed', ${p(noEmail.length)}::int))`);
+      const { rows } = await db.query<{ id: number }>(`
+        WITH changed AS (${change}), reprint AS (
+          UPDATE public.hrms_training_assignments a SET reprint_needed = true FROM changed c
+          WHERE a.training_id = c.id AND a.employee_id = ANY(${p(noEmail.map((person) => person.id))}::int[]) RETURNING a.employee_id
+        ), queued AS (
+          INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
+          SELECT c.id, n.employee_id, n.kind, n.email, n.payload, ${p(at)}::timestamptz, ${p(at)}::timestamptz
+          FROM changed c, jsonb_to_recordset(${p(JSON.stringify(notices))}::jsonb) AS n(employee_id int, kind text, email text, payload jsonb) RETURNING id
+        ), logged AS (
+          INSERT INTO public.hrms_training_events (training_id, kind, detail, notified, notified_count, needs_printed, actor_name, created_at)
+          SELECT c.id, 'Schedule changed', ${p(JSON.stringify({ from: pick(current), to: pick(terms) }))}::jsonb, ${p(notify)}::boolean, ${p(notices.length)}::int, ${p(noEmail.length)}::int, ${p(staff.name)}, ${p(at)}::timestamptz
+          FROM changed c RETURNING id
+        ), told AS (
+          INSERT INTO public.hrms_staff_notifications (id, payload)
+          SELECT 'training.rescheduled:' || l.id::text, ${p(JSON.stringify(staffNote))}::jsonb FROM logged l
+          ON CONFLICT (id) DO NOTHING
+        ), audit AS (${audit})
+        SELECT id FROM changed`, s.values);
+      if (!rows[0]) throw new TrainingError("conflict");
+      await s.deliver();
+      return { changed: true, rescheduled: true, notified: notices.length, needPrintedSchedule: noEmail.length };
     },
     /** One Training with its schedule, text and Active materials. */
     async read(id: number): Promise<TrainingDetail> {
@@ -323,18 +396,36 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (chosen.length === 0 || (!byDepartment && chosen.length !== new Set(request.employeeIds).size)) throw new TrainingError("validation");
       const fresh = chosen.filter((person) => !person.assigned);
       if (fresh.length > 0) {
-        await db.query(`INSERT INTO public.hrms_training_assignments (training_id, employee_id, assigned_by, assigned_at)
-          SELECT $1, unnest($2::int[]), $3, $4::timestamptz ON CONFLICT DO NOTHING`, [trainingId, fresh.map((person) => person.id), staff.username, now().toISOString()]);
         // Everyone with an email gets the Assignment email; no-email Employees get none and are listed as Needs printed schedule.
         const { rows: details } = await db.query<NoticeTraining>(`
           SELECT title, trainer, training_date::text AS date, to_char(start_time, 'HH24:MI') AS "startTime", to_char(end_time, 'HH24:MI') AS "endTime", mode, location
           FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
-        for (const person of fresh) {
+        const notices = fresh.flatMap((person) => {
           const notice = queueNotice("Assignment", person, assignmentEmail(person.name, details[0]));
-          if (!notice) continue;
-          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), now().toISOString()]);
-        }
+          return notice ? [{ employee_id: person.id, kind: notice.kind, email: notice.email, payload: notice.payload }] : [];
+        });
+        const at = now().toISOString();
+        const s = statement();
+        const { p } = s;
+        const audit = s.audit(trainingEvent(staff, "training.employee_assigned", { id: trainingId, title: training.title }, `${staff.name} assigned Employees to the training "${training.title}".`),
+          `(SELECT count(*)::int AS n, ${idsOf("employee_id")} AS ids FROM added HAVING count(*) > 0) src`,
+          `jsonb_build_object('metadata', jsonb_build_object('training_id', ${p(trainingId)}::int, 'employee_ids', src.ids, 'employee_count', src.n, 'by_department', ${p(byDepartment)}::boolean))`);
+        // The assignments, their notices and the Audit event commit together. A Training cancelled in the meantime gets none.
+        await db.query(`
+          WITH added AS (
+            INSERT INTO public.hrms_training_assignments (training_id, employee_id, assigned_by, assigned_at)
+            SELECT t.id, e.id, ${p(staff.username)}, ${p(at)}::timestamptz
+            FROM public.hrms_trainings t, unnest(${p(fresh.map((person) => person.id))}::int[]) AS e(id)
+            WHERE t.id = ${p(trainingId)} AND t.cancelled_at IS NULL
+            ON CONFLICT DO NOTHING RETURNING employee_id
+          ), queued AS (
+            INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
+            SELECT ${p(trainingId)}, n.employee_id, n.kind, n.email, n.payload, ${p(at)}::timestamptz, ${p(at)}::timestamptz
+            FROM jsonb_to_recordset(${p(JSON.stringify(notices))}::jsonb) AS n(employee_id int, kind text, email text, payload jsonb)
+            WHERE n.employee_id IN (SELECT employee_id FROM added) RETURNING id
+          ), audit AS (${audit})
+          SELECT count(*)::int AS added FROM added`, s.values);
+        await s.deliver();
       }
       return { added: fresh.length, alreadyAssigned: chosen.length - fresh.length, needPrintedSchedule: fresh.filter((person) => !person.email).length };
     },
@@ -345,35 +436,63 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
      * or that has recorded results, is refused.
      */
     async cancel(trainingId: number, request: CancelRequest): Promise<CancelResult> {
-      await authorise();
+      const staff = await authorise();
       const training = await requireTraining(trainingId);
       const { reason } = readCancelReason(request?.reason);
       if (reason === null || typeof request.notify !== "boolean") throw new TrainingError("validation");
       if (training.cancelled) throw new TrainingError("conflict");
       const { rows: recorded } = await db.query(`SELECT 1 FROM public.hrms_training_assignments WHERE training_id = $1 AND status NOT IN ('Assigned', 'Cancelled') LIMIT 1`, [trainingId]);
       if (recorded[0]) throw new TrainingError("conflict");
-      // The guard in WHERE makes a double submit cancel once; the second finds nothing to update.
-      const { rows: done } = await db.query<{ title: string; date: string }>(`
-        UPDATE public.hrms_trainings SET cancelled_at = $2::timestamptz, cancel_reason = $3
-        WHERE id = $1 AND cancelled_at IS NULL RETURNING title, training_date::text AS date`, [trainingId, now().toISOString(), reason]);
-      if (!done[0]) throw new TrainingError("conflict");
+      const { rows: found } = await db.query<{ title: string; date: string }>(`SELECT title, training_date::text AS date FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
       const { rows: people } = await db.query<{ id: number; name: string; email: string | null }>(`
-        UPDATE public.hrms_training_assignments a SET status = 'Cancelled'
-        FROM public.hrms_employees e WHERE a.training_id = $1 AND a.status = 'Assigned' AND e.id = a.employee_id
-        RETURNING e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email`, [trainingId]);
-      // An Assignment or Reminder still waiting to go out would announce a session that is off.
-      await db.query(`DELETE FROM public.hrms_training_notices WHERE training_id = $1 AND state IN ('Queued', 'Retrying')`, [trainingId]);
-      let notified = 0;
-      if (request.notify) {
-        for (const person of people) {
-          const notice = queueNotice("Cancelled", person, cancelledEmail(person.name, done[0], reason));
-          if (!notice) continue;
-          await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), now().toISOString()]);
-          notified += 1;
-        }
-      }
-      return { cancelled: people.length, notified, needPrintedSchedule: people.filter((person) => !person.email).length };
+        SELECT e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email
+        FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
+        WHERE a.training_id = $1 AND a.status = 'Assigned' ORDER BY a.assigned_at, e.id`, [trainingId]);
+      // Each Employee's Cancelled email is built first and passed in as JSON.
+      const notices = request.notify
+        ? people.flatMap((person) => {
+          const notice = queueNotice("Cancelled", person, cancelledEmail(person.name, found[0], reason));
+          return notice ? [{ employee_id: person.id, kind: notice.kind, email: notice.email, payload: notice.payload }] : [];
+        })
+        : [];
+      const at = now().toISOString();
+      const s = statement();
+      const { p } = s;
+      const staffNote = { type: "training", title: "Training cancelled", body: `${found[0].title} on ${formatTrainingDate(found[0].date)} was cancelled.`, link: `/training/${trainingId}` };
+      // The reason is Staff-typed text, so it stays out of the Audit event.
+      const audit = s.audit(trainingEvent(staff, "training.cancelled", { id: trainingId, title: training.title }, `${staff.name} cancelled the training "${training.title}".`),
+        `(SELECT d.id, (SELECT count(*)::int FROM cancelled) AS cancelled FROM done d) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', src.id, 'employees_cancelled', src.cancelled, 'notified', ${p(request.notify)}::boolean))`);
+      // The guard in WHERE makes a double submit cancel once, and a result recorded in the meantime refuses it; either finds
+      // nothing to change, and every other step selects FROM `done`, so nothing else is written.
+      const { rows } = await db.query<{ cancelled: number; notified: number; needPrinted: number }>(`
+        WITH done AS (
+          UPDATE public.hrms_trainings SET cancelled_at = ${p(at)}::timestamptz, cancel_reason = ${p(reason)}
+          WHERE id = ${p(trainingId)} AND cancelled_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM public.hrms_training_assignments r WHERE r.training_id = ${p(trainingId)} AND r.status NOT IN ('Assigned', 'Cancelled'))
+          RETURNING id, title
+        ), cancelled AS (
+          UPDATE public.hrms_training_assignments a SET status = 'Cancelled'
+          FROM done d, public.hrms_employees e WHERE a.training_id = d.id AND a.status = 'Assigned' AND e.id = a.employee_id
+          RETURNING e.id AS employee_id, NULLIF(btrim(e.email), '') AS email
+        ), cleared AS (
+          -- An Assignment or Reminder still waiting to go out would announce a session that is off.
+          DELETE FROM public.hrms_training_notices n USING done d WHERE n.training_id = d.id AND n.state IN ('Queued', 'Retrying') RETURNING n.id
+        ), queued AS (
+          INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at)
+          SELECT d.id, n.employee_id, n.kind, n.email, n.payload, ${p(at)}::timestamptz
+          FROM done d, jsonb_to_recordset(${p(JSON.stringify(notices))}::jsonb) AS n(employee_id int, kind text, email text, payload jsonb)
+          WHERE n.employee_id IN (SELECT employee_id FROM cancelled) RETURNING id
+        ), told AS (
+          INSERT INTO public.hrms_staff_notifications (id, payload)
+          SELECT 'training.cancelled:' || d.id::text, ${p(JSON.stringify(staffNote))}::jsonb FROM done d
+          ON CONFLICT (id) DO NOTHING
+        ), audit AS (${audit})
+        SELECT (SELECT count(*)::int FROM cancelled) AS cancelled, (SELECT count(*)::int FROM queued) AS notified,
+          (SELECT count(*)::int FROM cancelled WHERE email IS NULL) AS "needPrinted" FROM done`, s.values);
+      if (!rows[0]) throw new TrainingError("conflict");
+      await s.deliver();
+      return { cancelled: rows[0].cancelled, notified: rows[0].notified, needPrintedSchedule: rows[0].needPrinted };
     },
     /**
      * Marks results from the paper sign-in sheet, one or many Employees at once: Completed (with a completion date),
@@ -381,9 +500,9 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
      * Allowed from the day of the Training. The first recorded result locks the Training's date, time and venue.
      */
     async markResults(trainingId: number, request: { marks: ResultMark[] }): Promise<MarkResultsResult> {
-      await authorise();
+      const staff = await authorise();
       if (!validId(trainingId)) throw new TrainingError("not-found");
-      const { rows: found } = await db.query<{ date: string; cancelled: boolean }>(`SELECT training_date::text AS date, cancelled_at IS NOT NULL AS cancelled FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
+      const { rows: found } = await db.query<{ title: string; date: string; cancelled: boolean }>(`SELECT title, training_date::text AS date, cancelled_at IS NOT NULL AS cancelled FROM public.hrms_trainings WHERE id = $1`, [trainingId]);
       if (!found[0]) throw new TrainingError("not-found");
       if (found[0].cancelled) throw new TrainingError("conflict");
       const today = manilaToday(now());
@@ -394,15 +513,28 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       const ids = marks.map((mark) => mark.employeeId);
       const { rows: eligible } = await db.query(`SELECT 1 FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = ANY($2::int[]) AND status <> 'Cancelled'`, [trainingId, ids]);
       if (eligible.length !== ids.length) throw new TrainingError("validation");
+      const s = statement();
+      const { p } = s;
+      const audit = s.audit(trainingEvent(staff, "training.results_marked", { id: trainingId, title: found[0].title }, `${staff.name} recorded results for the training "${found[0].title}".`),
+        `(SELECT count(*)::int AS n, ${idsOf("employee_id")} AS ids, count(*) FILTER (WHERE status = 'Completed')::int AS completed,
+          count(*) FILTER (WHERE status = 'Did not attend')::int AS missed, count(*) FILTER (WHERE status = 'Assigned')::int AS reset FROM marked HAVING count(*) > 0) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', ${p(trainingId)}::int, 'employee_ids', src.ids, 'employee_count', src.n,
+          'completed', src.completed, 'did_not_attend', src.missed, 'reset_to_assigned', src.reset))`);
+      // One event for the whole sheet, however many Employees it marks.
       await db.query(`
-        UPDATE public.hrms_training_assignments a SET status = m.status, completed_on = NULLIF(m.completed_on, '')::date,
-          feedback_rating = CASE WHEN m.status = 'Completed' THEN a.feedback_rating END,
-          feedback_comments = CASE WHEN m.status = 'Completed' THEN a.feedback_comments ELSE '' END,
-          feedback_recorded_at = CASE WHEN m.status = 'Completed' THEN a.feedback_recorded_at END,
-          feedback_recorded_by = CASE WHEN m.status = 'Completed' THEN a.feedback_recorded_by END
-        FROM unnest($2::int[], $3::text[], $4::text[]) AS m(employee_id, status, completed_on)
-        WHERE a.training_id = $1 AND a.employee_id = m.employee_id AND a.status <> 'Cancelled'`,
-      [trainingId, ids, marks.map((mark) => mark.status), marks.map((mark) => mark.completedOn ?? "")]);
+        WITH marked AS (
+          UPDATE public.hrms_training_assignments a SET status = m.status, completed_on = NULLIF(m.completed_on, '')::date,
+            feedback_rating = CASE WHEN m.status = 'Completed' THEN a.feedback_rating END,
+            feedback_comments = CASE WHEN m.status = 'Completed' THEN a.feedback_comments ELSE '' END,
+            feedback_recorded_at = CASE WHEN m.status = 'Completed' THEN a.feedback_recorded_at END,
+            feedback_recorded_by = CASE WHEN m.status = 'Completed' THEN a.feedback_recorded_by END
+          FROM unnest(${p(ids)}::int[], ${p(marks.map((mark) => mark.status))}::text[], ${p(marks.map((mark) => mark.completedOn ?? ""))}::text[]) AS m(employee_id, status, completed_on)
+          WHERE a.training_id = ${p(trainingId)} AND a.employee_id = m.employee_id AND a.status <> 'Cancelled'
+            AND EXISTS (SELECT 1 FROM public.hrms_trainings t WHERE t.id = ${p(trainingId)} AND t.cancelled_at IS NULL)
+          RETURNING a.employee_id, a.status
+        ), audit AS (${audit})
+        SELECT count(*)::int AS marked FROM marked`, s.values);
+      await s.deliver();
       return { marked: ids.length };
     },
     /**
@@ -411,15 +543,27 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
      */
     async recordFeedback(trainingId: number, employeeId: number, input: { rating: number; comments?: string }): Promise<TrainingFeedback> {
       const staff = await authorise();
-      await requireTraining(trainingId);
+      const training = await requireTraining(trainingId);
       if (!validId(employeeId)) throw new TrainingError("not-found");
       const { feedback } = readFeedback(input);
       if (!feedback) throw new TrainingError("validation");
       const { rows } = await db.query<{ status: string }>(`SELECT status FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = $2`, [trainingId, employeeId]);
       if (!rows[0]) throw new TrainingError("not-found");
       if (rows[0].status !== "Completed") throw new TrainingError("conflict");
-      await db.query(`UPDATE public.hrms_training_assignments SET feedback_rating = $3, feedback_comments = $4, feedback_recorded_at = $5::timestamptz, feedback_recorded_by = $6
-        WHERE training_id = $1 AND employee_id = $2`, [trainingId, employeeId, feedback.rating, feedback.comments, now().toISOString(), staff.username]);
+      const s = statement();
+      const { p } = s;
+      // The comments are Staff-typed text, so only the rating (a number) goes into the Audit event.
+      const audit = s.audit(trainingEvent(staff, "training.feedback_recorded", { id: trainingId, title: training.title }, `${staff.name} recorded feedback for the training "${training.title}".`),
+        `(SELECT r.training_id, r.employee_id FROM recorded r) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', src.training_id, 'employee_id', src.employee_id, 'rating', ${p(feedback.rating)}::int))`);
+      const { rows: saved } = await db.query<{ employee_id: number }>(`
+        WITH recorded AS (
+          UPDATE public.hrms_training_assignments SET feedback_rating = ${p(feedback.rating)}, feedback_comments = ${p(feedback.comments)}, feedback_recorded_at = ${p(now().toISOString())}::timestamptz, feedback_recorded_by = ${p(staff.username)}
+          WHERE training_id = ${p(trainingId)} AND employee_id = ${p(employeeId)} AND status = 'Completed' RETURNING training_id, employee_id
+        ), audit AS (${audit})
+        SELECT employee_id FROM recorded`, s.values);
+      if (!saved[0]) throw new TrainingError("conflict");
+      await s.deliver();
       return feedback;
     },
     /**
@@ -428,7 +572,7 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
      * Only an Upcoming Training can be reminded about.
      */
     async sendReminder(trainingId: number): Promise<ReminderResult> {
-      await authorise();
+      const staff = await authorise();
       const training = await requireTraining(trainingId);
       if (training.cancelled) throw new TrainingError("conflict");
       const { rows: details } = await db.query<NoticeTraining>(`
@@ -440,25 +584,49 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
         SELECT e.id, e.full_name AS name, NULLIF(btrim(e.email), '') AS email
         FROM public.hrms_training_assignments a JOIN public.hrms_employees e ON e.id = a.employee_id
         WHERE a.training_id = $1 AND a.status = 'Assigned' ORDER BY a.assigned_at, e.id`, [trainingId]);
-      let queued = 0;
-      for (const person of people) {
+      const notices = people.flatMap((person) => {
         const notice = queueNotice("Reminder", person, reminderEmail(person.name, details[0]));
-        if (!notice) continue;
-        queued += 1;
-        await db.query(`INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
-          VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz, $6::timestamptz)`, [trainingId, person.id, notice.kind, notice.email, JSON.stringify(notice.payload), at.toISOString()]);
-      }
+        return notice ? [{ employee_id: person.id, kind: notice.kind, email: notice.email, payload: notice.payload }] : [];
+      });
+      const queued = notices.length;
+      const s = statement();
+      const { p } = s;
+      // A reminder is a Staff action even when nobody could be emailed, so the event is written whenever the Training is still on.
+      const audit = s.audit(trainingEvent(staff, "training.reminder_sent", { id: trainingId, title: training.title }, `${staff.name} sent a reminder for the training "${training.title}".`),
+        `(SELECT t.id FROM on_training t) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', src.id, 'notices_queued', ${p(queued)}::int, 'not_emailed', ${p(people.length - queued)}::int))`);
+      await db.query(`
+        WITH on_training AS (
+          SELECT id FROM public.hrms_trainings WHERE id = ${p(trainingId)} AND cancelled_at IS NULL
+        ), queued AS (
+          INSERT INTO public.hrms_training_notices (training_id, employee_id, kind, email, payload, next_attempt_at, created_at)
+          SELECT t.id, n.employee_id, n.kind, n.email, n.payload, ${p(at.toISOString())}::timestamptz, ${p(at.toISOString())}::timestamptz
+          FROM on_training t, jsonb_to_recordset(${p(JSON.stringify(notices))}::jsonb) AS n(employee_id int, kind text, email text, payload jsonb) RETURNING id
+        ), audit AS (${audit})
+        SELECT count(*)::int AS queued FROM queued`, s.values);
+      await s.deliver();
       return { queued, notEmailed: people.length - queued };
     },
     /** Removes an Employee from a Training. */
     async unassign(trainingId: number, employeeId: number): Promise<void> {
-      await authorise();
-      await requireTraining(trainingId);
+      const staff = await authorise();
+      const training = await requireTraining(trainingId);
       if (!validId(employeeId)) throw new TrainingError("not-found");
-      const { rows } = await db.query(`DELETE FROM public.hrms_training_assignments WHERE training_id = $1 AND employee_id = $2 RETURNING 1`, [trainingId, employeeId]);
+      const s = statement();
+      const { p } = s;
+      const audit = s.audit(trainingEvent(staff, "training.employee_unassigned", { id: trainingId, title: training.title }, `${staff.name} removed an Employee from the training "${training.title}".`),
+        `(SELECT r.training_id, r.employee_id FROM removed r) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', src.training_id, 'employee_id', src.employee_id))`);
+      const { rows } = await db.query<{ employee_id: number }>(`
+        WITH removed AS (
+          DELETE FROM public.hrms_training_assignments WHERE training_id = ${p(trainingId)} AND employee_id = ${p(employeeId)} RETURNING training_id, employee_id
+        ), cleared AS (
+          -- Notices not yet delivered stop with the assignment; delivered and failed ones stay in the log.
+          DELETE FROM public.hrms_training_notices n USING removed r WHERE n.training_id = r.training_id AND n.employee_id = r.employee_id AND n.state IN ('Queued', 'Retrying') RETURNING n.id
+        ), audit AS (${audit})
+        SELECT employee_id FROM removed`, s.values);
       if (!rows[0]) throw new TrainingError("not-found");
-      // Notices not yet delivered stop with the assignment; delivered and failed ones stay in the log.
-      await db.query(`DELETE FROM public.hrms_training_notices WHERE training_id = $1 AND employee_id = $2 AND state IN ('Queued', 'Retrying')`, [trainingId, employeeId]);
+      await s.deliver();
     },
     /** The Employees the Training history picker offers: Employee records only, by name. */
     async historyEmployees(): Promise<{ id: number; name: string; employeeNumber: string }[]> {
@@ -590,14 +758,25 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
     },
     /** Puts a Not reached notice back in the queue; it gets the full three retries again. */
     async retryNotice(trainingId: number, noticeId: number): Promise<void> {
-      await authorise();
-      await requireTraining(trainingId);
+      const staff = await authorise();
+      const training = await requireTraining(trainingId);
       if (!Number.isInteger(noticeId) || noticeId <= 0) throw new TrainingError("not-found");
       const { rows } = await db.query<{ state: string }>(`SELECT state FROM public.hrms_training_notices WHERE id = $1 AND training_id = $2`, [noticeId, trainingId]);
       if (!rows[0]) throw new TrainingError("not-found");
       if (rows[0].state !== "Failed") throw new TrainingError("conflict");
-      await db.query(`UPDATE public.hrms_training_notices SET state = 'Retrying', attempts = 0, next_attempt_at = $2::timestamptz
-        WHERE id = $1 AND state = 'Failed'`, [noticeId, now().toISOString()]);
+      const s = statement();
+      const { p } = s;
+      const audit = s.audit(trainingEvent(staff, "training.notice_retried", { id: trainingId, title: training.title }, `${staff.name} retried a notice for the training "${training.title}".`),
+        `(SELECT r.id, r.training_id, r.employee_id FROM retried r) src`,
+        `jsonb_build_object('metadata', jsonb_build_object('training_id', src.training_id, 'notice_id', src.id, 'employee_id', src.employee_id))`);
+      const { rows: retried } = await db.query<{ id: number }>(`
+        WITH retried AS (
+          UPDATE public.hrms_training_notices SET state = 'Retrying', attempts = 0, next_attempt_at = ${p(now().toISOString())}::timestamptz
+          WHERE id = ${p(noticeId)} AND training_id = ${p(trainingId)} AND state = 'Failed' RETURNING id, training_id, employee_id
+        ), audit AS (${audit})
+        SELECT id FROM retried`, s.values);
+      if (!retried[0]) throw new TrainingError("conflict");
+      await s.deliver();
     },
     /** Asks file-storage for an upload address. The file is Pending, and uploaded by this Staff member, until confirmed. */
     async requestMaterial(file: MaterialRequest, trainingId?: number): Promise<{ fileId: string; uploadUrl: string }> {
@@ -622,7 +801,21 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
       if (!rows[0]) throw new TrainingError("not-found");
       if (rows[0].status === "Pending") {
         await files.confirm(rows[0].fileId).catch(unavailable);
-        await db.query(`UPDATE public.hrms_training_materials SET status = 'Active' WHERE file_id = $1`, [rows[0].fileId]);
+        const s = statement();
+        const { p } = s;
+        // Only the Pending to Active step is an upload; confirming again changes nothing and records nothing. A material
+        // not yet on a Training (uploaded from the New training form) is its own target until the Training is created.
+        const audit = s.audit({ module: "Training", action: "training_material.uploaded", staff, target: { type: "training_material", id: rows[0].fileId, display_name: "Training material" }, description: `${staff.name} uploaded a training material.` },
+          `(SELECT a.file_id, a.training_id, a.size, t.title FROM activated a LEFT JOIN public.hrms_trainings t ON t.id = a.training_id) src`,
+          `jsonb_build_object('target', CASE WHEN src.training_id IS NULL THEN jsonb_build_object('type', 'training_material', 'id', src.file_id, 'display_name', 'Training material')
+              ELSE jsonb_build_object('type', 'training', 'id', src.training_id::text, 'display_name', src.title) END,
+            'metadata', jsonb_build_object('file_id', src.file_id, 'training_id', src.training_id, 'size', src.size))`);
+        await db.query(`
+          WITH activated AS (
+            UPDATE public.hrms_training_materials SET status = 'Active' WHERE file_id = ${p(rows[0].fileId)} AND status = 'Pending' RETURNING file_id, training_id, size
+          ), audit AS (${audit})
+          SELECT file_id FROM activated`, s.values);
+        await s.deliver();
       }
       const { status, ...material } = rows[0];
       void status;
@@ -630,11 +823,23 @@ export function trainingsFor(sessionHandle: string | undefined, db: Database = d
     },
     /** Deletes a material from file-storage and from its Training. Only files HRMS itself recorded can be deleted. */
     async deleteMaterial(fileId: string): Promise<void> {
-      await authorise();
+      const staff = await authorise();
       const { rows } = await db.query(`SELECT 1 FROM public.hrms_training_materials WHERE file_id = $1`, [String(fileId)]);
       if (!rows[0]) throw new TrainingError("not-found");
       await files.remove(String(fileId)).catch(unavailable);
-      await db.query(`DELETE FROM public.hrms_training_materials WHERE file_id = $1`, [String(fileId)]);
+      const s = statement();
+      const { p } = s;
+      const audit = s.audit({ module: "Training", action: "training_material.deleted", staff, target: { type: "training_material", id: String(fileId), display_name: "Training material" }, description: `${staff.name} deleted a training material.` },
+        `(SELECT d.file_id, d.training_id, t.title FROM deleted d LEFT JOIN public.hrms_trainings t ON t.id = d.training_id) src`,
+        `jsonb_build_object('target', CASE WHEN src.training_id IS NULL THEN jsonb_build_object('type', 'training_material', 'id', src.file_id, 'display_name', 'Training material')
+            ELSE jsonb_build_object('type', 'training', 'id', src.training_id::text, 'display_name', src.title) END,
+          'metadata', jsonb_build_object('file_id', src.file_id, 'training_id', src.training_id))`);
+      await db.query(`
+        WITH deleted AS (
+          DELETE FROM public.hrms_training_materials WHERE file_id = ${p(String(fileId))} RETURNING file_id, training_id
+        ), audit AS (${audit})
+        SELECT file_id FROM deleted`, s.values);
+      await s.deliver();
     },
     /** A short-lived signed address for one Active material. */
     async materialUrl(fileId: string): Promise<string> {

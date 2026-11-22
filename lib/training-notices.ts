@@ -1,5 +1,6 @@
 import { database, type Database } from "./database";
 import { notificationsApp } from "./notifications/config";
+import { deliverStaffNotifications } from "./staff-notifications";
 
 export const NOTICE_KINDS = ["Assignment", "Schedule changed", "Cancelled", "Reminder"] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -58,8 +59,22 @@ export async function deliverTrainingNotices(db: Database = database, now: () =>
         const attempts = row.attempts + 1;
         // The first send plus MAX_RETRIES retries have all failed: the Employee is Not reached.
         const exhausted = attempts > MAX_RETRIES;
-        await db.query(`UPDATE public.hrms_training_notices SET attempts = $2, last_attempt_at = $3,
-          state = $4, next_attempt_at = $5::timestamptz WHERE id = $1 AND state IN ('Queued', 'Retrying')`,
+        // One statement: when this send is the one that makes the Employee Not reached, the Staff notification to the Training
+        // Module holders is queued with it. Its id carries the notice id, so a second Failed (after Retry) is not told twice.
+        await db.query(`
+          WITH failed AS (
+            UPDATE public.hrms_training_notices SET attempts = $2, last_attempt_at = $3,
+              state = $4, next_attempt_at = $5::timestamptz WHERE id = $1 AND state IN ('Queued', 'Retrying')
+            RETURNING id, training_id, employee_id, state
+          )
+          INSERT INTO public.hrms_staff_notifications (id, payload)
+          SELECT 'training.not-reached:' || f.id::text, jsonb_build_object(
+            'type', 'training', 'title', 'Employee not reached',
+            'body', e.full_name || ' could not be reached about ' || t.title || ' after three retries.',
+            'link', '/training/' || f.training_id::text || '/log')
+          FROM failed f JOIN public.hrms_trainings t ON t.id = f.training_id JOIN public.hrms_employees e ON e.id = f.employee_id
+          WHERE f.state = 'Failed'
+          ON CONFLICT (id) DO NOTHING`,
         [row.id, attempts, at.toISOString(), exhausted ? "Failed" : "Retrying", exhausted ? null : new Date(at.getTime() + RETRY_AFTER_MS).toISOString()]);
       }
     }
@@ -105,12 +120,17 @@ export async function queueDueReminders(db: Database = database, now: () => Date
 }
 
 /** The daily-or-more-often job's route handler (`GET /api/cron/training-notices`), authorised like the other jobs. */
-export function trainingNoticesJob(db: Database = database, now: () => Date = () => new Date(), send: SendEmail = gatewaySendEmail) {
+export function trainingNoticesJob(
+  db: Database = database, now: () => Date = () => new Date(), send: SendEmail = gatewaySendEmail,
+  deliver: (db: Database) => Promise<void> = deliverStaffNotifications,
+) {
   return async (request: Request): Promise<Response> => {
     const secret = process.env.CRON_SECRET;
     if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) return Response.json({ error: "Unauthorized" }, { status: 401 });
     await queueDueReminders(db, now);
     await deliverTrainingNotices(db, now, send);
+    // Flushes the Staff notifications this run queued (an Employee Not reached) and any others waiting. The job sends no Audit event.
+    await deliver(db);
     return Response.json({ ok: true });
   };
 }
