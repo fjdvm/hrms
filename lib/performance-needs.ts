@@ -1,6 +1,8 @@
 import type { Database } from "./database";
 import type { evaluationsModule } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
+import { performanceAudit } from "./performance-audit";
+import { evaluationHref } from "./performance-list";
 import { ACTION_MAX_LENGTH, GAP_MAX_LENGTH, checkNeedText, type NeedProblem } from "./performance-needs-terms";
 import { PeriodError, type periodsModule } from "./performance-periods";
 import { cleanMultiline } from "./validators/text";
@@ -61,6 +63,11 @@ export function readTrainingId(value: unknown): number | null {
   return value;
 }
 
+/** What the Performance Module holders see in the bell. It names the Employee and the period and links to the Evaluation; it never carries the gap or the action. */
+export const needFlaggedNotice = (employeeName: string, periodName: string, employeeId: number, periodId: number) => ({
+  type: "performance", title: "Development need flagged", body: `A development need was flagged for ${employeeName} in ${periodName}.`, link: evaluationHref(employeeId, periodId),
+});
+
 export function needsModule(db: Database, deps: { evaluations: ReturnType<typeof evaluationsModule>; periods: ReturnType<typeof periodsModule> }) {
   async function flagNeed(actor: Actor, employeeId: number, periodId: number, input: NeedInput): Promise<DevelopmentNeed> {
     const gap = readNeedText("gap", input.gap);
@@ -71,7 +78,16 @@ export function needsModule(db: Database, deps: { evaluations: ReturnType<typeof
     const evaluation = await deps.evaluations.evaluationFor(employeeId, periodId);
     if (evaluation.status === "Draft") throw new NeedError("evaluation-not-started");
 
-    // One statement: the need and its audit row. A Training id that names no Training adds nothing.
+    // One statement: the need, its history row, its Audit event and the Staff notification. A Training id that names no Training adds nothing.
+    // The gap and the action are Staff-typed text, so neither the event nor the notification carries them.
+    const values: unknown[] = [employeeId, periodId, gap, action, trainingId, actor.id, actor.name, `${employeeId}:${periodId}`];
+    const audit = performanceAudit(db, actor, values);
+    values.push(JSON.stringify(needFlaggedNotice(evaluation.name, evaluation.period.name, employeeId, periodId)));
+    const noteRef = `$${values.length}`;
+    const event = audit.step("development_need.flagged", { type: "evaluation", id: `${employeeId}:${periodId}`, display_name: `${evaluation.name} · ${evaluation.period.name}` },
+      `${actor.name} flagged a development need for ${evaluation.name} in ${evaluation.period.name}.`,
+      `(SELECT a.id, a.employee_id, a.period_id, a.training_id FROM added a) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('need_id', src.id, 'employee_id', src.employee_id, 'period_id', src.period_id, 'training_id', src.training_id, 'from_suggestion', false))`);
     const { rows } = await db.query<NeedRow>(`
       WITH added AS (
         INSERT INTO public.hrms_development_needs (employee_id, period_id, gap, action, training_id, source, flagged_by_id, flagged_by_name)
@@ -83,9 +99,13 @@ export function needsModule(db: Database, deps: { evaluations: ReturnType<typeof
         SELECT $6::text, $7::text, 'development-need-flagged', 'evaluation', $8::text,
           jsonb_build_object('employeeId', added.employee_id, 'periodId', added.period_id, 'needId', added.id, 'source', added.source, 'trainingId', added.training_id)
         FROM added
-      ) SELECT ${NEED_COLUMNS} FROM added`,
-    [employeeId, periodId, gap, action, trainingId, actor.id, actor.name, `${employeeId}:${periodId}`]);
+      ), told AS (
+        INSERT INTO public.hrms_staff_notifications (id, payload) SELECT 'performance.need-flagged:' || added.id::text, ${noteRef}::jsonb FROM added
+        ON CONFLICT (id) DO NOTHING
+      ), audit AS (${event})
+      SELECT ${NEED_COLUMNS} FROM added`, values);
     if (!rows[0]) throw new NeedError("unknown-training");
+    await audit.deliver();
     return rows[0];
   }
 

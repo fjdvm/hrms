@@ -3,6 +3,7 @@ import type { Database } from "./database";
 import { deliverAuditEvents } from "./audit";
 import type { evaluationsModule } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
+import { evaluationHref } from "./performance-list";
 import { REASON_MAX_LENGTH } from "./performance-reopen-terms";
 import { cleanMultiline, hasDisallowedText } from "./validators/text";
 
@@ -59,7 +60,13 @@ export function reopenModule(db: Database, deps: { evaluations: ReturnType<typeo
       metadata: { operation: "evaluation.reopened", employee_id: employee.id, employee_number: employee.employeeNumber, period_id: periodId, reason },
     };
 
-    // One statement. It applies only while the evaluation is Evaluated, so a second reopen finds nothing to change.
+    // What the Performance holders see in the bell: the Employee, the period and the reason, which the Evaluation page already shows them.
+    const notice = {
+      type: "performance", title: "Evaluation reopened", body: `${employee.name}'s evaluation for ${detail.period.name} was reopened: ${reason}`, link: evaluationHref(employee.id, periodId),
+    };
+
+    // One statement. It applies only while the evaluation is Evaluated, so a second reopen finds nothing to change. The Staff notification
+    // is queued with it; its id carries the version, so a later reopen of the same Evaluation raises its own.
     const { rows } = await db.query<{ version: number; reopenedAt: string }>(`
       WITH reopened AS (
         UPDATE public.hrms_evaluations SET status = 'In review' WHERE id = $1 AND status = 'Evaluated' RETURNING id
@@ -73,8 +80,12 @@ export function reopenModule(db: Database, deps: { evaluations: ReturnType<typeo
       ), logged AS (
         INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
         SELECT $3, $4, 'evaluation-reopened', 'evaluation', $7, jsonb_build_object('employeeId', $8::int, 'periodId', $9::int, 'version', recorded.version, 'reason', $2::text) FROM recorded
+      ), told AS (
+        INSERT INTO public.hrms_staff_notifications (id, payload)
+        SELECT 'performance.reopened:' || $1::text || ':' || recorded.version::text, $10::jsonb FROM recorded
+        ON CONFLICT (id) DO NOTHING
       ) SELECT version, reopened_at::text AS "reopenedAt" FROM recorded`,
-    [evaluation.id, reason, actor.id, actor.name, auditId, JSON.stringify(event), `${employee.id}:${periodId}`, employee.id, periodId]);
+    [evaluation.id, reason, actor.id, actor.name, auditId, JSON.stringify(event), `${employee.id}:${periodId}`, employee.id, periodId, JSON.stringify(notice)]);
     if (!rows[0]) throw new ReopenError("not-evaluated");
 
     // Delivery is isolated from the committed reopen: a failure leaves the event queued for the next retry.

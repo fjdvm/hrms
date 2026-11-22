@@ -3,7 +3,8 @@ import { draftsLeft, readAiConfig, runAi, describeFailure, type AiBanner, type A
 import { logRefusal } from "./ai/usage";
 import type { evaluationsModule } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
-import { NEED_COLUMNS, NeedError, readNeedText, readTrainingId, type DevelopmentNeed, type NeedInput } from "./performance-needs";
+import { NEED_COLUMNS, NeedError, needFlaggedNotice, readNeedText, readTrainingId, type DevelopmentNeed, type NeedInput } from "./performance-needs";
+import { performanceAudit } from "./performance-audit";
 import {
   MAX_SUGGESTIONS, SUGGESTION_SCHEMA, buildSuggestionRequest, isBelowTarget, parseSuggestions, shownResult, type SuggestionDraft, type SuggestionProblem,
 } from "./performance-suggestions-terms";
@@ -225,6 +226,22 @@ export function suggestionsModule(db: Database, deps: { evaluations: ReturnType<
     // A Training id that names no Training is refused like on a need typed by hand.
     if (trainingId !== null && !(await db.query(`SELECT 1 FROM public.hrms_trainings WHERE id = $1`, [trainingId])).rows.length) throw new NeedError("unknown-training");
 
+    // Who and which period the suggestion is for, so the event and the notification can name them.
+    const { rows: owner } = await db.query<{ employeeId: number; periodId: number }>(`
+      SELECT e.employee_id AS "employeeId", e.period_id AS "periodId" FROM public.hrms_suggestions s
+      JOIN public.hrms_suggestion_sets st ON st.id = s.set_id JOIN public.hrms_evaluations e ON e.id = st.evaluation_id WHERE s.id = $1`, [suggestionId]);
+    const evaluation = await deps.evaluations.evaluationFor(owner[0].employeeId, owner[0].periodId);
+    // The gap and the action are Staff-edited text, so neither the event nor the notification carries them.
+    const values: unknown[] = [suggestionId, gap, action, trainingId, actor.id, actor.name];
+    const audit = performanceAudit(db, actor, values);
+    values.push(JSON.stringify(needFlaggedNotice(evaluation.name, evaluation.period.name, owner[0].employeeId, owner[0].periodId)));
+    const noteRef = `$${values.length}`;
+    const event = audit.step("development_need.flagged", { type: "evaluation", id: `${owner[0].employeeId}:${owner[0].periodId}`, display_name: `${evaluation.name} · ${evaluation.period.name}` },
+      `${actor.name} flagged a development need for ${evaluation.name} in ${evaluation.period.name} from a suggested development area.`,
+      `(SELECT a.id, a.employee_id, a.period_id, a.training_id, a.suggestion_id FROM added a) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('need_id', src.id, 'employee_id', src.employee_id, 'period_id', src.period_id, 'training_id', src.training_id,
+        'from_suggestion', true, 'suggestion_id', src.suggestion_id))`);
+
     const { rows } = await db.query<DevelopmentNeed>(`
       WITH picked AS (
         SELECT s.id, e.employee_id, e.period_id
@@ -245,10 +262,14 @@ export function suggestionsModule(db: Database, deps: { evaluations: ReturnType<
         SELECT $5::text, $6::text, 'development-suggestion-flagged', 'evaluation', added.employee_id::text || ':' || added.period_id::text,
           jsonb_build_object('employeeId', added.employee_id, 'periodId', added.period_id, 'suggestionId', added.suggestion_id, 'needId', added.id, 'trainingId', added.training_id)
         FROM added
-      ) SELECT ${NEED_COLUMNS} FROM added`,
-    [suggestionId, gap, action, trainingId, actor.id, actor.name]);
+      ), told AS (
+        INSERT INTO public.hrms_staff_notifications (id, payload) SELECT 'performance.need-flagged:' || added.id::text, ${noteRef}::jsonb FROM added
+        ON CONFLICT (id) DO NOTHING
+      ), audit AS (${event})
+      SELECT ${NEED_COLUMNS} FROM added`, values);
     // A second click at the same moment finds the suggestion no longer Pending and adds nothing.
     if (!rows[0]) throw new SuggestionError("already-reviewed");
+    await audit.deliver();
     return rows[0];
   }
 

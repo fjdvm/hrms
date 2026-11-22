@@ -2,6 +2,7 @@ import type { Database } from "./database";
 import { isCalendarDate, scheduledDays } from "./performance-calendar";
 import { MAX_BATCH_ROWS, coverageOf, numberKey, validateRows, type Coverage, type RawAttendanceRow, type RejectedRow } from "./performance-attendance-rows";
 import type { Actor } from "./performance-kpis";
+import { performanceAudit } from "./performance-audit";
 import { PeriodError, type periodsModule } from "./performance-periods";
 import type { AttendanceRow } from "./performance-scoring";
 import { REASON_MAX_LENGTH } from "./performance-attendance-terms";
@@ -157,6 +158,13 @@ export function attendanceModule(db: Database, periods: ReturnType<typeof period
     }
     const { batch, usable, rejected } = await check(input.rows);
     if (usable.length === 0) throw new AttendanceError("no-usable-rows");
+    const values: unknown[] = [fileName, sourceRef, batch.length, usable.length, rejected.length, actor.id, actor.name, usable.map((r) => r.employeeId), usable.map((r) => r.date), usable.map((r) => r.timeIn), usable.map((r) => r.timeOut)];
+    const audit = performanceAudit(db, actor, values);
+    // One event with counts, never the rows. The file name is the readable target.
+    const event = audit.step("attendance.imported", { type: "attendance_import", id: "new", display_name: fileName }, `${actor.name} imported attendance from ${fileName}.`,
+      `(SELECT i.id, i.file_name, i.total_rows, i.usable_rows, i.rejected_rows FROM imported i) src`,
+      `jsonb_build_object('target', jsonb_build_object('type', 'attendance_import', 'id', src.id::text, 'display_name', src.file_name),
+        'metadata', jsonb_build_object('import_id', src.id, 'total_rows', src.total_rows, 'usable_rows', src.usable_rows, 'rejected_rows', src.rejected_rows))`);
     const { rows } = await db.query<AttendanceImport>(`
       WITH imported AS (
         INSERT INTO public.hrms_performance_imports (file_name, source_ref, total_rows, usable_rows, rejected_rows, imported_by_id, imported_by_name)
@@ -170,9 +178,10 @@ export function attendanceModule(db: Database, periods: ReturnType<typeof period
       ), logged AS (
         INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
         SELECT $6, $7, 'attendance-imported', 'import', id::text, jsonb_build_object('fileName', file_name, 'usableRows', usable_rows, 'rejectedRows', rejected_rows) FROM imported
-      ) SELECT id, file_name AS "fileName", source_ref AS "sourceRef", total_rows AS "totalRows", usable_rows AS "usableRows", rejected_rows AS "rejectedRows",
-        imported_by_name AS "importedByName", imported_at::text AS "importedAt" FROM imported`,
-    [fileName, sourceRef, batch.length, usable.length, rejected.length, actor.id, actor.name, usable.map((r) => r.employeeId), usable.map((r) => r.date), usable.map((r) => r.timeIn), usable.map((r) => r.timeOut)]);
+      ), audit AS (${event})
+      SELECT id, file_name AS "fileName", source_ref AS "sourceRef", total_rows AS "totalRows", usable_rows AS "usableRows", rejected_rows AS "rejectedRows",
+        imported_by_name AS "importedByName", imported_at::text AS "importedAt" FROM imported`, values);
+    await audit.deliver();
     return rows[0];
   }
 
@@ -213,7 +222,7 @@ export function attendanceModule(db: Database, periods: ReturnType<typeof period
    */
   async function resolveDay(actor: Actor, employeeId: number, periodId: number, date: string, resolution: Resolution): Promise<AttendanceState> {
     const period = await periods.requirePeriod(periodId);
-    await employeeById(employeeId);
+    const employee = await employeeById(employeeId);
     if (!isCalendarDate(date)) throw new AttendanceError("date-invalid");
     if (date < period.start || date > period.end) throw new AttendanceError("day-outside-period");
     if (!resolution || (resolution.type !== "Excused" && resolution.type !== "Absent")) throw new AttendanceError("resolution-invalid");
@@ -221,21 +230,35 @@ export function attendanceModule(db: Database, periods: ReturnType<typeof period
     const state = await attendanceFor(employeeId, periodId);
     if (!state.issues.some((issue) => issue.kind === "missing-time-out" && issue.date === date)) throw new AttendanceError("not-an-open-issue");
 
-    if (resolution.type === "Excused") {
+    // One statement each: the day, its history row and its Audit event. The reason is Staff-typed text, so it stays out of the event.
+    const values: unknown[] = [employeeId, periodId, date, actor.id, actor.name, reason];
+    const audit = performanceAudit(db, actor, values);
+    const excused = resolution.type === "Excused";
+    const event = audit.step(excused ? "attendance_day.excused" : "attendance_day.marked_absent",
+      { type: "attendance_day", id: `${employeeId}:${periodId}:${date}`, display_name: `${employee.name} · ${date}` },
+      `${actor.name} ${excused ? "excused" : "marked absent"} ${employee.name} on ${date}.`,
+      `(SELECT a.date FROM added a) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('employee_id', $1::int, 'period_id', $2::int, 'date', src.date, 'date_count', 1))`);
+    if (excused) {
       await db.query(`
         WITH added AS (
           INSERT INTO public.hrms_excused_days (employee_id, period_id, date, recorded_by_id, recorded_by_name, reason) VALUES ($1, $2, $3::date, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING date
-        ) INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
-        SELECT $4, $5, 'day-excused', 'attendance-day', $1::text || ':' || $2::text || ':' || $3::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'date', $3::text, 'reason', $6::text) FROM added`,
-      [employeeId, periodId, date, actor.id, actor.name, reason]);
+        ), logged AS (
+          INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+          SELECT $4, $5, 'day-excused', 'attendance-day', $1::text || ':' || $2::text || ':' || $3::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'date', $3::text, 'reason', $6::text) FROM added
+        ), audit AS (${event})
+        SELECT date FROM added`, values);
     } else {
       await db.query(`
         WITH added AS (
           INSERT INTO public.hrms_absent_days (employee_id, period_id, date, reason, marked_by_id, marked_by_name) VALUES ($1, $2, $3::date, $6, $4, $5) ON CONFLICT DO NOTHING RETURNING date
-        ) INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
-        SELECT $4, $5, 'day-marked-absent', 'attendance-day', $1::text || ':' || $2::text || ':' || $3::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'date', $3::text, 'reason', $6::text) FROM added`,
-      [employeeId, periodId, date, actor.id, actor.name, reason]);
+        ), logged AS (
+          INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+          SELECT $4, $5, 'day-marked-absent', 'attendance-day', $1::text || ':' || $2::text || ':' || $3::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'date', $3::text, 'reason', $6::text) FROM added
+        ), audit AS (${event})
+        SELECT date FROM added`, values);
     }
+    await audit.deliver();
     return attendanceFor(employeeId, periodId);
   }
 
@@ -245,16 +268,25 @@ export function attendanceModule(db: Database, periods: ReturnType<typeof period
    */
   async function confirmNoAttendance(actor: Actor, employeeId: number, periodId: number, reasonInput: unknown): Promise<AttendanceState> {
     const period = await periods.requirePeriod(periodId);
-    await employeeById(employeeId);
+    const employee = await employeeById(employeeId);
     const reason = readReason(reasonInput, true);
     const rows = (await db.query(`SELECT 1 FROM public.hrms_performance_attendance WHERE employee_id = $1 AND date BETWEEN $2::date AND $3::date LIMIT 1`, [employeeId, period.start, period.end])).rows;
     if (rows.length > 0) throw new AttendanceError("has-attendance");
+    const values: unknown[] = [employeeId, periodId, reason, actor.id, actor.name];
+    const audit = performanceAudit(db, actor, values);
+    const event = audit.step("attendance.no_attendance_confirmed", { type: "attendance", id: `${employeeId}:${periodId}`, display_name: `${employee.name} · ${period.name}` },
+      `${actor.name} confirmed no attendance for ${employee.name} in ${period.name}.`,
+      `(SELECT a.employee_id FROM added a) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('employee_id', src.employee_id, 'period_id', $2::int))`);
     await db.query(`
       WITH added AS (
         INSERT INTO public.hrms_attendance_confirmations (employee_id, period_id, reason, confirmed_by_id, confirmed_by_name) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING RETURNING employee_id
-      ) INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
-      SELECT $4, $5, 'no-attendance-confirmed', 'attendance-period', $1::text || ':' || $2::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'reason', $3::text) FROM added`,
-    [employeeId, periodId, reason, actor.id, actor.name]);
+      ), logged AS (
+        INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+        SELECT $4, $5, 'no-attendance-confirmed', 'attendance-period', $1::text || ':' || $2::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'reason', $3::text) FROM added
+      ), audit AS (${event})
+      SELECT employee_id FROM added`, values);
+    await audit.deliver();
     return attendanceFor(employeeId, periodId);
   }
 
