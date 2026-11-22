@@ -10,15 +10,15 @@ import { matchKey } from "./validators/text";
  */
 
 export type BaseChoice = "default" | "blank" | "another";
-/** The weights as typed, one text per KPI; empty counts as 0. */
-export type WeightTexts = Record<KpiId, string>;
+/** The weights as typed, one text per KPI; empty counts as 0. `sales` is there only for a set that weighs sales or after it is typed; without it the sales weight is 0. */
+export type WeightTexts = Record<KpiId, string> & { sales?: string };
 export const BASE_CHOICES: readonly { id: BaseChoice; label: string; help: string }[] = [
   { id: "default", label: "Default set", help: "Copying the default set gives the five starter KPIs and their weights." },
   { id: "blank", label: "Blank", help: "Starts every weight at 0. Enter the weights so they total 100." },
   { id: "another", label: "Another set", help: "Copies the weights of another position's set." },
 ];
 
-const textsOf = (weights: Weights): WeightTexts => Object.fromEntries(KPI_IDS.map((kpi) => [kpi, String(weights[kpi])])) as WeightTexts;
+const textsOf = (weights: Weights): WeightTexts => ({ ...(Object.fromEntries(KPI_IDS.map((kpi) => [kpi, String(weights[kpi])])) as Record<KpiId, string>), ...((weights.sales ?? 0) > 0 ? { sales: String(weights.sales) } : {}) });
 export const BLANK_WEIGHTS: WeightTexts = Object.fromEntries(KPI_IDS.map((kpi) => [kpi, "0"])) as WeightTexts;
 
 /** The weights a new set starts with: a copy of the default set, all zero, or a copy of another set. */
@@ -35,7 +35,7 @@ export function weightOf(text: string): number | null {
 }
 
 /** The running total of the weights typed so far; a weight that is not a whole number adds nothing. */
-export const totalOf = (texts: WeightTexts) => KPI_IDS.reduce((sum, kpi) => sum + (weightOf(texts[kpi]) ?? 0), 0);
+export const totalOf = (texts: WeightTexts) => KPI_IDS.reduce((sum, kpi) => sum + (weightOf(texts[kpi]) ?? 0), 0) + (weightOf(texts.sales ?? "") ?? 0);
 
 /** The set that already has this position (exact match, ignoring case and extra spaces), if any. */
 export function setForPosition(position: string, sets: readonly WeightSet[]): WeightSet | undefined {
@@ -67,12 +67,15 @@ export function checkWeightForm(positionText: string, texts: WeightTexts, sets: 
       positionError = kpiMessage(error.problem);
     }
   }
-  const parsed = KPI_IDS.map((kpi) => weightOf(texts[kpi]));
+  const parsed = [...KPI_IDS.map((kpi) => weightOf(texts[kpi])), weightOf(texts.sales ?? "")];
   const weightsError = parsed.some((value) => value === null) ? kpiMessage("weights-invalid") : total !== WEIGHT_SET_TOTAL ? kpiMessage("weights-total", { total }) : null;
   return { position, positionError, weightsError, total, canCreate: position !== null && positionError === null && weightsError === null };
 }
 
 /** The weights to send, from texts that already passed `checkWeightForm`. */
 export function weightsFrom(texts: WeightTexts): Weights {
-  return Object.fromEntries(KPI_IDS.map((kpi) => [kpi, weightOf(texts[kpi]) ?? 0])) as Weights;
+  const weights = Object.fromEntries(KPI_IDS.map((kpi) => [kpi, weightOf(texts[kpi]) ?? 0])) as Weights;
+  // The sales weight is sent only when it is above 0: at 0 the sales KPI is off and the set looks as it always did.
+  const sales = weightOf(texts.sales ?? "") ?? 0;
+  return sales > 0 ? { ...weights, sales } : weights;
 }

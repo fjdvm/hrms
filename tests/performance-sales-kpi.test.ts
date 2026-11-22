@@ -92,6 +92,14 @@ describe("the sales weight and target", () => {
     expect(await performance().salesTarget()).toBeNull();
   });
 
+  it("lists the sales KPI for KPI Setup only, with its target in pesos once it is set", async () => {
+    expect((await performance().listKpis({ includeSales: true })).find((k) => k.id === "sales")).toMatchObject({ name: "Sales", status: "Active", defaultWeight: 0, targetAmount: null, target: "Not set" });
+    expect((await performance().listKpis()).map((k) => k.id)).not.toContain("sales");
+
+    await performance().setSalesTarget(1500.5);
+    expect((await performance().listKpis({ includeSales: true })).find((k) => k.id === "sales")).toMatchObject({ targetAmount: 1500.5, target: "₱1,500.50 net sales per present day" });
+  });
+
   it("writes the sales weight to the items and scales the five legacy columns to total 100, so a revert is safe", async () => {
     const saved = await performance().saveWeightSet({ position: "Branch Cashier", weights: { attendanceRate: 40, punctuality: 15, fullShift: 10, trainingCompletion: 10, evaluatorRating: 15, sales: 10 } });
 
