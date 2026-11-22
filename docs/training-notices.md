@@ -16,6 +16,25 @@ A failed send keeps the notice and counts the failure:
 Retry on a Not reached Employee queues the notice again with a fresh set of 3 retries. Removing an Employee from a
 Training drops their undelivered notices; delivered and failed ones stay in the log.
 
+## Staff notifications and Audit events
+
+These are separate from the emails above. A **Staff notification** is a bell message to the Staff who hold the Training Module; a
+Training notice is an email to an Employee.
+
+- **Not reached.** The statement that marks a notice Failed (the fourth failed send) queues the Staff notification
+  `training.not-reached:<notice id>` in the same statement, linking to the Training's Notification log. Pressing **Retry** and failing
+  again does not tell Staff twice, because the id is the same.
+- **Cancelled and rescheduled.** Cancelling a Training queues `training.cancelled:<training id>`; each reschedule queues
+  `training.rescheduled:<schedule change event id>`, so a second reschedule is not dropped. Both are queued in the same statement as the
+  change, and neither depends on whether Employees were emailed.
+- **When they go out.** A Staff action never flushes them. The 15-minute job flushes Staff notifications after queuing Reminders and
+  sending notices, so a Not reached notification goes out on the run that produced it. They also go out when anyone opens the bell and
+  from the maintenance route.
+- **Audit events.** Every Staff action on a Training (create, edit, reschedule, cancel, assign, unassign, results, feedback, a manual
+  reminder, a notice retry, a material upload or delete) writes one Audit event in the same statement as the change. The job itself,
+  the automatic Reminders and the automatic email retries send **no** Audit event: the log shows people, not the scheduler.
+  Feedback comments and the cancel reason are never put in an event.
+
 ## Reminders
 
 A **Reminder** goes out to each assigned Employee 1 day before the Training at **8:00 AM Manila time**, and Staff can send one

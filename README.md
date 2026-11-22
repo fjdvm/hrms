@@ -40,7 +40,7 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 Run `npm run db:migrate` (migration 0019). Triggers queue a Staff Notification in the
 same transaction as each new application (Careers or HR-added) and each posting
 published or closed. Delivery asks the Portal's `/api/integrations/recipients` for
-Staff holding the Module for the notification's area (Job Postings, Applications or Offers), then posts one gateway
+Staff holding the Module for the notification's area (Job Postings, Applications, Offers, Training or Performance), then posts one gateway
 notification to them (stable idempotency key, retried with backoff). Queued rows
 are flushed when any signed-in tab opens the bell (page load) and by the cron route;
 a Careers application can wait for one of those. The browser holds no key: it asks
@@ -87,6 +87,13 @@ until that service is updated. Draft deletion, views and scheduled deadline
 closure do not emit Staff action events. Publication events explicitly record
 `applicants_notified: false` until that integration supplies a delivery result.
 
+Training and Performance audit every Staff action that changes data, one event per
+action. Each mutation writes its change, its Audit event, any Staff notification and
+(for Performance) its local history row in one SQL statement, so a refused or failed
+mutation leaves none of them. Automatic actions with no Staff actor (the scheduled
+Reminders and email retries), reads, printing, and generating or dismissing AI
+suggestions send no event. Training also sends no event for a failed email.
+
 Only Audit events are delivered inline. Staff notifications are queued in the
 same statement as the change (a row with a stable id, `ON CONFLICT (id) DO
 NOTHING`) and are flushed when the bell opens, by the maintenance route, and by
@@ -95,6 +102,20 @@ type `training` goes to the holders of the Training Module and one of type
 `performance` to the holders of the Performance Module, alongside the existing
 application, job-posting and offer types; one that names its recipients goes to
 them, and an unknown type stays queued for retry.
+
+The Training and Performance Staff notifications, each with a stable id that carries
+a discriminator so a repeat is not dropped:
+
+| Who is told | When | Id |
+| --- | --- | --- |
+| Training holders | a Training is cancelled | `training.cancelled:<training id>` |
+| Training holders | a Training is rescheduled (each time) | `training.rescheduled:<schedule change event id>` |
+| Training holders | an Employee ends as Not reached after the three retries | `training.not-reached:<notice id>` |
+| Performance holders | an Evaluation is reopened (each time) | `performance.reopened:<evaluation id>:<version>` |
+| Performance holders | a Development need is flagged, by hand or from a suggestion | `performance.need-flagged:<need id>` |
+
+Creating a Training, assigning Employees, recording results or feedback, materials,
+reminders, and rating, KPI, weight, period, calendar and attendance changes raise none.
 
 ### Applicant counts on Job Postings
 
