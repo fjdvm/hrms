@@ -37,7 +37,8 @@ export class KpiError extends Error {
 export const POSITION_MAX_LENGTH = 100;
 export const WEIGHT_SET_TOTAL = 100;
 
-export const weightsTotal = (weights: Weights) => KPI_IDS.reduce((sum, kpi) => sum + weights[kpi], 0);
+/** A KPI with no weight counts as 0, so a set read before a newer KPI was weighed still totals correctly. */
+export const weightsTotal = (weights: Partial<Weights>) => KPI_IDS.reduce((sum, kpi) => sum + (weights[kpi] ?? 0), 0);
 
 /** Reads the five weights from untrusted input: exactly the five KPIs, each a whole number from 0 to 100. */
 export function readWeights(input: unknown): Weights {
@@ -70,18 +71,22 @@ export function readPosition(input: unknown): string {
 
 type SetRow = {
   id: number; name: string; isDefault: boolean; position: string | null;
-  attendanceRate: number; punctuality: number; fullShift: number; trainingCompletion: number; evaluatorRating: number;
+  items: Partial<Record<string, number>> | null;
   updatedByName: string; updatedAt: string;
 };
-const SET_COLUMNS = `id, name, is_default AS "isDefault", position, attendance_rate AS "attendanceRate", punctuality,
-  full_shift AS "fullShift", training_completion AS "trainingCompletion", evaluator_rating AS "evaluatorRating",
-  updated_by_name AS "updatedByName", updated_at::text AS "updatedAt"`;
+/** A weight set's own columns, plus its weights as one JSON object of KPI id to weight, read from the per-KPI rows. */
+const SET_COLUMNS = `s.id, s.name, s.is_default AS "isDefault", s.position,
+  (SELECT jsonb_object_agg(i.kpi_id, i.weight) FROM public.hrms_weight_set_items i WHERE i.set_id = s.id) AS items,
+  s.updated_by_name AS "updatedByName", s.updated_at::text AS "updatedAt"`;
+/** The same columns for a row a write just returned: its items are not visible yet, so the caller gives the weights it wrote. */
+const WRITTEN_COLUMNS = `s.id, s.name, s.is_default AS "isDefault", s.position, NULL::jsonb AS items, s.updated_by_name AS "updatedByName", s.updated_at::text AS "updatedAt"`;
+/** One item row per KPI for the set a CTE returned (`source`), from its weights bound as JSON (KPI id to weight). */
+const ITEM_ROWS = (source: string, json: string) => `SELECT ${source}.id, w.key, w.value::int FROM ${source} CROSS JOIN jsonb_each_text(${json}) w`;
 
-function toWeightSet(row: SetRow): WeightSet {
-  const weights: Weights = {
-    attendanceRate: row.attendanceRate, punctuality: row.punctuality, fullShift: row.fullShift,
-    trainingCompletion: row.trainingCompletion, evaluatorRating: row.evaluatorRating,
-  };
+function toWeightSet(row: SetRow, written?: Weights): WeightSet {
+  // A KPI with no row counts as weight 0.
+  const weights = {} as Weights;
+  for (const kpi of KPI_IDS) weights[kpi] = written ? written[kpi] : (row.items?.[kpi] ?? 0);
   return { id: row.id, name: row.name, isDefault: row.isDefault, position: row.position, weights, total: weightsTotal(weights), updatedByName: row.updatedByName, updatedAt: row.updatedAt };
 }
 
@@ -91,10 +96,11 @@ export function kpiModule(db: Database) {
   /** The KPIs in their set order, each with its weight in the default set. */
   async function listKpis(): Promise<Kpi[]> {
     const { rows } = await db.query<Omit<Kpi, "defaultWeight"> & { defaultWeight: number }>(`
-      SELECT k.id, k.name, k.description, k.source, k.target, k.status,
-        CASE k.id WHEN 'attendanceRate' THEN s.attendance_rate WHEN 'punctuality' THEN s.punctuality WHEN 'fullShift' THEN s.full_shift
-          WHEN 'trainingCompletion' THEN s.training_completion WHEN 'evaluatorRating' THEN s.evaluator_rating END AS "defaultWeight"
-      FROM public.hrms_kpis k CROSS JOIN public.hrms_weight_sets s WHERE s.is_default ORDER BY k.sort_order`);
+      SELECT k.id, k.name, k.description, k.source, k.target, k.status, COALESCE(i.weight, 0) AS "defaultWeight"
+      FROM public.hrms_kpis k
+      LEFT JOIN public.hrms_weight_sets s ON s.is_default
+      LEFT JOIN public.hrms_weight_set_items i ON i.set_id = s.id AND i.kpi_id = k.id
+      ORDER BY k.sort_order`);
     return rows;
   }
 
@@ -124,8 +130,8 @@ export function kpiModule(db: Database) {
 
   /** The default set first, then position sets by position. Each set carries its total. */
   async function listWeightSets(): Promise<WeightSet[]> {
-    const { rows } = await db.query<SetRow>(`SELECT ${SET_COLUMNS} FROM public.hrms_weight_sets ORDER BY is_default DESC, position_key, id`);
-    return rows.map(toWeightSet);
+    const { rows } = await db.query<SetRow>(`SELECT ${SET_COLUMNS} FROM public.hrms_weight_sets s ORDER BY s.is_default DESC, s.position_key, s.id`);
+    return rows.map((row) => toWeightSet(row));
   }
 
   /**
@@ -135,7 +141,7 @@ export function kpiModule(db: Database) {
   async function weightSetFor(position: string | null | undefined): Promise<WeightSet> {
     const key = typeof position === "string" ? matchKey(position) : "";
     const { rows } = await db.query<SetRow>(
-      `SELECT ${SET_COLUMNS} FROM public.hrms_weight_sets WHERE is_default OR ($1 <> '' AND position_key = $1) ORDER BY is_default LIMIT 1`, [key]);
+      `SELECT ${SET_COLUMNS} FROM public.hrms_weight_sets s WHERE s.is_default OR ($1 <> '' AND s.position_key = $1) ORDER BY s.is_default LIMIT 1`, [key]);
     return toWeightSet(rows[0]);
   }
 
@@ -170,10 +176,12 @@ export function kpiModule(db: Database) {
           ), logged AS (
             INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
             SELECT $8, $9, 'weight-set-created', 'weight-set', id::text, jsonb_build_object('position', position, 'weights', $10::jsonb) FROM created
+          ), items AS (
+            INSERT INTO public.hrms_weight_set_items (set_id, kpi_id, weight) ${ITEM_ROWS("created", "$10::jsonb")}
           ), audit AS (${event})
-          SELECT ${SET_COLUMNS} FROM created`, bound);
+          SELECT ${WRITTEN_COLUMNS} FROM created s`, bound);
         await audit.deliver();
-        return toWeightSet(rows[0]);
+        return toWeightSet(rows[0], weights);
       } catch (error) {
         if (isUniqueViolation(error)) throw new KpiError("position-taken", { conflictsWith: (await ownerOf(position)) ?? position });
         throw error;
@@ -211,10 +219,13 @@ export function kpiModule(db: Database) {
         ), logged AS (
           INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
           SELECT $9, $10, 'weight-set-updated', 'weight-set', id::text, jsonb_build_object('position', position, 'weights', $11::jsonb) FROM updated
+        ), items AS (
+          INSERT INTO public.hrms_weight_set_items (set_id, kpi_id, weight) ${ITEM_ROWS("updated", "$11::jsonb")}
+          ON CONFLICT (set_id, kpi_id) DO UPDATE SET weight = EXCLUDED.weight
         ), audit AS (${event})
-        SELECT ${SET_COLUMNS} FROM updated`, bound);
+        SELECT ${WRITTEN_COLUMNS} FROM updated s`, bound);
       await audit.deliver();
-      return toWeightSet(rows[0]);
+      return toWeightSet(rows[0], weights);
     } catch (error) {
       if (isUniqueViolation(error) && position !== null) throw new KpiError("position-taken", { conflictsWith: (await ownerOf(position, input.id)) ?? position });
       throw error;
