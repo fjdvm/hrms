@@ -44,12 +44,18 @@ async function train(employeeId: number, results: ("Completed" | "Did not attend
 const NOV = { type: "Month", year: 2026, month: 11 } as const;
 const WEIGHTS = { attendanceRate: 30, punctuality: 25, fullShift: 15, trainingCompletion: 15, evaluatorRating: 15 };
 /** An Employee ready to submit: a full on-time month, both Trainings completed and a rating of 80, so the score is 97. */
+/** Setting up is audited too (periods, attendance, ratings), so the tests below clear those events and look only at the one they are about. */
+async function settle() {
+  calls = [];
+  await db.query("DELETE FROM hrms_audit_outbox");
+}
 async function ready(name = "Ana Cruz") {
   const period = (await performance().listPeriods())[0] ?? (await performance().openPeriod(NOV));
   const id = await employee(name);
   await attend(id);
   await train(id, ["Completed", "Completed"]);
   await performance().saveRating(id, period.id, { rating: 80, comments: "Reliable and punctual." });
+  await settle();
   return { period, id };
 }
 const submissions = async () => (await db.query<Record<string, unknown>>(`SELECT * FROM hrms_evaluation_submissions ORDER BY id`)).rows;
@@ -156,6 +162,7 @@ describe("the four checks", () => {
   it("refuses Submit, naming each check that is not met, and saves nothing", async () => {
     const period = await performance().openPeriod(NOV);
     const noShift = await employee("Cy Dela Cruz", { days: null });
+    await settle();
 
     const error = await missingOf(performance().submitEvaluation(noShift, period.id));
     expect(error.problem).toBe("checks-missing");

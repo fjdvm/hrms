@@ -328,7 +328,7 @@ describe("the audit event", () => {
 
   it("sends no email or notification", async () => {
     const { period, id } = await submitted();
-    const mailTables = (await db.query<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ~ 'notif|notice|email|mail'`)).rows.map((r) => r.table_name);
+    const mailTables = (await db.query<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ~ 'notif|notice|email|mail' AND table_name <> 'hrms_staff_notifications'`)).rows.map((r) => r.table_name); // a reopen tells the Performance holders in the bell, by design (#481); nothing else leaves
     const countRows = async () => Promise.all(mailTables.map(async (t) => (await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM public.${t}`)).rows[0].n));
     const before = await countRows();
     calls = [];

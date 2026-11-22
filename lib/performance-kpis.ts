@@ -1,4 +1,5 @@
 import type { Database } from "./database";
+import { performanceAudit } from "./performance-audit";
 import { KPI_IDS, type KpiId } from "./performance-scoring";
 import { cleanText, hasControlCharacters, matchKey, nameProblem } from "./validators/text";
 
@@ -101,13 +102,23 @@ export function kpiModule(db: Database) {
   async function setKpiStatus(actor: Actor, id: string, status: string): Promise<Kpi[]> {
     if (!(KPI_IDS as readonly string[]).includes(id)) throw new KpiError("unknown-kpi");
     if (!(KPI_STATUSES as readonly string[]).includes(status)) throw new KpiError("unknown-status");
+    const values: unknown[] = [id, status, actor.id, actor.name];
+    const audit = performanceAudit(db, actor, values);
+    const active = status === "Active";
+    // One statement: the status change, its history row and its Audit event. The step queues nothing when the status did not change.
+    const event = audit.step(active ? "kpi.activated" : "kpi.deactivated", { type: "kpi", id, display_name: id }, `${actor.name} ${active ? "activated" : "deactivated"} the ${id} KPI.`,
+      `(SELECT c.id, c.name, c.status FROM changed c) src`,
+      `jsonb_build_object('target', jsonb_build_object('type', 'kpi', 'id', src.id, 'display_name', src.name), 'metadata', jsonb_build_object('kpi_id', src.id, 'status', src.status))`);
     await db.query(`
       WITH changed AS (
         UPDATE public.hrms_kpis SET status = $2, updated_by_id = $3, updated_by_name = $4, updated_at = clock_timestamp()
-        WHERE id = $1 AND status <> $2 RETURNING id, status
-      ) INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
-      SELECT $3, $4, CASE WHEN status = 'Active' THEN 'kpi-activated' ELSE 'kpi-deactivated' END, 'kpi', id, jsonb_build_object('status', status) FROM changed`,
-    [id, status, actor.id, actor.name]);
+        WHERE id = $1 AND status <> $2 RETURNING id, name, status
+      ), logged AS (
+        INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+        SELECT $3, $4, CASE WHEN status = 'Active' THEN 'kpi-activated' ELSE 'kpi-deactivated' END, 'kpi', id, jsonb_build_object('status', status) FROM changed
+      ), audit AS (${event})
+      SELECT id FROM changed`, values);
+    await audit.deliver();
     return listKpis();
   }
 
@@ -145,6 +156,12 @@ export function kpiModule(db: Database) {
       const taken = await ownerOf(position);
       if (taken) throw new KpiError("position-taken", { conflictsWith: taken });
       try {
+        const bound: unknown[] = [position, matchKey(position), ...values, actor.id, actor.name, JSON.stringify(weights)];
+        const audit = performanceAudit(db, actor, bound);
+        // The position is the set's name, which Staff typed; it names the target but stays out of the metadata.
+        const event = audit.step("weight_set.created", { type: "weight_set", id: "new", display_name: position }, `${actor.name} created the weight set for ${position}.`,
+          `(SELECT c.id, c.position FROM created c) src`,
+          `jsonb_build_object('target', jsonb_build_object('type', 'weight_set', 'id', src.id::text, 'display_name', src.position), 'metadata', jsonb_build_object('weight_set_id', src.id, 'is_default', false))`);
         const { rows } = await db.query<SetRow>(`
           WITH created AS (
             INSERT INTO public.hrms_weight_sets (name, is_default, position, position_key, attendance_rate, punctuality, full_shift, training_completion, evaluator_rating,
@@ -153,7 +170,9 @@ export function kpiModule(db: Database) {
           ), logged AS (
             INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
             SELECT $8, $9, 'weight-set-created', 'weight-set', id::text, jsonb_build_object('position', position, 'weights', $10::jsonb) FROM created
-          ) SELECT ${SET_COLUMNS} FROM created`, [position, matchKey(position), ...values, actor.id, actor.name, JSON.stringify(weights)]);
+          ), audit AS (${event})
+          SELECT ${SET_COLUMNS} FROM created`, bound);
+        await audit.deliver();
         return toWeightSet(rows[0]);
       } catch (error) {
         if (isUniqueViolation(error)) throw new KpiError("position-taken", { conflictsWith: (await ownerOf(position)) ?? position });
@@ -176,6 +195,11 @@ export function kpiModule(db: Database) {
       if (taken) throw new KpiError("position-taken", { conflictsWith: taken });
     }
     try {
+      const bound: unknown[] = [input.id, position, position === null ? null : matchKey(position), ...values, actor.id, actor.name, JSON.stringify(weights)];
+      const audit = performanceAudit(db, actor, bound);
+      const event = audit.step("weight_set.updated", { type: "weight_set", id: String(input.id), display_name: position ?? "Default weight set" }, `${actor.name} updated the weight set for ${position ?? "everyone (the default set)"}.`,
+        `(SELECT u.id, u.name, u.is_default FROM updated u) src`,
+        `jsonb_build_object('target', jsonb_build_object('type', 'weight_set', 'id', src.id::text, 'display_name', src.name), 'metadata', jsonb_build_object('weight_set_id', src.id, 'is_default', src.is_default))`);
       const { rows } = await db.query<SetRow>(`
         WITH updated AS (
           UPDATE public.hrms_weight_sets SET
@@ -187,8 +211,9 @@ export function kpiModule(db: Database) {
         ), logged AS (
           INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
           SELECT $9, $10, 'weight-set-updated', 'weight-set', id::text, jsonb_build_object('position', position, 'weights', $11::jsonb) FROM updated
-        ) SELECT ${SET_COLUMNS} FROM updated`,
-      [input.id, position, position === null ? null : matchKey(position), ...values, actor.id, actor.name, JSON.stringify(weights)]);
+        ), audit AS (${event})
+        SELECT ${SET_COLUMNS} FROM updated`, bound);
+      await audit.deliver();
       return toWeightSet(rows[0]);
     } catch (error) {
       if (isUniqueViolation(error) && position !== null) throw new KpiError("position-taken", { conflictsWith: (await ownerOf(position, input.id)) ?? position });

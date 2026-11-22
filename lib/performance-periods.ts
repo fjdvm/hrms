@@ -2,6 +2,7 @@ import type { Database } from "./database";
 import { daySpan, isCalendarDate, monthRange, periodName, quarterRange, scheduledDays } from "./performance-calendar";
 import { cleanText, hasControlCharacters, nameProblem } from "./validators/text";
 import type { Actor } from "./performance-kpis";
+import { LISTED, performanceAudit } from "./performance-audit";
 
 /**
  * Evaluation periods, the company calendar of non-working dates, excused days, and an Employee's scheduled days. One of
@@ -123,6 +124,15 @@ export function periodsModule(db: Database) {
     const clash = await overlapping(period.start, period.end);
     if (clash) throw new PeriodError("overlap", { overlaps: clash });
     try {
+      const values: unknown[] = [period.type, period.start, period.end, period.graceMinutes, actor.id, actor.name];
+      const audit = performanceAudit(db, actor, values);
+      const label = periodName(period);
+      values.push(label);
+      const labelRef = `$${values.length}`;
+      const event = audit.step("performance_period.opened", { type: "performance_period", id: "new", display_name: label }, `${actor.name} opened the ${label} evaluation period.`,
+        `(SELECT c.id, c.type, c.start_date, c.end_date, c.grace_minutes FROM created c) src`,
+        `jsonb_build_object('target', jsonb_build_object('type', 'performance_period', 'id', src.id::text, 'display_name', ${labelRef}::text),
+          'metadata', jsonb_build_object('period_id', src.id, 'period_type', src.type, 'start', src.start_date, 'end', src.end_date, 'grace_minutes', src.grace_minutes))`);
       const { rows } = await db.query<PeriodRow>(`
         WITH created AS (
           INSERT INTO public.hrms_evaluation_periods (type, kind, start_date, end_date, grace_minutes, created_by_id, created_by_name)
@@ -130,7 +140,9 @@ export function periodsModule(db: Database) {
         ), logged AS (
           INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
           SELECT $5, $6, 'period-opened', 'period', id::text, jsonb_build_object('type', type, 'start', start_date, 'end', end_date, 'graceMinutes', grace_minutes) FROM created
-        ) SELECT ${PERIOD_COLUMNS} FROM created`, [period.type, period.start, period.end, period.graceMinutes, actor.id, actor.name]);
+        ), audit AS (${event})
+        SELECT ${PERIOD_COLUMNS} FROM created`, values);
+      await audit.deliver();
       return toPeriod(rows[0]);
     } catch (error) {
       // Two requests at once: the database's exclusion constraint settles it, and the answer still names the other period.
@@ -154,14 +166,21 @@ export function periodsModule(db: Database) {
     const existing = await taken();
     if (existing) throw new PeriodError("date-taken", { existing });
     try {
+      const values: unknown[] = [entry.date, entry.name, entry.type, entry.notes, actor.id, actor.name];
+      const audit = performanceAudit(db, actor, values);
+      // The calendar date is the readable target; the name and notes are Staff-typed text, so they stay out of the metadata.
+      const event = audit.step("non_working_date.added", { type: "non_working_date", id: "new", display_name: entry.date }, `${actor.name} added ${entry.date} to the company calendar.`,
+        `(SELECT a.id, a.date, a.type FROM added a) src`,
+        `jsonb_build_object('target', jsonb_build_object('type', 'non_working_date', 'id', src.id::text, 'display_name', src.date::text), 'metadata', jsonb_build_object('entry_id', src.id, 'date', src.date, 'date_type', src.type))`);
       const { rows } = await db.query<CalendarEntry>(`
         WITH added AS (
           INSERT INTO public.hrms_company_calendar (date, name, type, notes, created_by_id, created_by_name) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
         ), logged AS (
           INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
           SELECT $5, $6, 'non-working-date-added', 'calendar', id::text, jsonb_build_object('date', date, 'name', name, 'type', type) FROM added
-        ) SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM added`,
-      [entry.date, entry.name, entry.type, entry.notes, actor.id, actor.name]);
+        ), audit AS (${event})
+        SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM added`, values);
+      await audit.deliver();
       return rows[0];
     } catch (error) {
       if (isCode(error, "23505")) throw new PeriodError("date-taken", { existing: (await taken()) ?? entry.name });
@@ -185,15 +204,24 @@ export function periodsModule(db: Database) {
     const clash = (await db.query<{ name: string }>(`SELECT name FROM public.hrms_company_calendar WHERE date = $1 AND id <> $2`, [entry.date, id])).rows[0];
     if (clash) throw new PeriodError("date-taken", { existing: clash.name });
     try {
+      const values: unknown[] = [id, entry.date, entry.name, entry.type, entry.notes, actor.id, actor.name, JSON.stringify({ date: before.date, name: before.name, type: before.type, notes: before.notes })];
+      const audit = performanceAudit(db, actor, values);
+      values.push(before.date);
+      const beforeRef = `$${values.length}`;
+      const event = audit.step("non_working_date.updated", { type: "non_working_date", id: String(id), display_name: entry.date }, `${actor.name} updated ${before.date} on the company calendar.`,
+        `(SELECT c.id, c.date, c.type FROM changed c) src`,
+        `jsonb_build_object('target', jsonb_build_object('type', 'non_working_date', 'id', src.id::text, 'display_name', src.date::text),
+          'metadata', jsonb_build_object('entry_id', src.id, 'date', src.date, 'date_before', ${beforeRef}::text, 'date_type', src.type))`);
       const { rows } = await db.query<CalendarEntry>(`
         WITH changed AS (
           UPDATE public.hrms_company_calendar SET date = $2, name = $3, type = $4, notes = $5 WHERE id = $1 RETURNING *
         ), logged AS (
           INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
           SELECT $6, $7, 'non-working-date-updated', 'calendar', id::text, jsonb_build_object('before', $8::jsonb, 'after', jsonb_build_object('date', date, 'name', name, 'type', type, 'notes', notes)) FROM changed
-        ) SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM changed`,
-      [id, entry.date, entry.name, entry.type, entry.notes, actor.id, actor.name, JSON.stringify({ date: before.date, name: before.name, type: before.type, notes: before.notes })]);
+        ), audit AS (${event})
+        SELECT id, date::text AS date, name, type, notes, created_by_name AS "addedByName", (created_at AT TIME ZONE 'Asia/Manila')::date::text AS "addedOn" FROM changed`, values);
       if (!rows[0]) throw new PeriodError("unknown-entry");
+      await audit.deliver();
       return rows[0];
     } catch (error) {
       if (isCode(error, "23505")) throw new PeriodError("date-taken", { existing: entry.name });
@@ -205,10 +233,18 @@ export function periodsModule(db: Database) {
   async function removeNonWorkingDate(actor: Actor, id: number): Promise<void> {
     const before = await entryOf(id);
     if (!before) throw new PeriodError("unknown-entry");
+    const values: unknown[] = [id, actor.id, actor.name];
+    const audit = performanceAudit(db, actor, values);
+    const event = audit.step("non_working_date.removed", { type: "non_working_date", id: String(id), display_name: before.date }, `${actor.name} removed ${before.date} from the company calendar.`,
+      `(SELECT r.id, r.date, r.type FROM removed r) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('entry_id', src.id, 'date', src.date, 'date_type', src.type))`);
     await db.query(`
-      WITH removed AS (DELETE FROM public.hrms_company_calendar WHERE id = $1 RETURNING *)
-      INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
-      SELECT $2, $3, 'non-working-date-removed', 'calendar', id::text, jsonb_build_object('date', date, 'name', name, 'type', type) FROM removed`, [id, actor.id, actor.name]);
+      WITH removed AS (DELETE FROM public.hrms_company_calendar WHERE id = $1 RETURNING *), logged AS (
+        INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+        SELECT $2, $3, 'non-working-date-removed', 'calendar', id::text, jsonb_build_object('date', date, 'name', name, 'type', type) FROM removed
+      ), audit AS (${event})
+      SELECT id FROM removed`, values);
+    await audit.deliver();
   }
 
   async function requirePeriod(periodId: number): Promise<Period> {
@@ -229,16 +265,27 @@ export function periodsModule(db: Database) {
    */
   async function excuseDays(actor: Actor, employeeId: number, periodId: number, dates: readonly string[]): Promise<string[]> {
     const period = await requirePeriod(periodId);
-    if (!validId(employeeId) || !(await db.query(`SELECT 1 FROM public.hrms_employees WHERE id = $1`, [employeeId])).rows.length) throw new PeriodError("unknown-employee");
+    const employee = validId(employeeId) ? (await db.query<{ name: string }>(`SELECT full_name AS name FROM public.hrms_employees WHERE id = $1`, [employeeId])).rows[0] : undefined;
+    if (!employee) throw new PeriodError("unknown-employee");
     if (!Array.isArray(dates) || dates.length === 0 || dates.length > MAX_EXCUSED_DAYS_PER_REQUEST || !dates.every((date) => isCalendarDate(date))) throw new PeriodError("dates-invalid");
     if (dates.some((date) => date < period.start || date > period.end)) throw new PeriodError("day-outside-period");
+    const values: unknown[] = [employeeId, periodId, [...new Set(dates)], actor.id, actor.name];
+    const audit = performanceAudit(db, actor, values);
+    // One event for the whole request, listing the dates that were actually added (the first LISTED of them) and how many.
+    const event = audit.step("attendance_day.excused", { type: "attendance", id: `${employeeId}:${periodId}`, display_name: `${employee.name} · ${period.name}` },
+      `${actor.name} excused days for ${employee.name} in ${period.name}.`,
+      `(SELECT count(*)::int AS n, (array_agg(date ORDER BY date))[1:${LISTED}] AS dates FROM added HAVING count(*) > 0) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('employee_id', $1::int, 'period_id', $2::int, 'dates', src.dates, 'date_count', src.n))`);
     await db.query(`
       WITH added AS (
         INSERT INTO public.hrms_excused_days (employee_id, period_id, date, recorded_by_id, recorded_by_name)
         SELECT $1, $2, day::date, $4, $5 FROM unnest($3::text[]) AS day ON CONFLICT DO NOTHING RETURNING date
-      ) INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
-      SELECT $4, $5, 'days-excused', 'excused-days', $1::text || ':' || $2::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'dates', jsonb_agg(date ORDER BY date)) FROM added HAVING count(*) > 0`,
-    [employeeId, periodId, [...new Set(dates)], actor.id, actor.name]);
+      ), logged AS (
+        INSERT INTO public.hrms_performance_audit (actor_id, actor_name, action, subject, subject_id, detail)
+        SELECT $4, $5, 'days-excused', 'excused-days', $1::text || ':' || $2::text, jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'dates', jsonb_agg(date ORDER BY date)) FROM added HAVING count(*) > 0
+      ), audit AS (${event})
+      SELECT count(*)::int AS added FROM added`, values);
+    await audit.deliver();
     return excusedDaysOf(employeeId, periodId);
   }
 

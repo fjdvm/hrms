@@ -2,6 +2,7 @@ import type { Database } from "./database";
 import { isOnRoster } from "./performance-evaluations-terms";
 import { RosterError } from "./performance-evaluations";
 import type { Actor } from "./performance-kpis";
+import { performanceAudit } from "./performance-audit";
 import { PeriodError, type periodsModule } from "./performance-periods";
 import { COMMENTS_MAX_LENGTH, RATING_MAX, RATING_MIN } from "./performance-rating-terms";
 import { cleanMultiline, hasDisallowedText } from "./validators/text";
@@ -53,13 +54,20 @@ export function ratingModule(db: Database, periods: ReturnType<typeof periodsMod
     const comments = readComments(input?.comments);
     const period = await periods.requirePeriod(periodId);
     if (!Number.isInteger(employeeId) || employeeId < 1 || employeeId > 2147483647) throw new PeriodError("unknown-employee");
-    const employee = (await db.query<{ status: string; start: string }>(`SELECT status, start_date::text AS start FROM public.hrms_employees WHERE id = $1`, [employeeId])).rows[0];
+    const employee = (await db.query<{ status: string; start: string; name: string }>(`SELECT status, start_date::text AS start, full_name AS name FROM public.hrms_employees WHERE id = $1`, [employeeId])).rows[0];
     if (!employee) throw new PeriodError("unknown-employee");
     const existing = (await db.query<{ status: string }>(`SELECT status FROM public.hrms_evaluations WHERE employee_id = $1 AND period_id = $2`, [employeeId, periodId])).rows[0];
     if (!isOnRoster(employee, period, existing !== undefined)) throw new RosterError("not-in-roster");
     if (existing?.status === "Evaluated") throw new RatingError("already-submitted");
 
     // One statement: the change applies only while the evaluation is In review, so a submit that lands first still wins.
+    // The comments are Staff-typed text, so the event says only whether they changed.
+    const values: unknown[] = [employeeId, periodId, rating, comments, actor.id, actor.name];
+    const audit = performanceAudit(db, actor, values);
+    const event = audit.step("rating.saved", { type: "evaluation", id: `${employeeId}:${periodId}`, display_name: `${employee.name} · ${period.name}` },
+      `${actor.name} saved the rating for ${employee.name} in ${period.name}.`,
+      `(SELECT s.employee_id, s.period_id, s.rating, s.comments IS DISTINCT FROM (SELECT comments FROM prior) AS comments_changed, NOT EXISTS (SELECT 1 FROM prior) AS first FROM saved s) src`,
+      `jsonb_build_object('metadata', jsonb_build_object('employee_id', src.employee_id, 'period_id', src.period_id, 'rating', src.rating, 'comments_changed', src.comments_changed, 'first', src.first))`);
     const { rows } = await db.query<SavedRating>(`
       WITH prior AS (
         SELECT rating, comments FROM public.hrms_evaluations WHERE employee_id = $1 AND period_id = $2
@@ -76,9 +84,10 @@ export function ratingModule(db: Database, periods: ReturnType<typeof periodsMod
           jsonb_build_object('employeeId', $1::int, 'periodId', $2::int, 'rating', saved.rating, 'previousRating', (SELECT rating FROM prior),
             'commentsChanged', saved.comments IS DISTINCT FROM (SELECT comments FROM prior), 'first', NOT EXISTS (SELECT 1 FROM prior))
         FROM saved
-      ) SELECT employee_id AS "employeeId", period_id AS "periodId", rating, comments, 'In review' AS status, rated_by_name AS "savedByName", rated_at::text AS "savedAt" FROM saved`,
-    [employeeId, periodId, rating, comments, actor.id, actor.name]);
+      ), audit AS (${event})
+      SELECT employee_id AS "employeeId", period_id AS "periodId", rating, comments, 'In review' AS status, rated_by_name AS "savedByName", rated_at::text AS "savedAt" FROM saved`, values);
     if (!rows[0]) throw new RatingError("already-submitted");
+    await audit.deliver();
     return rows[0];
   }
 
