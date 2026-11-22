@@ -11,6 +11,9 @@ import { submitModule } from "./performance-submit";
 import { reopenModule } from "./performance-reopen";
 import { linksModule, type Directory } from "./performance-links";
 import { listStaffDirectory } from "./portal/client";
+import { posImportModule } from "./performance-pos-import";
+import { posSettingsModule } from "./performance-pos-settings";
+import { posReader } from "./pos-reader";
 import { needsModule } from "./performance-needs";
 import { suggestionsModule, type SuggestionStatus } from "./performance-suggestions";
 import type { AiClient, AiConfig } from "./ai";
@@ -24,6 +27,8 @@ import type { NeedInput } from "./performance-needs";
  */
 
 export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
+export { ImportError, importRange, type ImportPreview, type ImportProblem, type ImportRecord, type SavedImport, type UnlinkedAccount } from "./performance-pos-import";
+export { GoLiveError, type GoLive } from "./performance-pos-settings";
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion, type TrainingForSuggestions, type TrainingTitle } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
@@ -49,7 +54,7 @@ export type PerformanceAccess = { decision: "allowed"; staff: Staff } | { decisi
  * Server-side boundary. Rechecks the Portal on every operation; `db` and `now` are injectable so tests control the
  * database and the clock. Later domain modules take the same `db` and `now`.
  */
-export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date(), ai: { client?: AiClient; config?: AiConfig } = {}, directory: Directory = listStaffDirectory) {
+export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date(), ai: { client?: AiClient; config?: AiConfig } = {}, directory: Directory = listStaffDirectory, pos: ReturnType<typeof posReader> = posReader()) {
   const kpis = kpiModule(db);
   const training = trainingCompletionModule(db, now);
   const periods = periodsModule(db);
@@ -60,6 +65,8 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const reopen = reopenModule(db, { evaluations });
   const needs = needsModule(db, { evaluations, periods });
   const links = linksModule(db, now, directory);
+  const posSettings = posSettingsModule(db);
+  const posImport = posImportModule(db, now, { links, reader: pos, settings: posSettings });
   const suggestions = suggestionsModule(db, { evaluations, training }, { ...ai, now });
 
   /**
@@ -114,6 +121,16 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     linkPosAccount: async (input: { employeeId: number; portalUserId: unknown; reason?: unknown }) => links.linkAccount(await acting(), input),
     /** Ends a link with a reason (and a note for "Other"). The account's sales leave the Employee, past months included. */
     unlinkPosAccount: async (linkId: number, input: { reason: unknown; note?: unknown }) => links.unlinkAccount(await acting(), linkId, input),
+    /** The POS go-live date: the first day POS sales may be read from, or null while it is not set. */
+    posGoLive: async () => { await acting(); return posSettings.goLive(); },
+    /** Sets the POS go-live date ("YYYY-MM-DD"), audited. An import is refused until it is set. */
+    setPosGoLive: async (date: unknown) => posSettings.setGoLive(await acting(), date),
+    /** What importing POS sales would do (the current and the previous month), with nothing saved. */
+    previewPosImport: async () => { await acting(); return posImport.preview(); },
+    /** Reads the POS again and saves its sales, in one transaction. Nothing is saved when the POS cannot be read. */
+    importPosSales: async () => posImport.confirm(await acting()),
+    /** The most recent POS sales imports. */
+    listPosImports: async () => { await acting(); return posImport.listImports(); },
     /** The Evaluation periods, latest first. */
     listPeriods: async () => { await acting(); return periods.listPeriods(); },
     /** Opens a company-wide period (Month, Quarter or Custom). One that overlaps another by date is refused, naming it. */

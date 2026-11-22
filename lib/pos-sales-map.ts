@@ -1,5 +1,5 @@
 import { PosReadError } from "./pos-connection";
-import type { RawLocationRow, RawSalesRow } from "./pos-sales-query";
+import type { RawLeftOutRow, RawLocationRow, RawSalesRow } from "./pos-sales-query";
 
 /**
  * Validates what the POS returned, strictly. A row with an unexpected shape (a missing or extra field, the wrong kind of value, a day
@@ -53,4 +53,13 @@ export function mapLocations(rows: readonly RawLocationRow[]): PosLocation[] {
     if (typeof row.isActive !== "boolean") reject("unexpected branch status");
     return { locationId: integer(row.locationId, "branch", 0), name: text(row.name, "branch name", 200), type: text(row.type, "branch type", 50), isActive: row.isActive as boolean };
   });
+}
+
+export type PosLeftOut = { orders: number; grossSales: number };
+
+export function mapLeftOut(rows: readonly RawLeftOutRow[]): PosLeftOut {
+  if (rows.length !== 1 || !sameKeys(rows[0], ["gross", "orders"])) reject("unexpected left-out row shape");
+  const row = rows[0];
+  const day = { orders: integer(row.orders, "left-out order count"), grossSales: money(row.gross, "left-out sales") };
+  return day.grossSales < 0 ? reject("unexpected negative amount") : day;
 }

@@ -78,3 +78,19 @@ export type RawLocationRow = Record<string, unknown>;
 export async function queryLocations(session: PosSession): Promise<RawLocationRow[]> {
   return (await session.query<RawLocationRow>(`SELECT "LocationId" AS "locationId", "LocationName" AS name, "LocationType" AS type, "IsActive" AS "isActive" FROM public."Locations" ORDER BY "LocationId"`)).rows;
 }
+
+export type RawLeftOutRow = Record<string, unknown>;
+
+/**
+ * Orders in the range that are sales by the definition but cannot be credited to a cashier: a staff number below 1000 or one with no staff row.
+ * They are not counted in the figures; the import preview shows how many there are, so a difference from the POS Sales Report can be explained.
+ */
+export async function queryLeftOut(session: PosSession, from: string, to: string): Promise<RawLeftOutRow[]> {
+  return (await session.query<RawLeftOutRow>(`
+    SELECT count(*)::text AS orders, coalesce(sum(o."TotalAmount"), 0)::text AS gross
+    FROM public."Orders" o
+    WHERE o."OrderSource" = 'POS' AND o."OrderType" = 'Store' AND o."LocationId" IS NOT NULL AND o."OrderStatus" = ANY($3::text[])
+      AND ${MANILA('o."CreatedAt"')} BETWEEN $1::date AND $2::date
+      AND EXISTS (SELECT 1 FROM public."OrderItems" i WHERE i."OrderId" = o."OrderId")
+      AND (o."SubmittedBy" < 1000 OR NOT EXISTS (SELECT 1 FROM public."PosStaffUsers" u WHERE u."Id" = o."SubmittedBy"))`, [from, to, [...SALE_STATUSES]])).rows;
+}
