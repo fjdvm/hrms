@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PAGE, PageHeader } from "@/components/hiring/parts";
+import { TopSalesSkeleton } from "./top-sales-skeleton";
 
 const ROWS = 6;
 
@@ -21,6 +22,7 @@ export function PerformanceListSkeleton() {
         <div className="flex w-[300px] max-w-full flex-col gap-[10px]"><Skeleton className="h-4 w-48" /><Skeleton className="h-8 w-28" /><Skeleton className="h-[6px] w-full" /></div>
         <Skeleton className="h-10 min-w-[240px] flex-1" />
       </Card>
+      <TopSalesSkeleton />
       <div className="flex flex-wrap items-center gap-xs" aria-hidden>
         {TABS.map((name, i) => <span key={name} className={`rounded-lg px-[14px] py-[8px] text-sm font-medium ${i === 0 ? "bg-accent text-primary" : "text-muted-foreground"}`}>{name}</span>)}
       </div>

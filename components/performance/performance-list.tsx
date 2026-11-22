@@ -70,7 +70,7 @@ function Empty({ roster, setup }: { roster: Roster; setup: SetUpPeriodData }) {
  * Evaluated with their counts, a search by name or employee number, and one row per Employee. Everything the roster returns is
  * here already, so tabs and search narrow it on the screen without another request.
  */
-export function PerformanceList({ roster, setup }: { roster: Roster; setup: SetUpPeriodData }) {
+export function PerformanceList({ roster, setup, topSales }: { roster: Roster; setup: SetUpPeriodData; topSales?: React.ReactNode }) {
   const [tab, setTab] = useState<EvaluationTab>("All");
   const [search, setSearch] = useState("");
   const shown = roster.rows.filter((row) => inTab(row, tab) && matchesSearch(row, search));
@@ -79,6 +79,7 @@ export function PerformanceList({ roster, setup }: { roster: Roster; setup: SetU
   return (
     <>
       <Progress roster={roster} />
+      {topSales}
       <div className="flex flex-wrap items-center gap-[12px]">
         <div role="group" aria-label="Status" className="flex flex-1 flex-wrap gap-xs">
           {EVALUATION_TABS.map((name) => (
