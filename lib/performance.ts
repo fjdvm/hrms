@@ -15,6 +15,7 @@ import { posImportModule } from "./performance-pos-import";
 import { posSettingsModule } from "./performance-pos-settings";
 import { posReader } from "./pos-reader";
 import { salesInputsModule } from "./performance-sales-inputs";
+import { topSalesModule } from "./performance-top-sales";
 import { needsModule } from "./performance-needs";
 import { suggestionsModule, type SuggestionStatus } from "./performance-suggestions";
 import type { AiClient, AiConfig } from "./ai";
@@ -31,6 +32,7 @@ export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, N
 export { ImportError, importRange, type ImportPreview, type ImportProblem, type ImportRecord, type SavedImport, type UnlinkedAccount } from "./performance-pos-import";
 export { GoLiveError, type GoLive } from "./performance-pos-settings";
 export { SalesTargetError, SALES_TARGET_MAX, type SalesTargetProblem } from "./performance-sales-inputs";
+export { TopSalesError, type TopSales, type TopSalesBranch, type TopSalesProblem, type TopSalesRow } from "./performance-top-sales";
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion, type TrainingForSuggestions, type TrainingTitle } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
@@ -70,6 +72,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const links = linksModule(db, now, directory);
   const posSettings = posSettingsModule(db);
   const posImport = posImportModule(db, now, { links, reader: pos, settings: posSettings });
+  const topSales = topSalesModule(db, now);
   const suggestions = suggestionsModule(db, { evaluations, training }, { ...ai, now });
 
   /**
@@ -128,6 +131,11 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     salesTarget: async () => { await acting(); return sales.target(); },
     /** Sets the sales target (more than 0, to the centavo), audited. Without it the sales KPI is Not applicable. */
     setSalesTarget: async (amount: unknown) => sales.setTarget(await acting(), amount),
+    /**
+     * The Top sales card for one calendar month (`{ year, month }`): per branch, the cashiers ranked by net sales (ties share a rank), the overall top
+     * seller, how many staff with sales are not shown, and whether the month is still Provisional. Computed when read; nothing is stored. Recognition only.
+     */
+    topSales: async (month: { year: number; month: number }) => { await acting(); return topSales.topSales(month); },
     /** The POS go-live date: the first day POS sales may be read from, or null while it is not set. */
     posGoLive: async () => { await acting(); return posSettings.goLive(); },
     /** Sets the POS go-live date ("YYYY-MM-DD"), audited. An import is refused until it is set. */
