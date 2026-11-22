@@ -2,11 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
+import { AttendanceError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
 import { needMessage } from "@/lib/performance-needs-terms";
+import { suggestionMessage } from "@/lib/performance-suggestions-terms";
 import { reopenMessage } from "@/lib/performance-reopen-terms";
 import { submitMessage } from "@/lib/performance-submit-messages";
 import { ratingMessage } from "@/lib/performance-rating-terms";
@@ -24,6 +25,7 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
     if (error instanceof NeedError) return { ok: false, error: needMessage(error.problem) };
+    if (error instanceof SuggestionError) return { ok: false, error: suggestionMessage(error.problem) };
     if (error instanceof ReopenError) return { ok: false, error: reopenMessage(error.problem) };
     if (error instanceof SubmitError) return { ok: false, error: submitMessage(error.problem, error.missing) };
     if (error instanceof AttendanceError) return { ok: false, error: attendanceMessage(error.problem) };
@@ -118,4 +120,49 @@ export async function reopenEvaluation(employeeId: number, periodId: number, rea
  */
 export async function flagDevelopmentNeed(employeeId: number, periodId: number, input: { gap: string; action: string; trainingId?: number | null }): Promise<PeriodActionResult> {
   return run(async () => (await performanceForRequest()).flagDevelopmentNeed(employeeId, periodId, input), [`/performance/evaluation/${employeeId}`]);
+}
+
+/**
+ * Flags a suggested development area as a development need (AI source, linked to the suggestion). The Gap and the action start as the
+ * suggestion's own words and are whatever Staff left in the dialog. It cannot be done twice and never changes the score, rating or status.
+ */
+export async function flagSuggestedNeed(employeeId: number, suggestionId: number, input: { gap: string; action: string; trainingId?: number | null }): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).flagSuggestion(suggestionId, input), evaluationPaths(employeeId));
+}
+
+/** Dismisses a Pending suggested development area, which then stops showing. */
+export async function dismissSuggestedNeed(employeeId: number, suggestionId: number): Promise<PeriodActionResult> {
+  return run(async () => (await performanceForRequest()).dismissSuggestion(suggestionId), evaluationPaths(employeeId));
+}
+
+/**
+ * What a screen learns from asking for suggestions: saved (the page refreshes to show the new set), nothing to suggest, a refusal or failure
+ * with its banner colour, message and, on red only, a Reference ID (never the internal code), or a plain error.
+ */
+export type GenerateActionResult =
+  | { ok: true; left: number }
+  | { ok: false; kind: "nothing"; left: number }
+  | { ok: false; kind: "ai"; banner: "yellow" | "red" | "grey" | "none"; message: string | null; referenceId: string | null; left: number }
+  | { ok: false; kind: "error"; error: string };
+
+/** Asks the AI for suggested development areas on an Evaluated evaluation. A button press only: nothing asks again on its own. */
+export async function generateSuggestions(employeeId: number, periodId: number): Promise<GenerateActionResult> {
+  try {
+    const result = await (await performanceForRequest()).generateSuggestions(employeeId, periodId);
+    if (result.ok) {
+      revalidatePath(`/performance/evaluation/${employeeId}`);
+      return { ok: true, left: result.left };
+    }
+    if (result.kind === "nothing") return { ok: false, kind: "nothing", left: result.left };
+    return { ok: false, kind: "ai", banner: result.failure.banner, message: result.failure.message, referenceId: result.failure.referenceId, left: result.left };
+  } catch (error) {
+    if (error instanceof SuggestionError) return { ok: false, kind: "error", error: suggestionMessage(error.problem) };
+    if (error instanceof RosterError || error instanceof PeriodError) return { ok: false, kind: "error", error: "That evaluation could not be found." };
+    if (error instanceof PerformanceError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+      return { ok: false, kind: "error", error: "Performance could not reach the Portal or database. Please try again in a moment." };
+    }
+    throw error;
+  }
 }
