@@ -12,6 +12,8 @@ const performance = () => performanceFor(handle, db, () => clock);
 const GATEWAY = "https://gateway.test";
 const NOV = { type: "Month", year: 2026, month: 11 } as const;
 const DEFAULTS = { attendanceRate: 30, punctuality: 25, fullShift: 15, trainingCompletion: 15, evaluatorRating: 15 };
+/** The items hold the sales KPI too, at weight 0 until a set weighs it. */
+const ITEMS = { ...DEFAULTS, sales: 0 };
 const WEIGHTS = { attendanceRate: 40, punctuality: 20, fullShift: 10, trainingCompletion: 10, evaluatorRating: 20 };
 
 beforeEach(async () => {
@@ -47,7 +49,7 @@ describe("weight sets as one row per KPI", () => {
   it("backfills the items from the legacy columns for the default set", async () => {
     const [defaultSet] = await performance().listWeightSets();
 
-    expect(await items(defaultSet.id)).toEqual(DEFAULTS);
+    expect(await items(defaultSet.id)).toEqual(ITEMS);
     expect(defaultSet.weights).toEqual(DEFAULTS);
     expect(defaultSet.total).toBe(100);
   });
@@ -55,12 +57,12 @@ describe("weight sets as one row per KPI", () => {
   it("writes the items and the legacy columns together when a set is created and edited", async () => {
     const created = await performance().saveWeightSet({ position: "Branch Cashier", weights: WEIGHTS });
     expect(created.weights).toEqual(WEIGHTS);
-    expect(await items(created.id)).toEqual(WEIGHTS);
+    expect(await items(created.id)).toEqual({ ...WEIGHTS, sales: 0 });
     expect(await legacy(created.id)).toEqual(WEIGHTS);
 
     const edited = await performance().saveWeightSet({ id: created.id, position: "Branch Cashier", weights: DEFAULTS });
     expect(edited.weights).toEqual(DEFAULTS);
-    expect(await items(created.id)).toEqual(DEFAULTS);
+    expect(await items(created.id)).toEqual(ITEMS);
     expect(await legacy(created.id)).toEqual(DEFAULTS);
     expect((await performance().weightSetFor("branch  cashier")).weights).toEqual(DEFAULTS);
   });
@@ -78,7 +80,7 @@ describe("weight sets as one row per KPI", () => {
 
     await expect(db.query(`UPDATE hrms_weight_set_items SET weight = 31 WHERE set_id = $1 AND kpi_id = 'attendanceRate'`, [id])).rejects.toThrow(/total 101/);
     await expect(db.query(`DELETE FROM hrms_weight_set_items WHERE set_id = $1 AND kpi_id = 'punctuality'`, [id])).rejects.toThrow(/total 75/);
-    expect(await items(id)).toEqual(DEFAULTS);
+    expect(await items(id)).toEqual(ITEMS);
 
     await db.exec(`BEGIN; UPDATE hrms_weight_set_items SET weight = 35 WHERE set_id = ${id} AND kpi_id = 'attendanceRate';
       UPDATE hrms_weight_set_items SET weight = 20 WHERE set_id = ${id} AND kpi_id = 'punctuality'; COMMIT;`);
@@ -86,12 +88,12 @@ describe("weight sets as one row per KPI", () => {
   });
 
   it("counts a KPI with no row as weight 0, so a newer KPI can exist before any set weighs it", async () => {
-    await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('sales', 'Sales', 'Net sales per present day', 'POS', '100%', 6)`);
+    await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('extra', 'Extra', 'A KPI added after Evaluations were submitted', 'Other', '100%', 7)`);
     const [defaultSet] = await performance().listWeightSets();
 
     expect(defaultSet.weights).toEqual(DEFAULTS);
     expect(defaultSet.total).toBe(100);
-    expect((await performance().listKpis()).find((kpi) => (kpi.id as string) === "sales")?.defaultWeight).toBe(0);
+    expect((await performance().listKpis()).find((kpi) => (kpi.id as string) === "extra")?.defaultWeight).toBe(0);
     const saved = await performance().saveWeightSet({ position: "Branch Cashier", weights: WEIGHTS });
     expect(saved.total).toBe(100);
   });
@@ -119,8 +121,8 @@ describe("an Evaluation submitted before a sixth KPI exists", () => {
     return { id, period };
   }
   const addSixthKpi = async () => {
-    await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('sales', 'Sales', 'Net sales per present day', 'POS', '100%', 6)`);
-    await db.query(`INSERT INTO hrms_weight_set_items (set_id, kpi_id, weight) SELECT id, 'sales', 0 FROM hrms_weight_sets`);
+    await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('extra', 'Extra', 'A KPI added after Evaluations were submitted', 'Other', '100%', 7)`);
+    await db.query(`INSERT INTO hrms_weight_set_items (set_id, kpi_id, weight) SELECT id, 'extra', 0 FROM hrms_weight_sets`);
   };
 
   it("opens, still shows only the KPIs it was scored on, and keeps its stored result", async () => {

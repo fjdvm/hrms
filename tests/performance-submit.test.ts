@@ -123,7 +123,7 @@ describe("submitting an evaluation", () => {
     expect(Number(saved.score)).toBe(97);
     expect(saved.weights).toEqual(WEIGHTS);
     expect(saved.weights_used).toEqual(WEIGHTS);
-    expect(saved.formulas).toMatchObject({ version: "2026-11", graceMinutes: 10, floorPercent: 60, kpis: { punctuality: expect.stringContaining("grace period"), fullShift: expect.stringContaining("before the shift end") } });
+    expect(saved.formulas).toMatchObject({ version: "2026-12", graceMinutes: 10, floorPercent: 60, kpis: { punctuality: expect.stringContaining("grace period"), fullShift: expect.stringContaining("before the shift end") } });
     expect(saved.figures).toMatchObject({ shift: { start: "08:00", end: "17:00" }, graceMinutes: 10, counts: { counted: 21, present: 21, late: 0, earlyOut: 0 } });
     const results = (await db.query<{ kpi_id: string; status: string; result: string; weight: number; weight_used: string; points: string }>(
       `SELECT kpi_id, status, result::text, weight, weight_used::text, points::text FROM hrms_evaluation_results ORDER BY kpi_id`)).rows;
@@ -144,7 +144,7 @@ describe("submitting an evaluation", () => {
     expect(after.weightsUsed).toEqual(before.weightsUsed);
     expect(after.scheduledDays).toEqual(before.scheduledDays);
     expect(after.counts).toEqual(before.counts);
-    expect(after.submitted).toMatchObject({ version: 1, submittedByName: "Ada Okafor", formulas: { version: "2026-11" } });
+    expect(after.submitted).toMatchObject({ version: 1, submittedByName: "Ada Okafor", formulas: { version: "2026-12" } });
     expect(after.submit).toMatchObject({ unlocked: false, reason: null });
     expect(after.rating).toMatchObject({ value: 80, comments: "Reliable and punctual." });
   });

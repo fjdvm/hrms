@@ -37,6 +37,11 @@ const NOT_APPLICABLE_WORDS: Record<NotApplicableReason, string> = {
   "no-training-due": "no Training was due",
   "no-rating": "no rating entered",
   inactive: "the KPI is switched off",
+  "no-linked-account": "no POS account is linked",
+  "before-go-live": "the period starts before POS go-live",
+  "no-import-after-period": "no POS import has run since the period ended",
+  "no-target": "no sales target is set",
+  "too-few-present-days": "too few present days",
 };
 
 /** The one-decimal figure the page shows, so a suggestion quotes a result exactly as HR reads it. */

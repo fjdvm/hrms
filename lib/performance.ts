@@ -14,6 +14,7 @@ import { listStaffDirectory } from "./portal/client";
 import { posImportModule } from "./performance-pos-import";
 import { posSettingsModule } from "./performance-pos-settings";
 import { posReader } from "./pos-reader";
+import { salesInputsModule } from "./performance-sales-inputs";
 import { needsModule } from "./performance-needs";
 import { suggestionsModule, type SuggestionStatus } from "./performance-suggestions";
 import type { AiClient, AiConfig } from "./ai";
@@ -29,6 +30,7 @@ import type { NeedInput } from "./performance-needs";
 export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
 export { ImportError, importRange, type ImportPreview, type ImportProblem, type ImportRecord, type SavedImport, type UnlinkedAccount } from "./performance-pos-import";
 export { GoLiveError, type GoLive } from "./performance-pos-settings";
+export { SalesTargetError, SALES_TARGET_MAX, type SalesTargetProblem } from "./performance-sales-inputs";
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion, type TrainingForSuggestions, type TrainingTitle } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
@@ -59,7 +61,8 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const training = trainingCompletionModule(db, now);
   const periods = periodsModule(db);
   const attendance = attendanceModule(db, periods);
-  const evaluations = evaluationsModule(db, { periods, attendance, training, kpis });
+  const sales = salesInputsModule(db);
+  const evaluations = evaluationsModule(db, { periods, attendance, training, kpis, sales });
   const rating = ratingModule(db, periods);
   const submit = submitModule(db, { evaluations });
   const reopen = reopenModule(db, { evaluations });
@@ -121,6 +124,10 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     linkPosAccount: async (input: { employeeId: number; portalUserId: unknown; reason?: unknown }) => links.linkAccount(await acting(), input),
     /** Ends a link with a reason (and a note for "Other"). The account's sales leave the Employee, past months included. */
     unlinkPosAccount: async (linkId: number, input: { reason: unknown; note?: unknown }) => links.unlinkAccount(await acting(), linkId, input),
+    /** The one company-wide sales target in pesos per present day, or null while it is not set. */
+    salesTarget: async () => { await acting(); return sales.target(); },
+    /** Sets the sales target (more than 0, to the centavo), audited. Without it the sales KPI is Not applicable. */
+    setSalesTarget: async (amount: unknown) => sales.setTarget(await acting(), amount),
     /** The POS go-live date: the first day POS sales may be read from, or null while it is not set. */
     posGoLive: async () => { await acting(); return posSettings.goLive(); },
     /** Sets the POS go-live date ("YYYY-MM-DD"), audited. An import is refused until it is set. */

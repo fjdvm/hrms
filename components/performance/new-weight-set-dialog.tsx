@@ -8,7 +8,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, Dia
 import { Input } from "@/components/ui/input";
 import { createWeightSet } from "@/app/(hrms)/performance/actions";
 import type { Kpi, WeightSet } from "@/lib/performance-kpis";
-import { KPI_IDS, type KpiId } from "@/lib/performance-scoring";
+import { CORE_KPI_IDS as KPI_IDS, type CoreKpiId as KpiId } from "@/lib/performance-scoring";
 import { BASE_CHOICES, checkWeightForm, startingWeights, weightOf, weightsFrom, type BaseChoice, type WeightTexts } from "@/lib/performance-weight-form";
 import { WEIGHT_SET_TOTAL } from "@/lib/performance-kpis";
 import { cn } from "@/lib/utils";

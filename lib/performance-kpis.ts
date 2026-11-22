@@ -1,6 +1,6 @@
 import type { Database } from "./database";
 import { performanceAudit } from "./performance-audit";
-import { KPI_IDS, type KpiId } from "./performance-scoring";
+import { CORE_KPI_IDS, KPI_IDS, type KpiId, type KpiWeights } from "./performance-scoring";
 import { cleanText, hasControlCharacters, matchKey, nameProblem } from "./validators/text";
 
 /**
@@ -16,7 +16,8 @@ export type KpiStatus = "Active" | "Inactive";
 export const KPI_STATUSES: readonly KpiStatus[] = ["Active", "Inactive"];
 
 export type Kpi = { id: KpiId; name: string; description: string; source: string; target: string; status: KpiStatus; defaultWeight: number };
-export type Weights = Record<KpiId, number>;
+/** The five starter KPIs' weights, and `sales` only when the set weighs it. */
+export type Weights = KpiWeights;
 export type WeightSet = { id: number; name: string; isDefault: boolean; position: string | null; weights: Weights; total: number; updatedByName: string; updatedAt: string };
 export type Actor = { id: string; name: string };
 
@@ -40,15 +41,33 @@ export const WEIGHT_SET_TOTAL = 100;
 /** A KPI with no weight counts as 0, so a set read before a newer KPI was weighed still totals correctly. */
 export const weightsTotal = (weights: Partial<Weights>) => KPI_IDS.reduce((sum, kpi) => sum + (weights[kpi] ?? 0), 0);
 
-/** Reads the five weights from untrusted input: exactly the five KPIs, each a whole number from 0 to 100. */
+/**
+ * The five legacy columns, still written for one release so a code revert is safe. They total 100 on their own (the old check), so a set
+ * that weighs sales writes its five starter weights scaled up to 100 (largest remainder); old code then scores without sales. A set that
+ * gives sales no weight writes them as they are.
+ */
+export function legacyWeights(weights: Weights): Record<(typeof CORE_KPI_IDS)[number], number> {
+  const core = CORE_KPI_IDS.map((kpi) => weights[kpi]);
+  const sum = core.reduce((a, b) => a + b, 0);
+  if ((weights.sales ?? 0) === 0 || sum === 100) return Object.fromEntries(CORE_KPI_IDS.map((kpi, i) => [kpi, core[i]])) as Record<(typeof CORE_KPI_IDS)[number], number>;
+  if (sum === 0) return { attendanceRate: 20, punctuality: 20, fullShift: 20, trainingCompletion: 20, evaluatorRating: 20 };
+  const exact = core.map((weight) => (weight * 100) / sum);
+  const floors = exact.map(Math.floor);
+  let left = 100 - floors.reduce((a, b) => a + b, 0);
+  [...exact.keys()].sort((a, b) => (exact[b] - floors[b]) - (exact[a] - floors[a]) || a - b).forEach((i) => { if (left > 0) { floors[i] += 1; left -= 1; } });
+  return Object.fromEntries(CORE_KPI_IDS.map((kpi, i) => [kpi, floors[i]])) as Record<(typeof CORE_KPI_IDS)[number], number>;
+}
+
+/** Reads the weights from untrusted input: the five starter KPIs, each a whole number from 0 to 100, and optionally `sales` (0 when left out). They total 100. */
 export function readWeights(input: unknown): Weights {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new KpiError("weights-invalid");
   const given = input as Record<string, unknown>;
   const keys = Object.keys(given);
-  if (keys.length !== KPI_IDS.length || keys.some((key) => !(KPI_IDS as readonly string[]).includes(key))) throw new KpiError("weights-invalid");
+  if (keys.some((key) => !(KPI_IDS as readonly string[]).includes(key)) || CORE_KPI_IDS.some((kpi) => !keys.includes(kpi))) throw new KpiError("weights-invalid");
   const weights = {} as Weights;
   for (const kpi of KPI_IDS) {
     const value = given[kpi];
+    if (kpi === "sales" && value === undefined) continue;
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > WEIGHT_SET_TOTAL) throw new KpiError("weights-invalid");
     weights[kpi] = value;
   }
@@ -81,12 +100,16 @@ const SET_COLUMNS = `s.id, s.name, s.is_default AS "isDefault", s.position,
 /** The same columns for a row a write just returned: its items are not visible yet, so the caller gives the weights it wrote. */
 const WRITTEN_COLUMNS = `s.id, s.name, s.is_default AS "isDefault", s.position, NULL::jsonb AS items, s.updated_by_name AS "updatedByName", s.updated_at::text AS "updatedAt"`;
 /** One item row per KPI for the set a CTE returned (`source`), from its weights bound as JSON (KPI id to weight). */
-const ITEM_ROWS = (source: string, json: string) => `SELECT ${source}.id, w.key, w.value::int FROM ${source} CROSS JOIN jsonb_each_text(${json}) w`;
+const ITEM_ROWS = (source: string, json: string) =>
+  `SELECT ${source}.id, w.key, w.value::int FROM ${source} CROSS JOIN jsonb_each_text(${json} || jsonb_build_object('sales', coalesce((${json}->>'sales')::int, 0))) w`;
 
 function toWeightSet(row: SetRow, written?: Weights): WeightSet {
   // A KPI with no row counts as weight 0.
   const weights = {} as Weights;
-  for (const kpi of KPI_IDS) weights[kpi] = written ? written[kpi] : (row.items?.[kpi] ?? 0);
+  for (const kpi of CORE_KPI_IDS) weights[kpi] = written ? written[kpi] : (row.items?.[kpi] ?? 0);
+  // The sales weight shows only when the set weighs it, so a set that does not looks exactly as it always did.
+  const sales = written ? (written.sales ?? 0) : (row.items?.sales ?? 0);
+  if (sales > 0) weights.sales = sales;
   return { id: row.id, name: row.name, isDefault: row.isDefault, position: row.position, weights, total: weightsTotal(weights), updatedByName: row.updatedByName, updatedAt: row.updatedAt };
 }
 
@@ -94,13 +117,13 @@ const isUniqueViolation = (error: unknown) => Boolean(error && typeof error === 
 
 export function kpiModule(db: Database) {
   /** The KPIs in their set order, each with its weight in the default set. */
-  async function listKpis(): Promise<Kpi[]> {
+  async function listKpis({ includeSales = false } = {}): Promise<Kpi[]> {
     const { rows } = await db.query<Omit<Kpi, "defaultWeight"> & { defaultWeight: number }>(`
       SELECT k.id, k.name, k.description, k.source, k.target, k.status, COALESCE(i.weight, 0) AS "defaultWeight"
       FROM public.hrms_kpis k
       LEFT JOIN public.hrms_weight_sets s ON s.is_default
       LEFT JOIN public.hrms_weight_set_items i ON i.set_id = s.id AND i.kpi_id = k.id
-      ORDER BY k.sort_order`);
+      WHERE $1::boolean OR k.id <> 'sales' ORDER BY k.sort_order`, [includeSales]);
     return rows;
   }
 
@@ -156,7 +179,8 @@ export function kpiModule(db: Database) {
    */
   async function saveWeightSet(actor: Actor, input: { id?: number; position?: string | null; weights: unknown }): Promise<WeightSet> {
     const weights = readWeights(input.weights);
-    const values = KPI_IDS.map((kpi) => weights[kpi]);
+    const legacy = legacyWeights(weights);
+    const values = CORE_KPI_IDS.map((kpi) => legacy[kpi]);
     if (input.id === undefined) {
       const position = readPosition(input.position);
       const taken = await ownerOf(position);

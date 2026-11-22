@@ -39,11 +39,13 @@
  * result is "Insufficient data" and no score is returned.
  */
 
+import { SALES_FORMULA, scoreSales, type SalesInput, type SalesReason } from "./performance-sales-scoring";
+
 /**
  * The version of these rules. A submitted evaluation stores the formulas below with it, so a later change to a rule never alters it;
  * change this when a formula, the grace handling or the floor changes.
  */
-export const SCORING_RULES_VERSION = "2026-11";
+export const SCORING_RULES_VERSION = "2026-12";
 
 /** The formulas as HR reads them. Saved with every submitted evaluation. */
 export const SCORING_FORMULAS = {
@@ -52,10 +54,17 @@ export const SCORING_FORMULAS = {
   fullShift: "(Present days − early-out days) ÷ present days × 100. Early-out: a time-out before the shift end.",
   trainingCompletion: "Trainings completed ÷ Trainings due in the period × 100. Not applicable when none were due.",
   evaluatorRating: "The evaluator's rating, from 0 to 100.",
+  sales: SALES_FORMULA,
 } as const;
 
-export const KPI_IDS = ["attendanceRate", "punctuality", "fullShift", "trainingCompletion", "evaluatorRating"] as const;
+/** The five starter KPIs every weight set weighs. */
+export const CORE_KPI_IDS = ["attendanceRate", "punctuality", "fullShift", "trainingCompletion", "evaluatorRating"] as const;
+export type CoreKpiId = (typeof CORE_KPI_IDS)[number];
+/** Every KPI the engine can score. The sales KPI is scored only when the applied weight set gives it a weight above 0. */
+export const KPI_IDS = [...CORE_KPI_IDS, "sales"] as const;
 export type KpiId = (typeof KPI_IDS)[number];
+/** A weight set's weights: the five starter KPIs, and sales only when it weighs it (a missing KPI counts as 0). */
+export type KpiWeights = Record<CoreKpiId, number> & { sales?: number };
 
 /** A placeholder pending HR sign-off: below this share of the weight remaining, the result is Insufficient data. */
 export const INSUFFICIENT_DATA_FLOOR_PERCENT = 60;
@@ -77,7 +86,11 @@ export type ScoringInput = {
   /** The evaluator's rating from 0 to 100, or null while it has not been entered. */
   rating: number | null;
   /** The weight of each KPI in the applied weight set; the set's total is what the weights are rescaled to. */
-  weights: Readonly<Record<KpiId, number>>;
+  weights: Readonly<KpiWeights>;
+  /** What was found for the sales KPI. Required when the weight set weighs sales above 0, and ignored otherwise. */
+  sales?: SalesInput;
+  /** The minimum present days for the sales KPI. Defaults to the placeholder; a reopened evaluation passes the one saved at its first submission. */
+  salesMinPresentDays?: number;
   /** HR confirmed this Employee had no attendance for the period. It only matters when there are no rows at all. */
   noAttendanceConfirmed?: boolean;
   /** KPIs HR has deactivated: they are left out like a Not-applicable result, and the other weights are rescaled. */
@@ -86,7 +99,7 @@ export type ScoringInput = {
   floorPercent?: number;
 };
 
-export type NotApplicableReason = "no-attendance" | "no-present-days" | "no-training-due" | "no-rating" | "inactive";
+export type NotApplicableReason = "no-attendance" | "no-present-days" | "no-training-due" | "no-rating" | "inactive" | SalesReason;
 
 export type KpiResult =
   | { kpi: KpiId; status: "scored"; result: number; weight: number; weightUsed: number; points: number }
@@ -158,26 +171,32 @@ export function scoreEvaluation(input: ScoringInput): Scoring {
   const noAttendance = (rows.length === 0 && !confirmedAbsent) || counted.length === 0;
   type Raw = { result: number } | { reason: NotApplicableReason };
   const inactive = new Set(input.inactiveKpis ?? []);
+  const salesWeight = weights.sales ?? 0;
+  if (salesWeight > 0 && !input.sales) throw new Error("A weight set that weighs sales needs the sales figures.");
   const worked: Record<KpiId, Raw> = {
     attendanceRate: noAttendance ? { reason: "no-attendance" } : { result: percent(present, counted.length) },
     punctuality: noAttendance ? { reason: "no-attendance" } : present === 0 ? { reason: "no-present-days" } : { result: percent(present - late, present) },
     fullShift: noAttendance ? { reason: "no-attendance" } : present === 0 ? { reason: "no-present-days" } : { result: percent(present - earlyOut, present) },
     trainingCompletion: training.due === 0 ? { reason: "no-training-due" } : { result: percent(training.completed, training.due) },
     evaluatorRating: rating === null ? { reason: "no-rating" } : { result: rating },
+    sales: salesWeight > 0 ? scoreSales(input.sales!, present, input.salesMinPresentDays) : { reason: "no-linked-account" },
   };
+  // The sales KPI is part of the score only when the set weighs it; otherwise nothing about the result mentions it.
+  const scoredKpis = KPI_IDS.filter((kpi) => kpi !== "sales" || salesWeight > 0);
+  const weightOf = (kpi: KpiId) => weights[kpi] ?? 0;
 
-  const raw = Object.fromEntries(KPI_IDS.map((kpi) => [kpi, inactive.has(kpi) ? { reason: "inactive" as const } : worked[kpi]])) as Record<KpiId, Raw>;
-  const total = KPI_IDS.reduce((sum, kpi) => sum + weights[kpi], 0);
-  const remaining = KPI_IDS.reduce((sum, kpi) => sum + ("result" in raw[kpi] ? weights[kpi] : 0), 0);
+  const raw = Object.fromEntries(scoredKpis.map((kpi) => [kpi, inactive.has(kpi) ? { reason: "inactive" as const } : worked[kpi]])) as Record<KpiId, Raw>;
+  const total = scoredKpis.reduce((sum, kpi) => sum + weightOf(kpi), 0);
+  const remaining = scoredKpis.reduce((sum, kpi) => sum + ("result" in raw[kpi] ? weightOf(kpi) : 0), 0);
   const scale = remaining > 0 ? total / remaining : 0;
 
   const weightsUsed: Partial<Record<KpiId, number>> = {};
-  const results = KPI_IDS.map((kpi): KpiResult => {
+  const results = scoredKpis.map((kpi): KpiResult => {
     const value = raw[kpi];
-    if ("reason" in value) return { kpi, status: "not-applicable", reason: value.reason, weight: weights[kpi] };
-    const weightUsed = weights[kpi] * scale;
+    if ("reason" in value) return { kpi, status: "not-applicable", reason: value.reason, weight: weightOf(kpi) };
+    const weightUsed = weightOf(kpi) * scale;
     weightsUsed[kpi] = weightUsed;
-    return { kpi, status: "scored", result: value.result, weight: weights[kpi], weightUsed, points: (value.result * weightUsed) / 100 };
+    return { kpi, status: "scored", result: value.result, weight: weightOf(kpi), weightUsed, points: (value.result * weightUsed) / 100 };
   });
 
   const common = {

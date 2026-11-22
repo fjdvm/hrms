@@ -35,8 +35,7 @@ beforeEach(async () => {
   vi.stubEnv("API_GATEWAY_URL", GATEWAY);
   vi.stubEnv("API_GATEWAY_KEY", "gateway-key");
   vi.spyOn(console, "error").mockImplementation(() => {});
-  // The sales KPI and a Branch Cashier set that weighs it (the items carry the real weights; the legacy columns keep a valid total of their own).
-  await db.query(`INSERT INTO hrms_kpis (id, name, description, source, target, sort_order) VALUES ('sales', 'Sales', 'Net sales per present day', 'POS', '100%', 6)`);
+  // A Branch Cashier set that weighs the sales KPI (the items carry the real weights; the legacy columns keep a valid total of their own).
   const id = (await db.query<{ id: number }>(`INSERT INTO hrms_weight_sets (name, position, position_key, attendance_rate, punctuality, full_shift, training_completion, evaluator_rating, created_by_id, created_by_name, updated_by_id, updated_by_name)
     VALUES ('Branch Cashier', 'Branch Cashier', 'branch cashier', 20, 20, 20, 20, 20, 'u', 'U', 'u', 'U') RETURNING id`)).rows[0].id;
   await db.query(`INSERT INTO hrms_weight_set_items (set_id, kpi_id, weight) VALUES ($1, 'attendanceRate', 30), ($1, 'punctuality', 20), ($1, 'fullShift', 10), ($1, 'trainingCompletion', 10), ($1, 'evaluatorRating', 20), ($1, 'sales', 10)`, [id]);
@@ -185,7 +184,7 @@ describe("submitted and reopened Evaluations", () => {
   });
   const stored = async () => JSON.stringify([(await db.query(`SELECT * FROM hrms_evaluation_submissions ORDER BY id`)).rows, (await db.query(`SELECT * FROM hrms_evaluation_results ORDER BY submission_id, kpi_id`)).rows]);
 
-  it("stay as they are when an account is linked or unlinked; a reopened one reads the links as they are then", async () => {
+  it("a submitted one stays as it is when an account is linked or unlinked; a reopened one reads the links as they are then", async () => {
     const id = await employee("Ana Cruz");
     const rows: RawAttendanceRow[] = days.map((date) => ({ employeeNumber: "2026-001", date, timeIn: "08:00", timeOut: "17:00" }));
     await performance().importAttendance({ fileName: "ana.csv", rows });
@@ -204,11 +203,16 @@ describe("submitted and reopened Evaluations", () => {
     expect(await performance().evaluationFor(id, period.id)).toEqual(evaluated);
     expect(await stored()).toBe(before);
 
-    // Reopened: it is recomputed, and reads the active links when it does. No scoring rule reads sales yet, so the figures do not move.
+    // Reopened: it is recomputed, and reads the links as they are then. The cashier set weighs sales, so the sales line moves with them: with no link
+    // it was Not applicable for that reason, and once an account is linked it is Not applicable for the next one (no go-live date is set here).
     await performance().reopenEvaluation(id, period.id, "A bad import was corrected.");
     const reopened = await performance().evaluationFor(id, period.id);
+    const salesOf = (detail: typeof reopened) => detail.kpis.find((kpi) => kpi.id === "sales");
+    expect(salesOf(reopened)).toMatchObject({ status: "not-applicable", reason: "no-linked-account" });
     await performance().linkPosAccount({ employeeId: id, portalUserId: "u-pos-2" });
-    expect(await performance().evaluationFor(id, period.id)).toEqual(reopened);
+    const relinked = await performance().evaluationFor(id, period.id);
+    expect(salesOf(relinked)).toMatchObject({ status: "not-applicable", reason: "before-go-live" });
+    expect({ ...relinked, kpis: relinked.kpis.filter((kpi) => kpi.id !== "sales") }).toEqual({ ...reopened, kpis: reopened.kpis.filter((kpi) => kpi.id !== "sales") });
     expect(await stored()).toBe(before);
     expect((await performance().listPosAccounts(id)).map((l) => l.portalUserId)).toEqual(["u-pos-2"]);
   });

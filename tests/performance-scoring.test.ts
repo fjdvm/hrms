@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   INSUFFICIENT_DATA_FLOOR_PERCENT, roundScore, scoreEvaluation,
-  type AttendanceRow, type KpiId, type ScoringInput,
+  type AttendanceRow, type KpiId, type KpiWeights, type ScoringInput,
 } from "@/lib/performance-scoring";
 
 // Hand-computed examples. Dates are plain strings: the engine has no clock and no calendar.
 const day = (n: number) => `2026-11-${String(n).padStart(2, "0")}`;
 const days = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => day(from + i));
-const WEIGHTS: Record<KpiId, number> = { attendanceRate: 30, punctuality: 25, fullShift: 15, trainingCompletion: 15, evaluatorRating: 15 };
+const WEIGHTS: KpiWeights = { attendanceRate: 30, punctuality: 25, fullShift: 15, trainingCompletion: 15, evaluatorRating: 15 };
 const ON_TIME: Pick<AttendanceRow, "timeIn" | "timeOut"> = { timeIn: "06:00", timeOut: "14:00" };
 const row = (date: string, overrides: Partial<AttendanceRow> = {}): AttendanceRow => ({ date, ...ON_TIME, ...overrides });
 
@@ -266,10 +266,13 @@ describe("bad input", () => {
 });
 
 describe("the engine is pure", () => {
-  it("imports nothing, so it has no database, and reads no clock", () => {
+  it("imports only the pure sales scoring module, so it has no database, and reads no clock", () => {
     const source = readFileSync(new URL("../lib/performance-scoring.ts", import.meta.url), "utf8");
+    const pure = readFileSync(new URL("../lib/performance-sales-scoring.ts", import.meta.url), "utf8");
 
-    expect(source).not.toMatch(/^\s*import\s/m);
+    expect([...source.matchAll(/^\s*import\s.*from\s+"([^"]+)"/gm)].map((match) => match[1])).toEqual(["./performance-sales-scoring"]);
+    expect(pure).not.toMatch(/^\s*import\s/m);
+    expect(pure).not.toMatch(/new Date\(|Date\.now\(|performance\.now\(/);
     expect(source).not.toMatch(/new Date\(|Date\.now\(|performance\.now\(/);
   });
 });

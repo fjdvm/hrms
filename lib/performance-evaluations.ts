@@ -3,6 +3,8 @@ import { isEvaluationTab, isOnRoster, statusOf, progressOf, submitReadiness, tab
 import type { attendanceModule, AttendanceIssue } from "./performance-attendance";
 import type { Kpi, kpiModule, WeightSet } from "./performance-kpis";
 import { PeriodError, type Period, type periodsModule } from "./performance-periods";
+import { SALES_MIN_PRESENT_DAYS } from "./performance-sales-scoring";
+import type { salesInputsModule } from "./performance-sales-inputs";
 import { INSUFFICIENT_DATA_FLOOR_PERCENT, KPI_IDS, SCORING_FORMULAS, SCORING_RULES_VERSION, scoreEvaluation, type KpiId, type NotApplicableReason } from "./performance-scoring";
 import { RESULTS_NOT_MARKED, type trainingCompletionModule } from "./performance-training";
 
@@ -47,7 +49,8 @@ type Common = {
 export type RosterRow = Common & { scheduledDays: number | null; excusedDays: number | null; rating: number | null };
 /** What was saved when an evaluation was submitted, for the page. */
 export type SubmittedVersion = { version: number; submittedByName: string; submittedAt: string; formulas: SnapshotFormulas };
-export type SnapshotFormulas = { version: string; kpis: Record<string, string>; graceMinutes: number; floorPercent: number };
+/** The formulas and figures in force at a submission. `salesTarget` and `salesMinPresentDays` are saved only when the weight set weighs sales, so a reopened evaluation scores sales as it was first scored. */
+export type SnapshotFormulas = { version: string; kpis: Record<string, string>; graceMinutes: number; floorPercent: number; salesTarget?: number | null; salesMinPresentDays?: number };
 export type DayCounts = { counted: number; present: number; late: number; earlyOut: number };
 /** One submitted version of an evaluation, kept for good, with the reopen that followed it if there was one. */
 export type VersionSummary = {
@@ -117,11 +120,13 @@ export type EvaluationDeps = {
   attendance: ReturnType<typeof attendanceModule>;
   training: ReturnType<typeof trainingCompletionModule>;
   kpis: ReturnType<typeof kpiModule>;
+  sales: ReturnType<typeof salesInputsModule>;
 };
 
 /** The formulas, grace period and floor in force today, as saved with a submission. */
-export const formulasInForce = (graceMinutes: number): SnapshotFormulas => ({
+export const formulasInForce = (graceMinutes: number, sales?: { target: number | null }): SnapshotFormulas => ({
   version: SCORING_RULES_VERSION, kpis: { ...SCORING_FORMULAS }, graceMinutes, floorPercent: INSUFFICIENT_DATA_FLOOR_PERCENT,
+  ...(sales ? { salesTarget: sales.target, salesMinPresentDays: SALES_MIN_PRESENT_DAYS } : {}),
 });
 
 export function evaluationsModule(db: Database, deps: EvaluationDeps) {
@@ -193,9 +198,10 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
   function fromSubmission(employee: EmployeeRow, evaluation: EvaluationRow, saved: { submission: SubmissionRow; results: ResultRow[] }): Assessed {
     const { submission, results } = saved;
     const figures = submission.figures;
-    const kpis = KPI_IDS.map((id): KpiLine => {
-      const row = results.find((entry) => entry.kpiId === id)!;
-      return { id, name: row.name, description: row.description, source: row.source, target: row.target, status: row.status, result: num(row.result), weight: row.weight, weightUsed: num(row.weightUsed), points: num(row.points), reason: row.reason, flag: row.flag };
+    // Only the KPIs it was scored on: a KPI added since (the sales KPI, say) has no saved result and is not shown.
+    const kpis = KPI_IDS.flatMap((id): KpiLine[] => {
+      const row = results.find((entry) => entry.kpiId === id);
+      return row ? [{ id, name: row.name, description: row.description, source: row.source, target: row.target, status: row.status, result: num(row.result), weight: row.weight, weightUsed: num(row.weightUsed), points: num(row.points), reason: row.reason, flag: row.flag }] : [];
     });
     return {
       common: {
@@ -236,6 +242,10 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     const scheduled = schedule?.scorable ? schedule.scheduledDays : [];
     const excused = schedule?.scorable ? schedule.excusedDays : [];
 
+    // The sales KPI is scored only when the applied set weighs it; a reopened evaluation keeps the target and minimum it was first scored with.
+    const salesWeight = weightSet.weights.sales ?? 0;
+    const salesTarget = salesWeight > 0 ? (frozen && frozen.formulas.salesTarget !== undefined ? frozen.formulas.salesTarget : await deps.sales.target()) : null;
+    const sales = shift && salesWeight > 0 ? await deps.sales.inputsFor(employee.id, period, salesTarget) : undefined;
     let score: Score = { outcome: "not-scored", reason: "shift-missing" };
     let kpis: KpiLine[] = [];
     let weightsUsed: Partial<Record<KpiId, number>> = {};
@@ -245,13 +255,14 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
         rows: attendance.rows, shift: { start: shift.start, end: shift.end }, graceMinutes, scheduledDays: scheduled, excusedDays: excused,
         training: { completed: training.completion?.completed ?? 0, due: training.completion?.due ?? 0 }, rating: evaluation?.rating ?? null,
         weights: weightSet.weights, noAttendanceConfirmed: attendance.noAttendanceConfirmed, inactiveKpis, floorPercent: frozen?.formulas.floorPercent,
+        sales, salesMinPresentDays: frozen?.formulas.salesMinPresentDays,
       });
       score = scoring.outcome === "scored" ? { outcome: "scored", value: scoring.score } : { outcome: "insufficient-data" };
       weightsUsed = scoring.weightsUsed;
       counts = scoring.counts;
-      kpis = KPI_IDS.map((id): KpiLine => {
+      kpis = scoring.results.map((result): KpiLine => {
+        const id = result.kpi;
         const kpi = kpiList.find((entry) => entry.id === id)!;
-        const result = scoring.results.find((entry) => entry.kpi === id)!;
         const base = { id, name: kpi.name, description: kpi.description, source: kpi.source, target: kpi.target, weight: result.weight, flag: id === "trainingCompletion" && training.resultsNotMarked > 0 ? RESULTS_NOT_MARKED : null };
         return result.status === "scored"
           ? { ...base, status: "scored", result: result.result, weightUsed: result.weightUsed, points: result.points, reason: null }
@@ -268,7 +279,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     return {
       common, scheduled, excused, weightsUsed, weights: weightSet.weights, issues: attendance.issues, resultsNotMarked: training.resultsNotMarked, shift, counts,
       graceMinutes, rating: evaluation?.rating ?? null, comments: evaluation?.comments ?? null, submitted: null,
-      formulas: frozen ? frozen.formulas : formulasInForce(period.graceMinutes), rulesFrozen: frozen !== null,
+      formulas: frozen ? frozen.formulas : formulasInForce(period.graceMinutes, salesWeight > 0 ? { target: salesTarget } : undefined), rulesFrozen: frozen !== null,
     };
   }
 
@@ -288,7 +299,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     const period = await deps.periods.requirePeriod(periodId);
     const evaluations = await evaluationsOf(period.id);
     const employees = await rosterEmployees(period, evaluations);
-    const kpiList = await deps.kpis.listKpis();
+    const kpiList = await deps.kpis.listKpis({ includeSales: true });
     const all = await inChunks(employees, async (employee): Promise<RosterRow> => {
       const evaluation = evaluations.get(employee.id);
       const assessed = await assess(employee, period, evaluation, kpiList);
@@ -342,7 +353,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
   /** Everything the Evaluation page needs for one Employee: the period figures, the KPI results, the weight set and the four Submit checks. */
   async function evaluationFor(employeeId: number, periodId: number): Promise<EvaluationDetail> {
     const { period, employee, evaluation } = await locate(employeeId, periodId);
-    return await detailOf(period, await assess(employee, period, evaluation, await deps.kpis.listKpis()), evaluation);
+    return await detailOf(period, await assess(employee, period, evaluation, await deps.kpis.listKpis({ includeSales: true })), evaluation);
   }
 
   /**
@@ -351,7 +362,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
    */
   async function liveDetail(employeeId: number, periodId: number) {
     const { period, employee, evaluation } = await locate(employeeId, periodId);
-    const assessed = await assess(employee, period, evaluation, await deps.kpis.listKpis(), { live: true });
+    const assessed = await assess(employee, period, evaluation, await deps.kpis.listKpis({ includeSales: true }), { live: true });
     return { detail: await detailOf(period, { ...assessed, submitted: null }, evaluation), evaluation, employee: { id: employee.id, name: employee.name, employeeNumber: employee.employeeNumber } };
   }
 
