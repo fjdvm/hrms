@@ -2,7 +2,10 @@ import type { Database } from "./database";
 import type { linksModule, DescribedAccount } from "./performance-links";
 import type { Actor } from "./performance-kpis";
 import type { posSettingsModule } from "./performance-pos-settings";
+import { ImportError, importRange } from "./performance-pos-import-terms";
 import { PosReadError, type PosImportRead, type posReader } from "./pos-reader";
+
+export { ImportError, importRange, type ImportProblem } from "./performance-pos-import-terms";
 
 /**
  * Import POS sales. One of the small domain modules behind the Performance interface; it takes the Staff member and the database from the seam,
@@ -15,20 +18,15 @@ import { PosReadError, type PosImportRead, type posReader } from "./pos-reader";
  * from the POS (unreachable, data changed, not configured) saves nothing.
  */
 
-export type ImportProblem = "go-live-not-set" | "go-live-not-reached" | "pos-unreachable" | "pos-data-changed" | "pos-not-configured";
-export class ImportError extends Error {
-  /** `problems` lists what changed in the POS data (table and column names only) for "pos-data-changed". */
-  constructor(public readonly problem: ImportProblem, public readonly problems: readonly string[] = []) {
-    super(`POS import: ${problem}`);
-  }
-}
-
 export type UnlinkedAccount = DescribedAccount & { orders: number; netSales: number };
 export type ImportPreview = {
   range: { from: string; to: string }; goLiveDate: string;
-  months: { month: string; orders: number; netSales: number }[];
+  /** Per month: orders, net sales, the cashiers with sales and how many of them are linked to an Employee. */
+  months: { month: string; orders: number; netSales: number; cashiers: number; linkedCashiers: number }[];
   totals: { days: number; orders: number; grossSales: number; refundAmount: number; netSales: number };
   accounts: { linked: number; unlinked: UnlinkedAccount[] };
+  /** The Employees whose linked accounts have sales in the range, by name. */
+  matched: string[];
   /** Sales by the definition that could not be credited to a cashier (no staff number, or one below 1000). Not in the figures. */
   leftOut: { orders: number; grossSales: number };
   /** The schema check ran before the read and passed (a failure is an error, not a preview). */
@@ -38,17 +36,6 @@ export type SavedImport = { id: number; range: { from: string; to: string }; day
 export type ImportRecord = { id: number; from: string; to: string; days: number; orders: number; netSales: number; unlinkedAccounts: number; importedByName: string; importedAt: string };
 
 const cents = (n: number) => Math.round(n * 100) / 100;
-const iso = (date: Date) => date.toISOString().slice(0, 10);
-
-/** The Manila days to read: from the first of the previous month (not before the go-live date) to the end of the current month. */
-export function importRange(goLive: string | null, today: string): { from: string; to: string } {
-  if (!goLive) throw new ImportError("go-live-not-set");
-  const [year, month] = today.split("-").map(Number);
-  const from = iso(new Date(Date.UTC(year, month - 2, 1)));
-  const to = iso(new Date(Date.UTC(year, month, 0)));
-  if (goLive > to) throw new ImportError("go-live-not-reached");
-  return { from: from < goLive ? goLive : from, to };
-}
 
 export function posImportModule(db: Database, now: () => Date, deps: { links: ReturnType<typeof linksModule>; reader: ReturnType<typeof posReader>; settings: ReturnType<typeof posSettingsModule> }) {
   const today = () => now().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
@@ -65,13 +52,13 @@ export function posImportModule(db: Database, now: () => Date, deps: { links: Re
   }
 
   async function summarise(goLive: string, range: { from: string; to: string }, read: PosImportRead): Promise<ImportPreview> {
-    const months = new Map<string, { orders: number; netSales: number }>();
+    const months = new Map<string, { orders: number; netSales: number; accounts: Set<string> }>();
     const accounts = new Map<string, { orders: number; netSales: number; staffId: number; locationId: number; best: number }>();
     const totals = { days: read.sales.length, orders: 0, grossSales: 0, refundAmount: 0, netSales: 0 };
     for (const day of read.sales) {
       totals.orders += day.orders; totals.grossSales += day.grossSales; totals.refundAmount += day.refundAmount; totals.netSales += day.netSales;
-      const month = months.get(day.businessDate.slice(0, 7)) ?? { orders: 0, netSales: 0 };
-      month.orders += day.orders; month.netSales += day.netSales;
+      const month = months.get(day.businessDate.slice(0, 7)) ?? { orders: 0, netSales: 0, accounts: new Set<string>() };
+      month.orders += day.orders; month.netSales += day.netSales; month.accounts.add(day.portalUserId);
       months.set(day.businessDate.slice(0, 7), month);
       const account = accounts.get(day.portalUserId) ?? { orders: 0, netSales: 0, staffId: day.staffId, locationId: day.locationId, best: -Infinity };
       account.orders += day.orders; account.netSales += day.netSales;
@@ -81,15 +68,17 @@ export function posImportModule(db: Database, now: () => Date, deps: { links: Re
     }
     const linked = await deps.links.activeLinks();
     const unlinkedIds = [...accounts.keys()].filter((id) => !linked.has(id));
+    const matchedIds = [...new Set([...accounts.keys()].flatMap((id) => (linked.has(id) ? [linked.get(id)!] : [])))];
+    const matched = matchedIds.length === 0 ? [] : (await db.query<{ name: string }>(`SELECT full_name AS name FROM public.hrms_employees WHERE id = ANY($1::int[]) ORDER BY full_name, id`, [matchedIds])).rows.map((row) => row.name);
     const branchName = new Map(read.locations.map((location) => [location.locationId, location.name]));
     const named = await deps.links.describeAccounts(unlinkedIds.map((id) => ({ portalUserId: id, staffNumber: String(accounts.get(id)!.staffId), branch: branchName.get(accounts.get(id)!.locationId) ?? null })));
     const unlinked = named.map((account): UnlinkedAccount => ({ ...account, orders: accounts.get(account.portalUserId)!.orders, netSales: cents(accounts.get(account.portalUserId)!.netSales) }))
       .sort((a, b) => b.netSales - a.netSales || a.portalUserId.localeCompare(b.portalUserId));
     return {
       range, goLiveDate: goLive,
-      months: [...months].sort(([a], [b]) => a.localeCompare(b)).map(([month, m]) => ({ month, orders: m.orders, netSales: cents(m.netSales) })),
+      months: [...months].sort(([a], [b]) => a.localeCompare(b)).map(([month, m]) => ({ month, orders: m.orders, netSales: cents(m.netSales), cashiers: m.accounts.size, linkedCashiers: [...m.accounts].filter((id) => linked.has(id)).length })),
       totals: { days: totals.days, orders: totals.orders, grossSales: cents(totals.grossSales), refundAmount: cents(totals.refundAmount), netSales: cents(totals.netSales) },
-      accounts: { linked: accounts.size - unlinkedIds.length, unlinked }, leftOut: read.leftOut, schemaCheck: "passed",
+      accounts: { linked: accounts.size - unlinkedIds.length, unlinked }, matched, leftOut: read.leftOut, schemaCheck: "passed",
     };
   }
 

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
+import { AttendanceError, ImportError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
@@ -165,4 +165,40 @@ export async function generateSuggestions(employeeId: number, periodId: number):
     }
     throw error;
   }
+}
+
+/**
+ * What an Import POS sales run ends in: the preview or the saved import, or why it could not read the POS. A failure always means nothing was saved.
+ * `at` is when the attempt was made, for "Last attempt".
+ */
+export type PosImportResult =
+  | { ok: true; at: string; preview: ImportPreview }
+  | { ok: true; at: string; saved: SavedImport }
+  | { ok: false; at: string; kind: ImportProblem; problems: string[] };
+
+async function runPosImport(read: (performance: Awaited<ReturnType<typeof performanceForRequest>>) => Promise<{ preview: ImportPreview } | { saved: SavedImport }>): Promise<PosImportResult> {
+  const at = new Date().toISOString();
+  try {
+    return { ok: true, at, ...(await read(await performanceForRequest())) };
+  } catch (error) {
+    if (error instanceof ImportError) return { ok: false, at, kind: error.problem, problems: [...error.problems] };
+    if (error instanceof PerformanceError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+      return { ok: false, at, kind: "pos-unreachable", problems: [] };
+    }
+    throw error;
+  }
+}
+
+/** Reads the POS for the current and the previous month and returns what an import would do. Saves nothing. A button press only. */
+export async function previewPosSales(): Promise<PosImportResult> {
+  return runPosImport(async (performance) => ({ preview: await performance.previewPosImport() }));
+}
+
+/** Reads the POS again and saves it, in one transaction. Only the Confirm import button calls this. */
+export async function confirmPosImport(): Promise<PosImportResult> {
+  const result = await runPosImport(async (performance) => ({ saved: await performance.importPosSales() }));
+  if (result.ok) for (const path of PERIOD_PATHS) revalidatePath(path);
+  return result;
 }
