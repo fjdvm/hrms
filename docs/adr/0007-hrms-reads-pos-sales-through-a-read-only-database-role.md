@@ -1,0 +1,15 @@
+# HRMS reads POS sales through a read-only database role
+
+HRMS reads the POS's sales straight from the POS database (`pos_db` on Neon), through a read-only Postgres role, `hrms_reader`, that the POS owner creates in SQL with column-level `GRANT SELECT` on the few tables the sale definition needs. HRMS opens one connection per read, runs a schema check first, reads the current and the previous month, and stores only daily aggregates per POS account, branch and day. It never writes to the POS database, never runs migrations on it and never calls the POS API. The POS and the Portal are not changed. The grants and the sale definition (`net-sales-v1`) are in the access contract, summarised in `docs/pos-sales.md`.
+
+We rejected **re-keying sales by hand** because it is slow and error-prone, and a raw count of sales would still be unfair. We rejected **calling the POS API** because the POS is run by another developer and has no endpoint for per-cashier net sales; adding one is POS work this feature must not depend on. We rejected **a database role with table-wide or write access**, or a shared owner login, because the role must not be able to leak customer data (names, order numbers, order lines) or change anything even if its connection string leaked. We rejected **a push from the POS** (a webhook or an export job) because it needs POS changes and a schedule, and no app here polls or runs on a timer (ADR-0005 in the Portal repository). We rejected **reading live on every page view** because the POS database would then be on the path of every Performance page, and a slow POS would slow HR down.
+
+## Consequences
+
+- Imports run only when a Staff member asks, never on a timer. Nothing is saved until they confirm the preview, and a POS that is unreachable or whose data changed saves nothing.
+- The POS owner owns the role. A POS migration that drops and re-creates a table loses its grants; the schema check turns that into a clear "POS data changed" message, with table and column names only, instead of wrong numbers.
+- The connection string is one server-side environment variable and is never logged, returned or put in an error. Rotating the role's password means updating that variable (`docs/pos-sales.md`).
+- HRMS keeps aggregates it can re-create from the POS: no customer data, order numbers or order lines, and no Employee id, because an Employee is found through the POS account links when the figures are read. Linking later repairs history and unlinking removes sales retroactively.
+- An import reads no day before the POS go-live date, so test data in the POS is never read.
+- Refund days and some status changes can still move until the POS owner removes two old refund routes. Re-reading the previous month on every import, and the manual reconciliation against the POS Sales Report, absorb it. A month stays Provisional until an import in the following month has re-read it.
+- If the POS ever offers a supported sales endpoint, this decision can be revisited; only the POS reader module would change.

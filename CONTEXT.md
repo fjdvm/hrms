@@ -87,6 +87,53 @@ _Avoid_: Action plan, improvement plan, warning, PIP, Training assignment
 What the AI suggests on a submitted (Evaluated) Evaluation: a gap tied to a KPI (for example "Punctuality 88.0, target 100"), a scheduled Training or "No matching Training, consider a session on X", and a one-line reason. It is a suggestion for a person to review, never a rating, and it is separate from a Development need, which exists only once Staff flag one. A suggestion is Pending, Flagged or Dismissed: Flag as need opens the Flag dialog pre-filled and, once saved, makes a Development need marked AI-suggested; Dismiss hides it. Each generated set is saved against the submission version it came from, and Regenerate keeps the old set. The AI never changes a score, rating or status and never assigns a Training (ADR 0006).
 _Avoid_: AI recommendation, AI finding, AI rating, Development need (before Staff flag it)
 
+**Cashier**:
+In Performance, an Employee whose position matches a weight set that gives the sales KPI a weight above 0 (exact text, ignoring case and extra spaces, as for weight sets). There is no cashier flag, the default weight set never makes anyone a cashier, and with no weighted set nobody is. Only a Cashier can be linked to a POS account, ranked in Top sales or scored on the sales KPI, so the three follow one rule.
+_Avoid_: Sales staff, seller, cashier flag
+
+**Cashier for a month**:
+Whether an Employee counts as a Cashier for Top sales in one calendar month: the position they held on the last day of the month (today, for the month in progress), read from the Employee history. A Cashier promoted mid-month is not ranked for that month, and a promotion after the month ended does not change a past ranking.
+_Avoid_: Cashier of the month
+
+**POS account link**:
+The hand-made link from one POS account (a Portal user who rings up sales) to one Employee, made by Staff who hold Performance. An Employee can hold several accounts over time and their sales add up; an account belongs to at most one Employee at a time. Choosing an Employee who already has an account needs the reason "New Portal account for the same person". Unlinking needs a reason (Wrong person linked, Linked to the wrong POS account, or Other with a note), ends the link without deleting it, and removes that account's sales from the Employee, past months included. Every link and unlink is audited. Names of unlinked accounts come from the Portal's staff directory.
+_Avoid_: Mapping, assignment, POS user (for the link)
+
+**Linking block**:
+The hard rule that an Employee who is not a Cashier cannot be linked to a POS account, shown as "Not a cashier position", with no override.
+_Avoid_: Warning, soft check
+
+**POS go-live date**:
+The first production day HRMS may read POS sales from, set in KPI Setup and audited. Until it is set, Import POS sales is refused, and no import reads a day before it, so test data in the POS is never read.
+_Avoid_: Start date, cutover date
+
+**Stored POS figures**:
+What an import saves: one row per POS account, POS branch and Manila business day, with orders, gross sales, refund amount and net sales. They hold no customer data, no order numbers or lines and no Employee id (the Employee is found through the POS account links when the figures are read), and an import can re-create them from the POS. A run is recorded with who ran it, when, the days read and the result.
+_Avoid_: Sales table, synced sales
+
+**Net sales**:
+Gross sales minus approved refunds, by the sale definition `net-sales-v1` in the access contract: Store orders from the POS at a branch (a bazaar is a branch type), Completed, Refund Requested or Refunded with at least one line, counted on the Manila day of the sale, with each refund subtracted on the day it was approved. A day can therefore be negative.
+
+**Sales KPI**:
+For a Cashier, the KPI whose source is net sales per present day: net sales in the Evaluation period (all the Employee's linked accounts, all branches) divided by present days from the attendance import, as a percentage of the Sales target, capped at 100, with negative net sales scoring 0. A present day with no orders counts as zero sales. It is Not applicable, with the reason shown and never read as 0, when the Employee has no linked account, the period starts before the POS go-live date, no import ran after the period ended, there are fewer than 5 present days (a placeholder until HR confirms), or no target is set; the other weights are then rescaled to 100. Its weight starts at 0 in every weight set, which keeps it off until HR sets it.
+_Avoid_: Sales score, sales rating
+
+**Sales target**:
+The one company-wide amount of net sales per present day that scores 100 on the Sales KPI, set in KPI Setup and audited. There is no target per branch.
+_Avoid_: Quota, per-branch target
+
+**Top sales**:
+A card on the Performance page, below Evaluation progress, that ranks Cashiers by total net sales for one calendar month with its own month selector, per branch (the branch where the sale was made, through the POS branch map): the overall top seller and the top two Cashiers of each branch. Ties share a rank, there is no minimum of present days, and it stores nothing. It is recognition only, never part of an Evaluation, and never called "Employee of the month". Its footer says how many staff with sales are not shown (an account that is not linked, or an Employee who was not a Cashier that month).
+_Avoid_: Employee of the month, leaderboard, sales ranking (in the UI)
+
+**Provisional month**:
+A Top sales month that no import run in the following month has re-read yet, because voids and refunds can change a month's totals afterwards. The month in progress is always Provisional. A Provisional badge shows on the card until an import that ran after the month ended has covered all of it.
+_Avoid_: Draft month, estimate
+
+**Reconciliation**:
+A manual step, not a screen: HR compares HRMS net sales per branch and month with the POS Sales Report (Store/Walk-in, gross minus discounts minus returns) and records the result before any real Employee is scored (`docs/pos-sales.md`).
+_Avoid_: Sync check, audit
+
 **Probation review**:
 An Evaluation of one newly hired Employee, finalized before their probation ends. Its window runs from the Employee's start date to 14 days before their probation end date; the last 14 days are not scored. It is separate from the company-wide Evaluation periods, so it may overlap them and is left out of their averages. It becomes available when the window closes, and it appears in Needs attention until it is Evaluated, marked overdue once the probation end date passes. If HR changes the probation end date, the window follows it until the review is submitted, and then it is frozen. It uses the default weight set unless a position set matches, never a set for one Employee. An Employee with no probation end date has none, and one whose probation ended before Performance went live has none. Planned after the first release of Performance, which has company-wide Evaluation periods only.
 _Avoid_: Regularization (until HR defines the outcome of a probation review), probationary evaluation
