@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogTrigger } from "@/components/ui/dialog";
@@ -17,14 +18,15 @@ type Stage =
   | { name: "failed"; kind: ImportProblem; problems: readonly string[]; at: string };
 
 const OUTLINE = "h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] shadow-none";
+const PRIMARY = "h-auto gap-[6px] rounded-lg bg-[#5b2a86] px-[14px] py-[9px] shadow-none";
 
 /**
- * The Import POS sales button in the Performance header and its dialog. Ready names the two months it will read (there is no month picker);
+ * The Import POS sales button (outline in the Performance header, primary in the Top sales empty state) and its dialog. Ready names the two months it will read (there is no month picker);
  * Read from POS reads them and shows the preview, with Cancel while it reads; nothing is saved until Confirm import. POS unreachable and POS data
  * changed say nothing was saved and offer Try again or Close. With no go-live date it says so and points to KPI setup, and reads nothing.
  * Every step is a button press: nothing here repeats a request on a timer.
  */
-export function ImportPosSalesDialog({ goLiveDate, today }: { goLiveDate: string | null; today: string }) {
+export function ImportPosSalesDialog({ goLiveDate, today, variant = "outline" }: { goLiveDate: string | null; today: string; variant?: "outline" | "primary" }) {
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<Stage>({ name: "ready" });
   const [saving, startSaving] = useTransition();
@@ -71,7 +73,9 @@ export function ImportPosSalesDialog({ goLiveDate, today }: { goLiveDate: string
 
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogTrigger asChild><Button variant="outline" className={OUTLINE}>Import POS sales</Button></DialogTrigger>
+      <DialogTrigger asChild>
+        {variant === "primary" ? <Button type="button" className={PRIMARY}><Upload aria-hidden className="size-4" />Import POS sales</Button> : <Button variant="outline" className={OUTLINE}>Import POS sales</Button>}
+      </DialogTrigger>
       <DialogFrame title="Import POS sales" description={`${names || "No months yet"} · ${stage.name === "preview" ? "read from the POS just now" : "read-only"}`}>
         {notLive ? (
           <>

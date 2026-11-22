@@ -10,6 +10,8 @@ import { PERFORMANCE_SUBTITLE, PERFORMANCE_TITLE, ImportPosButtonSkeleton, Perfo
 import { ImportPosSalesDialog } from "@/components/performance/import-pos-sales-dialog";
 import { PeriodSelector } from "@/components/performance/period-selector";
 import { PerformanceRetry } from "@/components/performance/retry-button";
+import { TopSalesCard } from "@/components/performance/top-sales-card";
+import { TopSalesSkeleton } from "@/components/performance/top-sales-skeleton";
 import { SetUpPeriodDialog } from "@/components/performance/set-up-period-dialog";
 import { PerformanceError, RosterError } from "@/lib/performance";
 import { pickPeriod } from "@/lib/performance-list";
@@ -58,6 +60,11 @@ async function ImportPosControl() {
   return <ImportPosSalesDialog goLiveDate={goLive?.date ?? null} today={today} />;
 }
 
+/** The Top sales card behind its own Suspense boundary, so a slow ranking never holds back the evaluation list. */
+const TopSales = ({ searchParams }: { searchParams: Search }) => (
+  <Suspense fallback={<TopSalesSkeleton />}><TopSalesCard searchParams={searchParams} /></Suspense>
+);
+
 async function Controls({ searchParams }: { searchParams: Search }) {
   const data = await load(searchParams);
   return data ? <PeriodSelector selectedId={data.selected?.id ?? null} setup={data.setup} /> : null;
@@ -87,7 +94,7 @@ async function EvaluationList({ searchParams }: { searchParams: Search }) {
       </Card>
     );
   }
-  return <PerformanceList key={data.roster.period.id} roster={data.roster} setup={data.setup} />;
+  return <PerformanceList key={data.roster.period.id} roster={data.roster} setup={data.setup} topSales={<TopSales searchParams={searchParams} />} />;
 }
 
 export default async function Page({ searchParams }: PageProps<"/performance">) {
