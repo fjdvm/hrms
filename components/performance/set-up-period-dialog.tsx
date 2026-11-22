@@ -9,7 +9,7 @@ import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { openEvaluationPeriod } from "@/app/(hrms)/performance/actions";
 import type { Kpi, WeightSet } from "@/lib/performance-kpis";
-import { KPI_IDS } from "@/lib/performance-scoring";
+import { CORE_KPI_IDS as KPI_IDS } from "@/lib/performance-scoring";
 import { DEFAULT_GRACE_MINUTES, countNonWorking, findOverlap, monthChoices, nonWorkingText, quarterChoices, rangeLabel, readGrace, type DateRange } from "@/lib/performance-period-form";
 import { overlapMessage } from "@/lib/performance-period-messages";
 import type { OpenPeriodInput, Period, PeriodType } from "@/lib/performance-periods";

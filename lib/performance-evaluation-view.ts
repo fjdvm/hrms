@@ -83,6 +83,11 @@ const REASONS: Record<NonNullable<KpiLine["reason"]>, string> = {
   "no-training-due": "No Training due in this period",
   "no-rating": "Not entered yet",
   inactive: "KPI is inactive",
+  "no-linked-account": "No POS account linked",
+  "before-go-live": "Period starts before POS go-live",
+  "no-import-after-period": "No POS import since the period ended",
+  "no-target": "No sales target set",
+  "too-few-present-days": "Too few present days to measure",
 };
 
 /**

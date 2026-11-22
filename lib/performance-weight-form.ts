@@ -1,6 +1,6 @@
 import { KpiError, readPosition, WEIGHT_SET_TOTAL, type WeightSet, type Weights } from "./performance-kpis";
 import { kpiMessage, POSITION_TAKEN_MESSAGE } from "./performance-kpi-messages";
-import { KPI_IDS, type KpiId } from "./performance-scoring";
+import { CORE_KPI_IDS as KPI_IDS, type CoreKpiId as KpiId } from "./performance-scoring";
 import { matchKey } from "./validators/text";
 
 /**
