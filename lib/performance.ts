@@ -94,8 +94,8 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
 
   return {
     access,
-    /** The five KPIs with their source, target, status and weight in the default set. */
-    listKpis: async () => { await acting(); return kpis.listKpis(); },
+    /** The five starter KPIs with their source, target, status and weight in the default set; KPI Setup also asks for the sales KPI. */
+    listKpis: async (options?: { includeSales?: boolean }) => { await acting(); return kpis.listKpis(options); },
     /** Activates or deactivates a KPI. There is no delete: a KPI an Evaluation used must stay explainable. */
     setKpiStatus: async (id: string, status: string) => kpis.setKpiStatus(await acting(), id, status),
     /** The default set, then the position sets, each with its total. */

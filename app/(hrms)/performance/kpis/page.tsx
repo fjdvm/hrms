@@ -13,8 +13,8 @@ import { staffWithModule } from "@/lib/portal/staff";
 async function load() {
   try {
     const performance = await performanceForRequest();
-    const [kpis, sets] = await Promise.all([performance.listKpis(), performance.listWeightSets()]);
-    return { kpis, sets };
+    const [kpis, sets, target, goLive] = await Promise.all([performance.listKpis({ includeSales: true }), performance.listWeightSets(), performance.salesTarget(), performance.posGoLive()]);
+    return { kpis, sets, sales: { target, goLiveDate: goLive?.date ?? null } };
   } catch (error) {
     if (error instanceof PerformanceError) return null;
     throw error;
@@ -32,7 +32,7 @@ async function KpiSetupContent() {
       </Card>
     );
   }
-  return <KpiSetup kpis={data.kpis} sets={data.sets} />;
+  return <KpiSetup kpis={data.kpis} sets={data.sets} sales={data.sales} />;
 }
 
 export default async function Page() {

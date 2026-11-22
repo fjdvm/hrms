@@ -2,7 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, ImportError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
+import { AttendanceError, GoLiveError, ImportError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
+import { readGoLiveDate } from "@/lib/performance-pos-settings";
+import { readSalesTarget, SalesTargetError } from "@/lib/performance-sales-inputs";
+import { GO_LIVE_MESSAGE, TARGET_MESSAGE } from "@/lib/performance-sales-setup-terms";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
@@ -23,6 +26,8 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
     await change();
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
+    if (error instanceof SalesTargetError) return { ok: false, error: TARGET_MESSAGE };
+    if (error instanceof GoLiveError) return { ok: false, error: GO_LIVE_MESSAGE };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
     if (error instanceof NeedError) return { ok: false, error: needMessage(error.problem) };
     if (error instanceof SuggestionError) return { ok: false, error: suggestionMessage(error.problem) };
@@ -53,6 +58,20 @@ export async function changeKpiStatus(id: string, status: string): Promise<KpiAc
 /** Creates a weight set for one position. Refused unless the weights total 100 and the position has no set yet. */
 export async function createWeightSet(position: string, weights: Record<string, number>): Promise<KpiActionResult> {
   return run(async () => (await performanceForRequest()).saveWeightSet({ position, weights }), KPI_PATHS);
+}
+
+/**
+ * Saves the company-wide sales target (pesos per present day) and/or the POS go-live date from KPI Setup. Both are checked before either is saved, so a
+ * bad value saves nothing; each real change is audited with the Staff member by the interface.
+ */
+export async function saveSalesSettings(input: { target?: number; goLive?: string }): Promise<KpiActionResult> {
+  return run(async () => {
+    const target = input.target === undefined ? undefined : readSalesTarget(input.target);
+    const goLive = input.goLive === undefined ? undefined : readGoLiveDate(input.goLive);
+    const performance = await performanceForRequest();
+    if (target !== undefined) await performance.setSalesTarget(target);
+    if (goLive !== undefined) await performance.setPosGoLive(goLive);
+  }, [...KPI_PATHS, "/performance"]);
 }
 
 /** Opens a company-wide Evaluation period. One that overlaps another by date is refused. */

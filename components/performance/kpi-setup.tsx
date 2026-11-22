@@ -10,9 +10,11 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CELL, HEAD, InfoNote } from "@/components/hiring/parts";
 import { changeKpiStatus } from "@/app/(hrms)/performance/actions";
+import { dayLabel, pesos } from "@/lib/performance-pos-import-terms";
 import type { Kpi, KpiStatus, WeightSet } from "@/lib/performance-kpis";
 import { cn } from "@/lib/utils";
 import { NewWeightSetDialog } from "./new-weight-set-dialog";
+import { SalesSettingsDialog } from "./sales-settings-dialog";
 
 const TABS = ["All", "Active", "Inactive"] as const;
 type Tab = (typeof TABS)[number];
@@ -26,11 +28,15 @@ export const matchesSearch = (kpi: Pick<Kpi, "name" | "description" | "source">,
   return needle === "" || [kpi.name, kpi.description, kpi.source].some((text) => text.toLowerCase().includes(needle));
 };
 
+/** The KPI's target as the table shows it: the sales KPI's is a peso amount per present day, which is set in the Sales settings dialog. */
+const targetOf = (kpi: Kpi) => (kpi.id === "sales" ? (kpi.targetAmount != null ? `${pesos(kpi.targetAmount)}/day` : "Not set") : kpi.target);
+
 /**
- * KPI Setup: the five starter KPIs with the weights of the selected set, tabs and a search, and a switch to set each KPI Active
- * or Inactive. A KPI is never deleted. The weights summary shows the selected set's total out of 100.
+ * KPI Setup: the KPIs with the weights of the selected set, tabs and a search, and a switch to set each KPI Active or Inactive. A KPI is never
+ * deleted. The weights summary shows the selected set's total out of 100. With `sales`, the page also shows the company-wide sales target and
+ * the POS go-live date, and a dialog to change them; the sales KPI is off in any set that gives it weight 0.
  */
-export function KpiSetup({ kpis, sets }: { kpis: Kpi[]; sets: WeightSet[] }) {
+export function KpiSetup({ kpis, sets, sales }: { kpis: Kpi[]; sets: WeightSet[]; sales?: { target: number | null; goLiveDate: string | null } }) {
   const [tab, setTab] = useState<Tab>("All");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(() => sets.find((set) => set.isDefault)?.id ?? sets[0]?.id);
@@ -70,6 +76,21 @@ export function KpiSetup({ kpis, sets }: { kpis: Kpi[]; sets: WeightSet[] }) {
         </div>
         <p className="min-w-[240px] flex-1 text-xs text-muted-foreground">{SUMMARY_TEXT}</p>
       </Card>
+
+      {sales && (
+        <Card className="flex flex-wrap items-center gap-lg rounded-xl p-[20px] shadow-none">
+          <div className="flex min-w-[200px] flex-col gap-[4px]">
+            <p className="text-sm text-muted-foreground">Sales target</p>
+            <p className="text-[18px] font-semibold text-foreground" data-testid="sales-target">{sales.target === null ? "Not set" : `${pesos(sales.target)} per present day`}</p>
+          </div>
+          <div className="flex min-w-[160px] flex-col gap-[4px]">
+            <p className="text-sm text-muted-foreground">POS go-live date</p>
+            <p className="text-[18px] font-semibold text-foreground" data-testid="sales-go-live">{sales.goLiveDate ? dayLabel(sales.goLiveDate) : "Not set"}</p>
+          </div>
+          <p className="min-w-[240px] flex-1 text-xs text-muted-foreground">One company-wide target for the sales KPI. POS sales are imported only from the go-live date; imports stay blocked until it is set. A set with a sales weight of 0 leaves the sales KPI off.</p>
+          <SalesSettingsDialog current={{ target: sales.target, goLive: sales.goLiveDate }} />
+        </Card>
+      )}
 
       {sets.length > 1 && (
         <div role="group" aria-label="Weight set" className="flex flex-wrap items-center gap-xs">
@@ -111,7 +132,7 @@ export function KpiSetup({ kpis, sets }: { kpis: Kpi[]; sets: WeightSet[] }) {
                 <TableHead className={`${HEAD} w-[160px]`}>Source</TableHead>
                 <TableHead className={`${HEAD} w-[150px]`}>Positions</TableHead>
                 <TableHead className={`${HEAD} w-[90px]`}>Weight</TableHead>
-                <TableHead className={`${HEAD} w-[90px]`}>Target</TableHead>
+                <TableHead className={`${HEAD} w-[110px]`}>Target</TableHead>
                 <TableHead className={HEAD}>Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -128,8 +149,8 @@ export function KpiSetup({ kpis, sets }: { kpis: Kpi[]; sets: WeightSet[] }) {
                     </TableCell>
                     <TableCell className={CELL}>{kpi.source}</TableCell>
                     <TableCell className={CELL}>{selected.name}</TableCell>
-                    <TableCell className={cn(CELL, status === "Inactive" && "text-zinc-400")}>{selected.weights[kpi.id]}</TableCell>
-                    <TableCell className={CELL}>{kpi.target}</TableCell>
+                    <TableCell className={cn(CELL, status === "Inactive" && "text-zinc-400")}>{selected.weights[kpi.id] ?? 0}</TableCell>
+                    <TableCell className={CELL}>{targetOf(kpi)}</TableCell>
                     <TableCell className={CELL}>
                       <div className="flex items-center gap-[10px]">
                         <Badge variant={status === "Active" ? "success" : "secondary"}>{status}</Badge>

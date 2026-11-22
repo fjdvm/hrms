@@ -1,6 +1,7 @@
 import type { Database } from "./database";
 import type { Actor } from "./performance-kpis";
 import type { SalesInput } from "./performance-sales-scoring";
+import { parsePesos } from "./validators/money";
 import { POS_GO_LIVE_KEY } from "./performance-pos-settings";
 
 /**
@@ -25,10 +26,9 @@ export const SALES_TARGET_MAX = 10_000_000;
 
 /** The target in pesos per present day: more than 0, at most {@link SALES_TARGET_MAX}, to the centavo. */
 export function readSalesTarget(input: unknown): number {
-  const value = typeof input === "number" ? input : typeof input === "string" && /^\d{1,8}(\.\d{1,2})?$/.test(input.trim()) ? Number(input) : NaN;
-  const centavos = Math.round(value * 100);
-  if (!Number.isFinite(value) || value <= 0 || value > SALES_TARGET_MAX || Math.abs(value * 100 - centavos) > 1e-6) throw new SalesTargetError("target-invalid");
-  return centavos / 100;
+  const amount = parsePesos(input, SALES_TARGET_MAX);
+  if (amount === null) throw new SalesTargetError("target-invalid");
+  return amount;
 }
 
 const pesos = (amount: number) => `₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} net sales per present day`;

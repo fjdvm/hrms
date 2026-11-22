@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { KpiError, PerformanceError } from "@/lib/performance";
+import { GoLiveError, KpiError, PerformanceError } from "@/lib/performance";
 
 const state = vi.hoisted(() => ({ performance: {} as Record<string, ReturnType<typeof vi.fn>> }));
 vi.mock("@/lib/portal/performance", () => ({ performanceForRequest: async () => state.performance }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT ${url}`); } }));
 
-import { changeKpiStatus, createWeightSet } from "@/app/(hrms)/performance/actions";
+import { changeKpiStatus, createWeightSet, saveSalesSettings } from "@/app/(hrms)/performance/actions";
 
-beforeEach(() => { state.performance = { setKpiStatus: vi.fn(), saveWeightSet: vi.fn() }; });
+beforeEach(() => { state.performance = { setKpiStatus: vi.fn(), saveWeightSet: vi.fn(), setSalesTarget: vi.fn(), setPosGoLive: vi.fn() }; });
 const WEIGHTS = { attendanceRate: 40, punctuality: 20, fullShift: 10, trainingCompletion: 10, evaluatorRating: 20 };
 
 describe("the KPI Setup server actions", () => {
@@ -46,5 +46,33 @@ describe("the KPI Setup server actions", () => {
     state.performance.setKpiStatus.mockRejectedValue(new TypeError("boom"));
 
     await expect(changeKpiStatus("fullShift", "Inactive")).rejects.toThrow("boom");
+  });
+});
+
+describe("the sales settings server action", () => {
+  it("saves the target and the go-live date through the interface, only what is sent", async () => {
+    expect(await saveSalesSettings({ target: 1500.5, goLive: "2026-11-10" })).toEqual({ ok: true });
+    expect(state.performance.setSalesTarget).toHaveBeenCalledWith(1500.5);
+    expect(state.performance.setPosGoLive).toHaveBeenCalledWith("2026-11-10");
+
+    state.performance.setSalesTarget.mockClear(); state.performance.setPosGoLive.mockClear();
+    expect(await saveSalesSettings({ goLive: "2026-12-01" })).toEqual({ ok: true });
+    expect(state.performance.setSalesTarget).not.toHaveBeenCalled();
+    expect(state.performance.setPosGoLive).toHaveBeenCalledWith("2026-12-01");
+  });
+
+  it("checks both values before saving either, so a bad one saves nothing", async () => {
+    expect(await saveSalesSettings({ target: 1500, goLive: "2026-02-30" })).toEqual({ ok: false, error: "Choose a real calendar date." });
+    expect(await saveSalesSettings({ target: 0, goLive: "2026-11-10" })).toMatchObject({ ok: false, error: expect.stringContaining("more than 0") });
+    expect(await saveSalesSettings({ target: 12.345 })).toMatchObject({ ok: false });
+    expect(state.performance.setSalesTarget).not.toHaveBeenCalled();
+    expect(state.performance.setPosGoLive).not.toHaveBeenCalled();
+  });
+
+  it("turns the interface's refusal into words, and sends a Staff member without the Module to No access", async () => {
+    state.performance.setPosGoLive.mockRejectedValue(new GoLiveError("date-invalid"));
+    expect(await saveSalesSettings({ goLive: "2026-11-10" })).toEqual({ ok: false, error: "Choose a real calendar date." });
+    state.performance.setSalesTarget.mockRejectedValue(new PerformanceError("denied"));
+    await expect(saveSalesSettings({ target: 1500 })).rejects.toThrow("REDIRECT /no-access");
   });
 });

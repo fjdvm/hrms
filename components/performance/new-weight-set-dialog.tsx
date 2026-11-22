@@ -30,7 +30,9 @@ function Form({ sets, kpis, onDone }: { sets: WeightSet[]; kpis: Kpi[]; onDone: 
   const baseSet = base === "another" ? sets.find((set) => set.id === anotherId) : base === "default" ? sets.find((set) => set.isDefault) : undefined;
   const baseName = base === "blank" ? "Blank" : baseSet?.name ?? "Default set";
   const taken = state.positionError !== null && state.position !== null;
-  const nameOf = (id: KpiId) => kpis.find((kpi) => kpi.id === id)?.name ?? id;
+  const nameOf = (id: KpiId | "sales") => kpis.find((kpi) => kpi.id === id)?.name ?? id;
+  // The sales KPI has a weight input once KPI Setup lists it; a weight of 0 leaves it off.
+  const hasSales = kpis.some((kpi) => kpi.id === "sales");
 
   const choose = (next: BaseChoice, id = anotherId) => {
     setBase(next);
@@ -38,7 +40,7 @@ function Form({ sets, kpis, onDone }: { sets: WeightSet[]; kpis: Kpi[]; onDone: 
     setTexts(startingWeights(next, sets, id));
     setFailure(undefined);
   };
-  const type = (id: KpiId, value: string) => {
+  const type = (id: KpiId | "sales", value: string) => {
     setTexts((current) => ({ ...current, [id]: value.replace(/\D/g, "").slice(0, 3) }));
     setFailure(undefined);
   };
@@ -92,7 +94,7 @@ function Form({ sets, kpis, onDone }: { sets: WeightSet[]; kpis: Kpi[]; onDone: 
         <div className="flex flex-col gap-[6px]">
           <span id="weight-weights-label" className="text-[13px] font-medium text-zinc-800">Weights</span>
           <p aria-labelledby="weight-weights-label" className="flex h-[40px] items-center rounded-lg border border-[#e4e4e7] bg-zinc-50 px-[12px] text-sm text-foreground">
-            {baseName} · {KPI_IDS.map((id) => weightOf(texts[id]) ?? 0).join(" / ")}
+            {baseName} · {[...KPI_IDS.map((id) => weightOf(texts[id]) ?? 0), ...((weightOf(texts.sales ?? "") ?? 0) > 0 ? [weightOf(texts.sales ?? "")] : [])].join(" / ")}
           </p>
           <div className="grid gap-[10px] sm:grid-cols-2">
             {KPI_IDS.map((id) => (
@@ -101,6 +103,12 @@ function Form({ sets, kpis, onDone }: { sets: WeightSet[]; kpis: Kpi[]; onDone: 
                 <Input inputMode="numeric" value={texts[id]} disabled={pending} aria-label={`${nameOf(id)} weight`} onChange={(event) => type(id, event.target.value)} className="h-[36px] w-[72px] rounded-lg border-[#e4e4e7] px-[10px] text-right shadow-none" />
               </label>
             ))}
+            {hasSales && (
+              <label className="flex items-center justify-between gap-[10px] text-sm">
+                <span className="text-zinc-700">{nameOf("sales")} <span className="text-xs text-zinc-500">(0 = off)</span></span>
+                <Input inputMode="numeric" value={texts.sales ?? "0"} disabled={pending} aria-label={`${nameOf("sales")} weight`} onChange={(event) => type("sales", event.target.value)} className="h-[36px] w-[72px] rounded-lg border-[#e4e4e7] px-[10px] text-right shadow-none" />
+              </label>
+            )}
           </div>
         </div>
 
