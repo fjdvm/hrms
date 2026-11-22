@@ -117,12 +117,12 @@ describe("preview and confirm", () => {
 
     expect(preview).toEqual({
       range: { from: "2026-11-10", to: "2026-12-31" }, goLiveDate: "2026-11-10",
-      months: [{ month: "2026-11", orders: 2, netSales: 400 }, { month: "2026-12", orders: 1, netSales: 500 }],
+      months: [{ month: "2026-11", orders: 2, netSales: 400, cashiers: 1, linkedCashiers: 0 }, { month: "2026-12", orders: 1, netSales: 500, cashiers: 1, linkedCashiers: 0 }],
       totals: { days: 2, orders: 3, grossSales: 900, refundAmount: 0, netSales: 900 },
       accounts: { linked: 0, unlinked: [
         { portalUserId: "u-ben", name: "Ben Reyes", staffNumber: "1001", branch: "Bazaar Kiosk", orders: 1, netSales: 500 },
         { portalUserId: "u-ana", name: null, staffNumber: "1000", branch: "Cainta", orders: 2, netSales: 400 }] },
-      leftOut: { orders: 1, grossSales: 50 }, schemaCheck: "passed",
+      matched: [], leftOut: { orders: 1, grossSales: 50 }, schemaCheck: "passed",
     });
     expect(await count("hrms_pos_sales_daily")).toBe(0);
     expect(await count("hrms_pos_imports")).toBe(0);
@@ -139,7 +139,10 @@ describe("preview and confirm", () => {
       VALUES ('2026-001', $1, 1, 'Ana Cruz', 'ana@example.test', 'Branch Cashier', 'Retail', 'Cainta branch', '2026-01-05', 19000, 'Full-time', 'Mon-Fri', 'None', 'Paolo', 'Active', 'Ada') RETURNING id`, [offer])).rows[0].id;
     await db.query(`INSERT INTO hrms_pos_account_links (portal_user_id, employee_id, linked_by_id, linked_by_name) VALUES ('u-ana', $1, 'u', 'U')`, [employee]);
 
-    expect((await performance().previewPosImport()).accounts).toEqual({ linked: 1, unlinked: [] });
+    const preview = await performance().previewPosImport();
+    expect(preview.accounts).toEqual({ linked: 1, unlinked: [] });
+    expect(preview.matched).toEqual(["Ana Cruz"]);
+    expect(preview.months).toEqual([{ month: "2026-11", orders: 1, netSales: 300, cashiers: 1, linkedCashiers: 1 }]);
   });
 
   it("saves on confirm in one go: the figures, the branches, the import record and the audit, and nothing before the go-live date", async () => {

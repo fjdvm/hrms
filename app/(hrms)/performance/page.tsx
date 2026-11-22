@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { PAGE, PageHeader } from "@/components/hiring/parts";
 import { PerformanceNoAccess } from "@/components/performance/no-access";
 import { PerformanceList } from "@/components/performance/performance-list";
-import { PERFORMANCE_SUBTITLE, PERFORMANCE_TITLE, PerformanceListSkeleton, PeriodSelectorSkeleton } from "@/components/performance/performance-skeleton";
+import { PERFORMANCE_SUBTITLE, PERFORMANCE_TITLE, ImportPosButtonSkeleton, PerformanceListSkeleton, PeriodSelectorSkeleton } from "@/components/performance/performance-skeleton";
+import { ImportPosSalesDialog } from "@/components/performance/import-pos-sales-dialog";
 import { PeriodSelector } from "@/components/performance/period-selector";
 import { PerformanceRetry } from "@/components/performance/retry-button";
 import { TopSalesCard } from "@/components/performance/top-sales-card";
@@ -41,6 +42,23 @@ const load = cache(async (searchParams: Promise<Record<string, string | string[]
 });
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
+
+/**
+ * The Import POS sales button for every Performance Module holder: the go-live date decides what its dialog says, so it is read behind a skeleton
+ * like the rest of the header's data. Nothing is read from the POS here; that happens only when a Staff member presses Read from POS.
+ */
+async function ImportPosControl() {
+  let goLive;
+  try {
+    goLive = await (await performanceForRequest()).posGoLive();
+  } catch (error) {
+    if (error instanceof PerformanceError) return null;
+    throw error;
+  }
+  // Read after the request's data, so the clock is only used once the page is already dynamic.
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  return <ImportPosSalesDialog goLiveDate={goLive?.date ?? null} today={today} />;
+}
 
 /** The Top sales card behind its own Suspense boundary, so a slow ranking never holds back the evaluation list. */
 const TopSales = ({ searchParams }: { searchParams: Search }) => (
@@ -87,6 +105,7 @@ export default async function Page({ searchParams }: PageProps<"/performance">) 
     <div className={PAGE}>
       <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE}>
         <Suspense fallback={<PeriodSelectorSkeleton />}><Controls searchParams={searchParams} /></Suspense>
+        <Suspense fallback={<ImportPosButtonSkeleton />}><ImportPosControl /></Suspense>
         <Button asChild variant="outline" className={OUTLINE}><Link href="/performance/calendar">Company calendar</Link></Button>
         <Button asChild variant="outline" className={OUTLINE}><Link href="/performance/kpis">KPI setup</Link></Button>
       </PageHeader>

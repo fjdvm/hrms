@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { TopSalesError } from "@/lib/performance";
 import { EMPTY_NOTE, emptyTitle, footerNote, isEmpty, monthChoices, pickSalesMonth } from "@/lib/performance-top-sales-view";
 import { performanceForRequest } from "@/lib/portal/performance";
-import { ImportPosSalesButton } from "./import-pos-sales-button";
+import { ImportPosSalesDialog } from "./import-pos-sales-dialog";
 import { PerformanceRetry } from "./retry-button";
 import { TopSalesBody } from "./top-sales-parts";
 import { TopSalesHeader } from "./top-sales-skeleton";
@@ -58,6 +58,8 @@ export async function TopSalesCard({ searchParams }: { searchParams: Search }) {
   }
 
   if (isEmpty(data)) {
+    // The empty state opens the same Import POS sales dialog as the header; the go-live date decides what it says.
+    const goLive = await (await performanceForRequest()).posGoLive().catch(() => null);
     return (
       <Card className={CARD}>
         {header}
@@ -65,7 +67,7 @@ export async function TopSalesCard({ searchParams }: { searchParams: Search }) {
           <div className="flex size-[56px] items-center justify-center rounded-full bg-[#efe6f8]"><BarChart3 aria-hidden className="size-[26px] text-[#5b2a86]" /></div>
           <p className="text-lg font-semibold text-[#1f1a2e]">{emptyTitle(data, month.label)}</p>
           <p className="max-w-[560px] text-sm text-[#6e6680]">Import POS sales to see the top seller and the top cashiers by branch. Sales are read from the POS only when you click Import.</p>
-          <ImportPosSalesButton />
+          <ImportPosSalesDialog goLiveDate={goLive?.date ?? null} today={today} variant="primary" />
         </div>
         <InfoNote>{data.notShown.unlinkedAccounts + data.notShown.notCashiers > 0 ? footerNote(data) : EMPTY_NOTE}</InfoNote>
       </Card>
