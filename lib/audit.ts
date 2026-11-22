@@ -71,6 +71,24 @@ export async function queueAuditedChange<T>(db: AuditDatabase, input: AuditEvent
   return result;
 }
 
+/**
+ * For a mutation that writes one statement of its own. Returns the outbox INSERT to use as a step of that statement,
+ * the two values it needs (the event id and the event JSON) and the event id. `from` is a table expression aliased `src`
+ * that yields at most one row when the event is due, so a mutation that changed nothing queues nothing. `extra` is an
+ * optional jsonb expression merged over the event, which is how SQL-computed `target` and `metadata` (ids and counts)
+ * are added. Run `deliverAuditEvents(db, id)` after the statement commits.
+ */
+export function auditStep(input: AuditEventInput, firstParam: number, from: string, extra?: string) {
+  const { id, event } = buildAuditEvent(input);
+  return {
+    id,
+    values: [id, JSON.stringify(event)],
+    sql: `INSERT INTO public.hrms_audit_outbox (id, payload)
+      SELECT $${firstParam}, $${firstParam + 1}::jsonb${extra ? ` || (${extra})` : ""} FROM ${from} LIMIT 1
+      ON CONFLICT (id) DO NOTHING`,
+  };
+}
+
 type AuditAction = "job_posting.created" | "job_posting.updated" | "job_posting.published"
   | "job_posting.closed" | "job_posting.filled" | "job_template.created"
   | "job_template.updated" | "job_template.deleted";
