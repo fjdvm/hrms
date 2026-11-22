@@ -1,10 +1,11 @@
 import { connectFromEnv, withPos, type PosConnect } from "./pos-connection";
 import { checkSchema, schemaProblems } from "./pos-schema";
-import { mapLocations, mapSales, type PosLocation, type PosSalesDay } from "./pos-sales-map";
-import { queryLocations, querySales } from "./pos-sales-query";
+import { mapLeftOut, mapLocations, mapSales, type PosLeftOut, type PosLocation, type PosSalesDay } from "./pos-sales-map";
+import { queryLeftOut, queryLocations, querySales } from "./pos-sales-query";
 
 export { PosReadError, type PosFailure } from "./pos-connection";
-export type { PosLocation, PosSalesDay } from "./pos-sales-map";
+export type { PosLeftOut, PosLocation, PosSalesDay } from "./pos-sales-map";
+export type PosImportRead = { sales: PosSalesDay[]; locations: PosLocation[]; leftOut: PosLeftOut };
 
 /**
  * The POS reader: net sales per Portal account, branch and Manila business day, read from the POS database through the read-only
@@ -27,6 +28,18 @@ export function posReader(connect: PosConnect = connectFromEnv(), sleep?: (ms: n
       return withPos(connect, async (session) => {
         await checkSchema(session);
         return mapSales(await querySales(session, range.from, range.to), range);
+      }, sleep);
+    },
+    /** Everything one import needs, in one connection and after one schema check: the sales, the branches and the orders left out. */
+    readForImport: async (range: { from: string; to: string }): Promise<PosImportRead> => {
+      if (!isDay(range.from) || !isDay(range.to) || range.from > range.to) throw new RangeError("Not a range of days");
+      return withPos(connect, async (session) => {
+        await checkSchema(session);
+        return {
+          sales: mapSales(await querySales(session, range.from, range.to), range),
+          locations: mapLocations(await queryLocations(session)),
+          leftOut: mapLeftOut(await queryLeftOut(session, range.from, range.to)),
+        };
       }, sleep);
     },
     /** The POS branches with their type, after the schema check. */
