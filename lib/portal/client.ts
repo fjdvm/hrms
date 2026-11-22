@@ -169,3 +169,16 @@ export async function listModuleStaff(module: string): Promise<{ id: string; nam
   }
   return staff.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
+
+/**
+ * Every Staff member the Portal lists, as `{ id, name }`, for naming POS accounts. An entry without an id or a name is left out, never
+ * given a username. `null` means the Portal could not answer.
+ */
+export async function listStaffDirectory(): Promise<{ id: string; name: string }[] | null> {
+  const response = await postJson("/api/integrations/recipients", {});
+  if (!response?.ok) return null;
+  const body: unknown = await response.json().catch(() => null);
+  if (!body || typeof body !== "object" || !("staff" in body) || !Array.isArray(body.staff)) return null;
+  return body.staff.flatMap((member: { id?: unknown; name?: unknown }) =>
+    member && typeof member.id === "string" && member.id.trim() && typeof member.name === "string" && member.name.trim() ? [{ id: member.id, name: member.name.trim() }] : []);
+}

@@ -9,6 +9,8 @@ import { evaluationsModule } from "./performance-evaluations";
 import { ratingModule } from "./performance-rating";
 import { submitModule } from "./performance-submit";
 import { reopenModule } from "./performance-reopen";
+import { linksModule, type Directory } from "./performance-links";
+import { listStaffDirectory } from "./portal/client";
 import { needsModule } from "./performance-needs";
 import { suggestionsModule, type SuggestionStatus } from "./performance-suggestions";
 import type { AiClient, AiConfig } from "./ai";
@@ -21,6 +23,7 @@ import type { NeedInput } from "./performance-needs";
  * rule of their own.
  */
 
+export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
 export { KpiError, type Kpi, type KpiProblem, type KpiStatus, type WeightSet, type Weights } from "./performance-kpis";
 export { RESULTS_NOT_MARKED, TrainingReadError, type EmployeeTrainingCompletion, type TrainingForSuggestions, type TrainingTitle } from "./performance-training";
 export { ReopenError, REASON_MAX_LENGTH, type ReopenProblem, type ReopenedEvaluation } from "./performance-reopen";
@@ -46,7 +49,7 @@ export type PerformanceAccess = { decision: "allowed"; staff: Staff } | { decisi
  * Server-side boundary. Rechecks the Portal on every operation; `db` and `now` are injectable so tests control the
  * database and the clock. Later domain modules take the same `db` and `now`.
  */
-export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date(), ai: { client?: AiClient; config?: AiConfig } = {}) {
+export function performanceFor(sessionHandle: string | undefined, db: Database = database, now: () => Date = () => new Date(), ai: { client?: AiClient; config?: AiConfig } = {}, directory: Directory = listStaffDirectory) {
   const kpis = kpiModule(db);
   const training = trainingCompletionModule(db, now);
   const periods = periodsModule(db);
@@ -56,6 +59,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const submit = submitModule(db, { evaluations });
   const reopen = reopenModule(db, { evaluations });
   const needs = needsModule(db, { evaluations, periods });
+  const links = linksModule(db, now, directory);
   const suggestions = suggestionsModule(db, { evaluations, training }, { ...ai, now });
 
   /**
@@ -102,6 +106,14 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
      * Needs Performance and not Training.
      */
     scheduledTrainingsForSuggestions: async () => { await acting(); return training.scheduledForSuggestions(); },
+    /** The POS accounts linked to one Employee now, oldest first. */
+    listPosAccounts: async (employeeId: number) => { await acting(); return links.accountsOf(employeeId); },
+    /** Names POS accounts from the Portal directory; with no match a row carries the staff number and branch only. */
+    describePosAccounts: async (accounts: readonly { portalUserId: string; staffNumber?: string | null; branch?: string | null }[]) => { await acting(); return links.describeAccounts(accounts); },
+    /** Links a POS account (a Portal user) to a cashier. An Employee with an account already needs the reason "New Portal account for the same person". */
+    linkPosAccount: async (input: { employeeId: number; portalUserId: unknown; reason?: unknown }) => links.linkAccount(await acting(), input),
+    /** Ends a link with a reason (and a note for "Other"). The account's sales leave the Employee, past months included. */
+    unlinkPosAccount: async (linkId: number, input: { reason: unknown; note?: unknown }) => links.unlinkAccount(await acting(), linkId, input),
     /** The Evaluation periods, latest first. */
     listPeriods: async () => { await acting(); return periods.listPeriods(); },
     /** Opens a company-wide period (Month, Quarter or Custom). One that overlaps another by date is refused, naming it. */
