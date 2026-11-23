@@ -69,6 +69,16 @@ describe("the Top sales card", () => {
     expect(screen.getByText(/1 staff member with POS sales is not shown/)).toBeTruthy();
   });
 
+  it("puts the entry point to the POS cashier links dialog in the footer note, with sales and without", async () => {
+    topSales.mockResolvedValue(RANKED);
+    await show();
+    expect(screen.getByRole("button", { name: "Manage POS links" })).toBeTruthy();
+    cleanup();
+    topSales.mockResolvedValue({ ...RANKED, branches: [], overall: [] });
+    await show();
+    expect(screen.getByRole("button", { name: "Manage POS links" })).toBeTruthy();
+  });
+
   it("drops the Provisional badge once a later import has re-read the month", async () => {
     topSales.mockResolvedValue({ ...RANKED, provisional: false });
     await show({ salesMonth: "2026-10" });

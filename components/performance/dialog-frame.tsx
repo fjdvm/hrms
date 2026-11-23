@@ -11,10 +11,11 @@ export const ERROR_COLOUR = "text-[#9a3412]";
 export const PILL = "rounded-lg px-[14px] py-[8px] text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-50";
 export const PILL_ON = "bg-accent text-primary hover:text-primary";
 
-export function DialogFrame({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+export function DialogFrame({ title, description, children, wide }: { title: string; description: string; children: React.ReactNode; wide?: boolean }) {
   return (
     <DialogContent showClose={false} overlayClassName="bg-[rgba(18,13,26,0.45)]"
-      className="w-[calc(100vw-32px)] max-w-[580px] gap-0 rounded-2xl border-0 p-0 shadow-[0_20px_24px_rgba(0,0,0,0.2)] sm:max-w-[580px] sm:rounded-2xl sm:p-0 md:max-w-[580px] lg:max-w-[580px]">
+      className={cn("w-[calc(100vw-32px)] gap-0 rounded-2xl border-0 p-0 shadow-[0_20px_24px_rgba(0,0,0,0.2)] sm:rounded-2xl sm:p-0",
+        wide ? "max-w-[780px] sm:max-w-[780px] md:max-w-[780px] lg:max-w-[780px]" : "max-w-[580px] sm:max-w-[580px] md:max-w-[580px] lg:max-w-[580px]")}>
       <div className="flex items-start gap-[12px] border-b border-[#ebebeb] pb-[16px] pl-[24px] pr-[18px] pt-[20px]">
         <div className="flex flex-1 flex-col gap-[3px]">
           <DialogTitle className="text-[17px] font-semibold leading-[normal] tracking-normal text-foreground">{title}</DialogTitle>
@@ -31,12 +32,12 @@ export const DialogBody = ({ children }: { children: React.ReactNode }) => (
   <div className="flex max-h-[calc(100vh-220px)] flex-col gap-[16px] overflow-y-auto px-[24px] py-[20px]">{children}</div>
 );
 
-export function DialogActions({ submit, canSubmit, pending, note = "Not saved yet", cancel = "Cancel" }: { submit: string; canSubmit: boolean; pending: boolean; note?: string; cancel?: string }) {
+export function DialogActions({ submit, canSubmit, pending, note = "Not saved yet", cancel = "Cancel", danger }: { submit: string; canSubmit: boolean; pending: boolean; note?: string; cancel?: string; danger?: boolean }) {
   return (
     <div className="flex items-center gap-sm border-t border-[#ebebeb] bg-zinc-50 px-[24px] py-[14px]">
       <p className="mr-auto text-xs text-zinc-500">{note}</p>
       <DialogClose asChild><Button type="button" variant="outline" disabled={pending} className="h-auto rounded-lg border-zinc-200 px-[16px] py-[9px] shadow-none">{cancel}</Button></DialogClose>
-      <Button type="submit" disabled={!canSubmit || pending} className="h-auto rounded-lg bg-[#5b2a86] px-[16px] py-[9px]">{pending && <Loader2 className="animate-spin" />}{submit}</Button>
+      <Button type="submit" disabled={!canSubmit || pending} className={cn("h-auto rounded-lg px-[16px] py-[9px]", danger ? "bg-[#b42318] hover:bg-[#b42318]/90" : "bg-[#5b2a86]")}>{pending && <Loader2 className="animate-spin" />}{submit}</Button>
     </div>
   );
 }
