@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, GoLiveError, ImportError, KpiError, LinkError, type LinkedEmployee, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
+import { AttendanceError, GoLiveError, ImportError, KpiError, LinkError, type LinkCandidate, type LinkedEmployee, type UnlinkedPosAccount, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
 import { readGoLiveDate } from "@/lib/performance-pos-settings";
 import { readSalesTarget, SalesTargetError } from "@/lib/performance-sales-inputs";
 import { GO_LIVE_MESSAGE, TARGET_MESSAGE } from "@/lib/performance-sales-setup-terms";
@@ -224,12 +224,14 @@ export async function confirmPosImport(): Promise<PosImportResult> {
   return result;
 }
 
-export type PosLinksResult = { ok: true; employees: LinkedEmployee[] } | { ok: false; error: string };
+export type PosLinksResult = { ok: true; employees: LinkedEmployee[]; unlinked: UnlinkedPosAccount[] } | { ok: false; error: string };
 
-/** Reads every linked Employee with all their POS accounts, for the POS cashier links dialog. Read-only; the dialog asks when it opens and again on Try again. */
+/** Reads every linked Employee with all their POS accounts and the accounts that still need linking, for the POS cashier links dialog. Read-only; the dialog asks when it opens, after a change and on Try again. */
 export async function loadPosLinks(): Promise<PosLinksResult> {
   try {
-    return { ok: true, employees: await (await performanceForRequest()).listLinkedEmployees() };
+    const performance = await performanceForRequest();
+    const [employees, unlinked] = await Promise.all([performance.listLinkedEmployees(), performance.listUnlinkedPosAccounts()]);
+    return { ok: true, employees, unlinked };
   } catch (error) {
     if (error instanceof PerformanceError) {
       if (error.reason === "denied") redirect(NO_ACCESS_PATH);
@@ -243,4 +245,25 @@ export async function loadPosLinks(): Promise<PosLinksResult> {
 /** Ends one POS account link with a reason (and a note, required for Other). The account's sales leave the Employee, past months included; Top sales is refreshed. */
 export async function unlinkPosAccount(linkId: number, reason: string, note: string): Promise<KpiActionResult> {
   return run(async () => (await performanceForRequest()).unlinkPosAccount(linkId, { reason, note }), PERIOD_PATHS);
+}
+
+export type LinkCandidatesResult = { ok: true; candidates: LinkCandidate[] } | { ok: false; error: string };
+
+/** Reads the Employees the Link cashier picker offers. Read-only; asked when the Link cashier dialog opens. */
+export async function loadLinkCandidates(): Promise<LinkCandidatesResult> {
+  try {
+    return { ok: true, candidates: await (await performanceForRequest()).listLinkCandidates() };
+  } catch (error) {
+    if (error instanceof PerformanceError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+      return { ok: false, error: "Performance could not reach the Portal or database. Please try again in a moment." };
+    }
+    throw error;
+  }
+}
+
+/** Links a POS account to a cashier. An Employee who already has an account needs the reason "New Portal account for the same person"; Top sales is refreshed. */
+export async function linkPosAccount(employeeId: number, portalUserId: string, reason: string): Promise<KpiActionResult> {
+  return run(async () => (await performanceForRequest()).linkPosAccount({ employeeId, portalUserId, reason: reason === "" ? undefined : reason }), PERIOD_PATHS);
 }

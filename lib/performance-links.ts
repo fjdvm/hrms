@@ -39,6 +39,11 @@ export type LinkedAccount = { linkId: number; portalUserId: string; name: string
 /** A linked Employee with every POS account counting for them now. `current` marks the most recently linked account; the others are earlier ones. */
 export type LinkedEmployee = { employeeId: number; employeeNumber: string; name: string; position: string; accounts: LinkedAccount[] };
 
+/** A POS account with stored sales and no active link, for the Needs linking tab. Figures are the stored POS figures (all days kept), the branch is where it sold the most. HRMS keeps no staff number, so none is shown. */
+export type UnlinkedPosAccount = { portalUserId: string; name: string | null; branch: string | null; orders: number; netSales: number; from: string; to: string };
+/** An Employee the Link cashier picker offers: only a cashier can be chosen, and one who already has an account needs the reason. */
+export type LinkCandidate = { employeeId: number; employeeNumber: string; name: string; position: string; branch: string; isCashier: boolean; accountCount: number };
+
 /** A POS account for the Link dialog: the name from the Portal directory, or null with only the staff number and branch to go on. */
 export type DescribedAccount = { portalUserId: string; name: string | null; staffNumber: string | null; branch: string | null };
 export type Directory = () => Promise<{ id: string; name: string }[] | null>;
@@ -168,5 +173,29 @@ export function linksModule(db: Database, now: () => Date, directory: Directory)
     return [...byEmployee.values()];
   }
 
-  return { accountsOf, activeLinks, describeAccounts, linkAccount, linkedEmployees, unlinkAccount };
+  /** POS accounts that have stored sales but no active link, biggest net sales first, named from the Portal directory. Read-only; reads no POS data. */
+  async function unlinkedAccounts(): Promise<UnlinkedPosAccount[]> {
+    const { rows } = await db.query<{ portalUserId: string; orders: string; netSales: string; from: string; to: string; branch: string | null }>(`
+      SELECT s.portal_user_id AS "portalUserId", sum(s.orders)::text AS orders, sum(s.net_sales)::text AS "netSales", min(s.business_date)::text AS "from", max(s.business_date)::text AS "to",
+        (SELECT coalesce(pl.hrms_branch, pl.name) FROM public.hrms_pos_sales_daily s2 JOIN public.hrms_pos_locations pl ON pl.pos_location_id = s2.location_id
+          WHERE s2.portal_user_id = s.portal_user_id GROUP BY coalesce(pl.hrms_branch, pl.name) ORDER BY sum(s2.net_sales) DESC, max(s2.business_date) DESC LIMIT 1) AS branch
+      FROM public.hrms_pos_sales_daily s
+      WHERE NOT EXISTS (SELECT 1 FROM public.hrms_pos_account_links l WHERE l.portal_user_id = s.portal_user_id AND l.unlinked_at IS NULL)
+      GROUP BY s.portal_user_id ORDER BY sum(s.net_sales) DESC, s.portal_user_id`);
+    const named = await describeAccounts(rows.map((row) => ({ portalUserId: row.portalUserId, branch: row.branch })));
+    return rows.map((row, index) => ({ portalUserId: row.portalUserId, name: named[index].name, branch: row.branch, orders: Number(row.orders), netSales: Math.round(Number(row.netSales) * 100) / 100, from: row.from, to: row.to }));
+  }
+
+  /** Every Employee, by name, for the Link cashier picker: whether they are a cashier today and how many POS accounts they hold. Non-cashiers are listed, not hidden, so the picker can say why they cannot be chosen. */
+  async function linkCandidates(): Promise<LinkCandidate[]> {
+    const [people, held, cashierIds] = await Promise.all([
+      db.query<{ id: number; number: string; name: string; position: string; branch: string }>(`SELECT id, employee_number AS number, full_name AS name, position, branch FROM public.hrms_employees ORDER BY full_name, id`),
+      db.query<{ id: number; accounts: string }>(`SELECT employee_id AS id, count(*)::text AS accounts FROM public.hrms_pos_account_links WHERE unlinked_at IS NULL GROUP BY 1`),
+      cashiers.cashiersOn(today()),
+    ]);
+    const counts = new Map(held.rows.map((row) => [row.id, Number(row.accounts)]));
+    return people.rows.map((row) => ({ employeeId: row.id, employeeNumber: row.number, name: row.name, position: row.position, branch: row.branch, isCashier: cashierIds.has(row.id), accountCount: counts.get(row.id) ?? 0 }));
+  }
+
+  return { accountsOf, activeLinks, describeAccounts, linkAccount, linkCandidates, linkedEmployees, unlinkAccount, unlinkedAccounts };
 }

@@ -28,7 +28,7 @@ import type { NeedInput } from "./performance-needs";
  * rule of their own.
  */
 
-export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkedAccount, type LinkedEmployee, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
+export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkCandidate, type LinkedAccount, type LinkedEmployee, type UnlinkedPosAccount, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
 export { ImportError, importRange, type ImportPreview, type ImportProblem, type ImportRecord, type SavedImport, type UnlinkedAccount } from "./performance-pos-import";
 export { GoLiveError, type GoLive } from "./performance-pos-settings";
 export { SalesTargetError, SALES_TARGET_MAX, type SalesTargetProblem } from "./performance-sales-inputs";
@@ -125,6 +125,10 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     describePosAccounts: async (accounts: readonly { portalUserId: string; staffNumber?: string | null; branch?: string | null }[]) => { await acting(); return links.describeAccounts(accounts); },
     /** Every linked Employee with all their active POS accounts, for the POS cashier links dialog. */
     listLinkedEmployees: async () => { await acting(); return links.linkedEmployees(); },
+    /** POS accounts with stored sales and no link, for the Needs linking tab. */
+    listUnlinkedPosAccounts: async () => { await acting(); return links.unlinkedAccounts(); },
+    /** The Employees the Link cashier picker offers, with whether each is a cashier and how many accounts each holds. */
+    listLinkCandidates: async () => { await acting(); return links.linkCandidates(); },
     /** Links a POS account (a Portal user) to a cashier. An Employee with an account already needs the reason "New Portal account for the same person". */
     linkPosAccount: async (input: { employeeId: number; portalUserId: unknown; reason?: unknown }) => links.linkAccount(await acting(), input),
     /** Ends a link with a reason (and a note for "Other"). The account's sales leave the Employee, past months included. */

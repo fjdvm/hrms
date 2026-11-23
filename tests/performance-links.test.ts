@@ -221,6 +221,48 @@ describe("the Linked list", () => {
   });
 });
 
+describe("the Needs linking list and the Link cashier picker", () => {
+  const sale = async (account: string, location: number, date: string, orders: number, net: number) => {
+    const importId = (await db.query<{ id: number }>(`INSERT INTO hrms_pos_imports (range_from, range_to, days, orders, net_sales, unlinked_accounts, imported_by_id, imported_by_name) VALUES ('2026-11-01', '2026-11-30', 1, 1, 100, 0, 'u', 'U') RETURNING id`)).rows[0].id;
+    await db.query(`INSERT INTO hrms_pos_sales_daily VALUES ($1, $2, $3, $4, $5, 0, $5, $6)`, [account, location, date, orders, net, importId]);
+  };
+
+  it("lists accounts with stored sales and no link, biggest net sales first, with the branch they sold most at and the stored figures", async () => {
+    const ana = await employee("Ana Cruz");
+    await db.query(`INSERT INTO hrms_pos_locations (pos_location_id, name, pos_type, is_active, hrms_branch) VALUES (1, 'Cainta', 'Branch', true, 'Cainta branch'), (2, 'Bazaar Kiosk', 'Bazaar', true, NULL)`);
+    portal.directory = [{ id: "u-big", username: "maria", name: "Maria Santos", modules: ["Point of sale"] }];
+    await sale("u-big", 1, "2026-11-03", 30, 9000); await sale("u-big", 1, "2026-11-04", 8, 3480); await sale("u-big", 2, "2026-11-05", 2, 100);
+    await sale("u-small", 2, "2026-10-30", 1, 450.5);
+    await sale("u-linked", 1, "2026-11-03", 5, 700);
+    await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-linked" });
+
+    expect(await performance().listUnlinkedPosAccounts()).toEqual([
+      { portalUserId: "u-big", name: "Maria Santos", branch: "Cainta branch", orders: 40, netSales: 12580, from: "2026-11-03", to: "2026-11-05" },
+      { portalUserId: "u-small", name: null, branch: "Bazaar Kiosk", orders: 1, netSales: 450.5, from: "2026-10-30", to: "2026-10-30" }]);
+
+    const link = (await performance().listPosAccounts(ana))[0];
+    await performance().unlinkPosAccount(link.id, { reason: "Wrong person linked" });
+    expect((await performance().listUnlinkedPosAccounts()).map((a) => a.portalUserId)).toEqual(["u-big", "u-linked", "u-small"]);
+  });
+
+  it("offers every Employee to the picker with whether they are a cashier and how many accounts they hold", async () => {
+    const ana = await employee("Ana Cruz");
+    await employee("Ben Reyes", "Barista");
+    await employee("Cai Lim");
+    await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-1" });
+    await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-2", reason: NEW_ACCOUNT_REASON });
+
+    expect((await performance().listLinkCandidates()).map((c) => [c.name, c.employeeNumber, c.isCashier, c.accountCount])).toEqual([
+      ["Ana Cruz", "2026-001", true, 2], ["Ben Reyes", "2026-002", false, 0], ["Cai Lim", "2026-003", true, 0]]);
+  });
+
+  it("is refused to a session without the Performance Module", async () => {
+    const outsider = performance(portal.signIn({ ...staff, id: "u-bo", username: "bo", name: "Bo Lee" }, ["Training"]));
+    await expect(outsider.listUnlinkedPosAccounts()).rejects.toThrow();
+    await expect(outsider.listLinkCandidates()).rejects.toThrow();
+  });
+});
+
 describe("submitted and reopened Evaluations", () => {
   const days = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, "0")}`).filter((d) => {
     const day = new Date(`${d}T00:00:00Z`).getUTCDay();
