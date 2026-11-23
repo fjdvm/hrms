@@ -93,6 +93,8 @@ export function posImportModule(db: Database, now: () => Date, deps: { links: Re
     const { goLive, range, read } = await readPos();
     const summary = await summarise(goLive, range, read);
     const sales = read.sales;
+    // Each account's POS staff number, one row per account, for the Needs linking list.
+    const staffOf = new Map(sales.map((d) => [d.portalUserId, d.staffId]));
     const { rows } = await db.query<{ id: number; importedAt: string; removedDays: string }>(`
       WITH imported AS (
         INSERT INTO public.hrms_pos_imports (range_from, range_to, days, orders, net_sales, unlinked_accounts, imported_by_id, imported_by_name)
@@ -101,6 +103,10 @@ export function posImportModule(db: Database, now: () => Date, deps: { links: Re
         INSERT INTO public.hrms_pos_locations (pos_location_id, name, pos_type, is_active)
         SELECT * FROM unnest($9::int[], $10::text[], $11::text[], $12::boolean[])
         ON CONFLICT (pos_location_id) DO UPDATE SET name = EXCLUDED.name, pos_type = EXCLUDED.pos_type, is_active = EXCLUDED.is_active, updated_at = clock_timestamp()
+      ), accounts AS (
+        INSERT INTO public.hrms_pos_accounts (portal_user_id, staff_number)
+        SELECT * FROM unnest($20::text[], $21::int[])
+        ON CONFLICT (portal_user_id) DO UPDATE SET staff_number = EXCLUDED.staff_number, updated_at = clock_timestamp()
       ), incoming AS (
         SELECT * FROM unnest($13::text[], $14::int[], $15::date[], $16::int[], $17::numeric[], $18::numeric[], $19::numeric[]) AS t(portal_user_id, location_id, business_date, orders, gross_sales, refund_amount, net_sales)
       ), removed AS (
@@ -117,7 +123,8 @@ export function posImportModule(db: Database, now: () => Date, deps: { links: Re
       ) SELECT id, imported_at::text AS "importedAt", (SELECT count(*) FROM removed)::text AS "removedDays" FROM imported`,
     [range.from, range.to, summary.totals.days, summary.totals.orders, summary.totals.netSales, summary.accounts.unlinked.length, actor.id, actor.name,
       read.locations.map((l) => l.locationId), read.locations.map((l) => l.name), read.locations.map((l) => l.type), read.locations.map((l) => l.isActive),
-      sales.map((d) => d.portalUserId), sales.map((d) => d.locationId), sales.map((d) => d.businessDate), sales.map((d) => d.orders), sales.map((d) => d.grossSales), sales.map((d) => d.refundAmount), sales.map((d) => d.netSales)]);
+      sales.map((d) => d.portalUserId), sales.map((d) => d.locationId), sales.map((d) => d.businessDate), sales.map((d) => d.orders), sales.map((d) => d.grossSales), sales.map((d) => d.refundAmount), sales.map((d) => d.netSales),
+      [...staffOf.keys()], [...staffOf.values()]]);
     return { id: rows[0].id, range, days: summary.totals.days, orders: summary.totals.orders, netSales: summary.totals.netSales, removedDays: Number(rows[0].removedDays), importedByName: actor.name, importedAt: rows[0].importedAt };
   }
 

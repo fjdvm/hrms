@@ -15,6 +15,7 @@ import { posImportModule } from "./performance-pos-import";
 import { posSettingsModule } from "./performance-pos-settings";
 import { posReader } from "./pos-reader";
 import { salesInputsModule } from "./performance-sales-inputs";
+import { posAccountsModule } from "./performance-pos-accounts";
 import { topSalesModule } from "./performance-top-sales";
 import { needsModule } from "./performance-needs";
 import { suggestionsModule, type SuggestionStatus } from "./performance-suggestions";
@@ -28,6 +29,7 @@ import type { NeedInput } from "./performance-needs";
  * rule of their own.
  */
 
+export { type LinkCandidate, type PosAccountNeedingLink } from "./performance-pos-accounts";
 export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
 export { ImportError, importRange, type ImportPreview, type ImportProblem, type ImportRecord, type SavedImport, type UnlinkedAccount } from "./performance-pos-import";
 export { GoLiveError, type GoLive } from "./performance-pos-settings";
@@ -73,6 +75,7 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
   const posSettings = posSettingsModule(db);
   const posImport = posImportModule(db, now, { links, reader: pos, settings: posSettings });
   const topSales = topSalesModule(db, now);
+  const posAccounts = posAccountsModule(db, now, { links });
   const suggestions = suggestionsModule(db, { evaluations, training }, { ...ai, now });
 
   /**
@@ -123,6 +126,10 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     listPosAccounts: async (employeeId: number) => { await acting(); return links.accountsOf(employeeId); },
     /** Names POS accounts from the Portal directory; with no match a row carries the staff number and branch only. */
     describePosAccounts: async (accounts: readonly { portalUserId: string; staffNumber?: string | null; branch?: string | null }[]) => { await acting(); return links.describeAccounts(accounts); },
+    /** The POS accounts that have sales but no Employee, biggest first, named from the Portal directory when it has them. */
+    posAccountsNeedingLink: async () => { await acting(); return posAccounts.needingLink(); },
+    /** The Employees the Link POS cashier picker offers, each with whether they are a cashier today and how many POS accounts they have. */
+    posLinkCandidates: async () => { await acting(); return posAccounts.candidates(); },
     /** Links a POS account (a Portal user) to a cashier. An Employee with an account already needs the reason "New Portal account for the same person". */
     linkPosAccount: async (input: { employeeId: number; portalUserId: unknown; reason?: unknown }) => links.linkAccount(await acting(), input),
     /** Ends a link with a reason (and a note for "Other"). The account's sales leave the Employee, past months included. */
