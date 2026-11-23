@@ -15,7 +15,8 @@ import { cleanText, hasControlCharacters, matchKey, nameProblem } from "./valida
 export type KpiStatus = "Active" | "Inactive";
 export const KPI_STATUSES: readonly KpiStatus[] = ["Active", "Inactive"];
 
-export type Kpi = { id: KpiId; name: string; description: string; source: string; target: string; status: KpiStatus; defaultWeight: number };
+/** `targetAmount` is the sales KPI's target in pesos per present day (null while it is not set); no other KPI has one. */
+export type Kpi = { id: KpiId; name: string; description: string; source: string; target: string; status: KpiStatus; defaultWeight: number; targetAmount?: number | null };
 /** The five starter KPIs' weights, and `sales` only when the set weighs it. */
 export type Weights = KpiWeights;
 export type WeightSet = { id: number; name: string; isDefault: boolean; position: string | null; weights: Weights; total: number; updatedByName: string; updatedAt: string };
@@ -119,7 +120,7 @@ export function kpiModule(db: Database) {
   /** The KPIs in their set order, each with its weight in the default set. */
   async function listKpis({ includeSales = false } = {}): Promise<Kpi[]> {
     const { rows } = await db.query<Omit<Kpi, "defaultWeight"> & { defaultWeight: number }>(`
-      SELECT k.id, k.name, k.description, k.source, k.target, k.status, COALESCE(i.weight, 0) AS "defaultWeight"
+      SELECT k.id, k.name, k.description, k.source, k.target, k.status, COALESCE(i.weight, 0) AS "defaultWeight", k.target_amount::float8 AS "targetAmount"
       FROM public.hrms_kpis k
       LEFT JOIN public.hrms_weight_sets s ON s.is_default
       LEFT JOIN public.hrms_weight_set_items i ON i.set_id = s.id AND i.kpi_id = k.id

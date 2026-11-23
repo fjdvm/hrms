@@ -2,7 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type OpenPeriodInput, type Resolution } from "@/lib/performance";
+import { AttendanceError, GoLiveError, ImportError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
+import { readGoLiveDate } from "@/lib/performance-pos-settings";
+import { readSalesTarget, SalesTargetError } from "@/lib/performance-sales-inputs";
+import { GO_LIVE_MESSAGE, TARGET_MESSAGE } from "@/lib/performance-sales-setup-terms";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
@@ -23,6 +26,8 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
     await change();
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
+    if (error instanceof SalesTargetError) return { ok: false, error: TARGET_MESSAGE };
+    if (error instanceof GoLiveError) return { ok: false, error: GO_LIVE_MESSAGE };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
     if (error instanceof NeedError) return { ok: false, error: needMessage(error.problem) };
     if (error instanceof SuggestionError) return { ok: false, error: suggestionMessage(error.problem) };
@@ -53,6 +58,20 @@ export async function changeKpiStatus(id: string, status: string): Promise<KpiAc
 /** Creates a weight set for one position. Refused unless the weights total 100 and the position has no set yet. */
 export async function createWeightSet(position: string, weights: Record<string, number>): Promise<KpiActionResult> {
   return run(async () => (await performanceForRequest()).saveWeightSet({ position, weights }), KPI_PATHS);
+}
+
+/**
+ * Saves the company-wide sales target (pesos per present day) and/or the POS go-live date from KPI Setup. Both are checked before either is saved, so a
+ * bad value saves nothing; each real change is audited with the Staff member by the interface.
+ */
+export async function saveSalesSettings(input: { target?: number; goLive?: string }): Promise<KpiActionResult> {
+  return run(async () => {
+    const target = input.target === undefined ? undefined : readSalesTarget(input.target);
+    const goLive = input.goLive === undefined ? undefined : readGoLiveDate(input.goLive);
+    const performance = await performanceForRequest();
+    if (target !== undefined) await performance.setSalesTarget(target);
+    if (goLive !== undefined) await performance.setPosGoLive(goLive);
+  }, [...KPI_PATHS, "/performance"]);
 }
 
 /** Opens a company-wide Evaluation period. One that overlaps another by date is refused. */
@@ -165,4 +184,40 @@ export async function generateSuggestions(employeeId: number, periodId: number):
     }
     throw error;
   }
+}
+
+/**
+ * What an Import POS sales run ends in: the preview or the saved import, or why it could not read the POS. A failure always means nothing was saved.
+ * `at` is when the attempt was made, for "Last attempt".
+ */
+export type PosImportResult =
+  | { ok: true; at: string; preview: ImportPreview }
+  | { ok: true; at: string; saved: SavedImport }
+  | { ok: false; at: string; kind: ImportProblem; problems: string[] };
+
+async function runPosImport(read: (performance: Awaited<ReturnType<typeof performanceForRequest>>) => Promise<{ preview: ImportPreview } | { saved: SavedImport }>): Promise<PosImportResult> {
+  const at = new Date().toISOString();
+  try {
+    return { ok: true, at, ...(await read(await performanceForRequest())) };
+  } catch (error) {
+    if (error instanceof ImportError) return { ok: false, at, kind: error.problem, problems: [...error.problems] };
+    if (error instanceof PerformanceError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+      return { ok: false, at, kind: "pos-unreachable", problems: [] };
+    }
+    throw error;
+  }
+}
+
+/** Reads the POS for the current and the previous month and returns what an import would do. Saves nothing. A button press only. */
+export async function previewPosSales(): Promise<PosImportResult> {
+  return runPosImport(async (performance) => ({ preview: await performance.previewPosImport() }));
+}
+
+/** Reads the POS again and saves it, in one transaction. Only the Confirm import button calls this. */
+export async function confirmPosImport(): Promise<PosImportResult> {
+  const result = await runPosImport(async (performance) => ({ saved: await performance.importPosSales() }));
+  if (result.ok) for (const path of PERIOD_PATHS) revalidatePath(path);
+  return result;
 }

@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import type { TopSales, TopSalesRow } from "@/lib/performance-top-sales";
 
 const topSales = vi.fn();
-vi.mock("@/lib/portal/performance", () => ({ performanceForRequest: async () => ({ topSales }) }));
+vi.mock("@/lib/portal/performance", () => ({ performanceForRequest: async () => ({ topSales, posGoLive: async () => null }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a> }));
 
@@ -89,6 +89,15 @@ describe("the Top sales card", () => {
     await show();
     expect(screen.getByText("No POS sales imported for November 2026 yet")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import POS sales" })).toBeTruthy();
+  });
+
+  it("opens the Import POS sales dialog from the Empty state, which says so when the go-live date is not set", async () => {
+    topSales.mockResolvedValue({ ...RANKED, branches: [], overall: [], provisional: true, notShown: { unlinkedAccounts: 0, notCashiers: 0 } });
+    await show();
+    await userEvent.click(screen.getByRole("button", { name: "Import POS sales" }));
+
+    expect(screen.getByRole("heading", { name: "Import POS sales" })).toBeTruthy();
+    expect(screen.getByRole("dialog").textContent).toContain("The POS go-live date is not set yet, so nothing is read.");
   });
 
   it("shows the Error state with Try again, inside the card, when the ranking cannot be read", async () => {

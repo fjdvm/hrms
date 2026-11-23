@@ -13,6 +13,8 @@ const COLUMNS: [string, string][] = [["Employee", "w-[250px]"], ["Position", "w-
 
 /** The period selector while the periods load. */
 export const PeriodSelectorSkeleton = () => <Skeleton className="h-[38px] w-[150px] rounded-lg" />;
+/** The Import POS sales button while the go-live date loads. */
+export const ImportPosButtonSkeleton = () => <Skeleton className="h-[38px] w-[130px] rounded-lg" />;
 
 /** The progress card, tabs and table card of the Performance list while its data loads, as in the Figma Loading frame: the Suspense fallback under the static header. */
 export function PerformanceListSkeleton() {
@@ -51,6 +53,7 @@ export function PerformanceSkeleton() {
     <div className={PAGE} aria-busy="true" aria-label="Loading performance">
       <PageHeader title={PERFORMANCE_TITLE} subtitle={PERFORMANCE_SUBTITLE}>
         <PeriodSelectorSkeleton />
+        <ImportPosButtonSkeleton />
         <Skeleton className="h-[38px] w-[150px] rounded-lg" />
         <Skeleton className="h-[38px] w-[108px] rounded-lg" />
       </PageHeader>
