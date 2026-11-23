@@ -6,6 +6,7 @@ import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { loadPosLinks } from "@/app/(hrms)/performance/actions";
 import type { LinkCandidate, LinkedEmployee, PosAccountNeedingLink } from "@/lib/performance";
+import { AddPosAccountDialog } from "./add-pos-account-dialog";
 import { Callout, DialogBody, DialogFrame, PILL, PILL_ON } from "./dialog-frame";
 import { LinkCashierDialog } from "./link-cashier-dialog";
 import { PosLinksList } from "./pos-links-list";
@@ -24,7 +25,8 @@ const Loading = () => (
 
 /**
  * The POS cashier links dialog, opened from "Manage POS links" in the Top sales footer note. Needs linking lists the POS accounts that have sales but no
- * employee, each with a Link button that opens the Link POS cashier dialog; Linked lists every linked employee with all their accounts and an Unlink button.
+ * employee, each with a Link button that opens the Link POS cashier dialog; Linked lists every linked employee with all their accounts, an Unlink button per
+ * account and an Add account link per employee that opens the Add account dialog.
  * It opens on Needs linking when there is anything to link. It reads when it opens (a user action) and again after a link, an unlink or Try again; nothing is
  * polled. After a link or an unlink the page is refreshed, so the Top sales card reflects it.
  */
@@ -35,6 +37,7 @@ export function PosLinksDialog() {
   const [tab, setTab] = useState<Tab>("linked");
   const [target, setTarget] = useState<UnlinkTarget | null>(null);
   const [linking, setLinking] = useState<PosAccountNeedingLink | null>(null);
+  const [adding, setAdding] = useState<LinkedEmployee | null>(null);
   // A read that was closed or replaced finishes on its own, and its answer is dropped.
   const attempt = useRef(0);
 
@@ -50,7 +53,7 @@ export function PosLinksDialog() {
   };
   const change = (next: boolean) => {
     setOpen(next);
-    if (next) void read(); else { attempt.current += 1; setTarget(null); setLinking(null); }
+    if (next) void read(); else { attempt.current += 1; setTarget(null); setLinking(null); setAdding(null); }
   };
   const changed = () => { void read(true); router.refresh(); };
 
@@ -82,11 +85,12 @@ export function PosLinksDialog() {
               </Callout>
             )}
             {ready && tab === "needs" && <PosNeedsLinkingList accounts={ready.accounts} onLink={setLinking} />}
-            {ready && tab === "linked" && <PosLinksList employees={ready.employees} onUnlink={setTarget} />}
+            {ready && tab === "linked" && <PosLinksList employees={ready.employees} onUnlink={setTarget} onAddAccount={setAdding} />}
           </DialogBody>
         </DialogFrame>
       </Dialog>
       <UnlinkPosAccountDialog target={target} onClose={() => setTarget(null)} onUnlinked={changed} />
+      <AddPosAccountDialog person={adding} accounts={ready?.accounts ?? []} onClose={() => setAdding(null)} onAdded={() => { setAdding(null); changed(); }} />
       <LinkCashierDialog account={linking} candidates={ready?.candidates ?? []} total={ready?.accounts.length ?? 0} onClose={() => setLinking(null)} onLinked={() => { setLinking(null); changed(); }} />
     </>
   );
