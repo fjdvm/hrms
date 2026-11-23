@@ -71,10 +71,10 @@ export function salesInputsModule(db: Database) {
     if (!imported) return { status: "not-applicable", reason: "no-import-after-period" };
     const goal = frozenTarget === undefined ? await target() : frozenTarget;
     if (goal === null || goal <= 0) return { status: "not-applicable", reason: "no-target" };
-    const sum = (await db.query<{ net: string | null }>(
-      `SELECT sum(net_sales)::text AS net FROM public.hrms_pos_sales_daily WHERE portal_user_id = ANY($1::text[]) AND business_date BETWEEN $2::date AND $3::date`, [accounts, period.start, period.end])).rows[0].net;
+    const sum = (await db.query<{ net: string | null; orders: string | null }>(
+      `SELECT sum(net_sales)::text AS net, sum(orders)::text AS orders FROM public.hrms_pos_sales_daily WHERE portal_user_id = ANY($1::text[]) AND business_date BETWEEN $2::date AND $3::date`, [accounts, period.start, period.end])).rows[0];
     // A present day with no orders is zero sales, so no stored figures at all is a net of 0, not a missing KPI.
-    return { status: "ready", netSales: sum === null ? 0 : Number(sum), target: goal };
+    return { status: "ready", netSales: sum.net === null ? 0 : Number(sum.net), target: goal, orders: sum.orders === null ? 0 : Number(sum.orders) };
   }
 
   return { target, setTarget, inputsFor };
