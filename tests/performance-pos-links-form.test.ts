@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NEW_ACCOUNT_REASON } from "@/lib/performance";
-import type { LinkCandidate } from "@/lib/performance-pos-accounts";
-import { PICKER_LIMIT, accountsTag, canChoose, checkLinkForm, disabledReason, filterCandidates, monthsCovered } from "@/lib/performance-pos-links-form";
+import type { LinkCandidate, PosAccountNeedingLink } from "@/lib/performance-pos-accounts";
+import { PICKER_LIMIT, accountsTag, canChoose, checkAddForm, checkLinkForm, disabledReason, filterAccounts, filterCandidates, monthsCovered } from "@/lib/performance-pos-links-form";
 
 const person = (id: number, name: string, extra: Partial<LinkCandidate> = {}): LinkCandidate => ({ id, employeeNumber: `BR-EMP-00${id}`, name, position: "Branch Cashier", branch: "Cainta branch", cashier: true, accounts: 0, ...extra });
 const CARLA = person(17, "Carla Mendoza", { accounts: 1 });
@@ -63,5 +63,37 @@ describe("the months an account's sales cover", () => {
     expect(monthsCovered("2026-11-03", "2026-11-30")).toBe("November 2026");
     expect(monthsCovered("2026-10-03", "2026-11-30")).toBe("October – November 2026");
     expect(monthsCovered("2026-12-03", "2027-01-05")).toBe("December 2026 – January 2027");
+  });
+});
+
+const account = (id: string, name: string | null, extra: Partial<PosAccountNeedingLink> = {}): PosAccountNeedingLink => ({ portalUserId: id, name, staffNumber: "1004", branch: "Cainta branch", orders: 10, netSales: 1000, from: "2026-11-03", to: "2026-11-28", ...extra });
+const ROBERTO = account("u-rob", "Roberto Dela Cruz");
+const NAMELESS = account("u-liz", null, { staffNumber: "1012", branch: "Taytay branch" });
+
+describe("the Add account picker", () => {
+  it("finds POS accounts by the Portal's name, staff number or branch, ignoring case", () => {
+    const all = [ROBERTO, NAMELESS];
+
+    expect(filterAccounts(all, "roberto").map((a) => a.portalUserId)).toEqual(["u-rob"]);
+    expect(filterAccounts(all, " 1012 ").map((a) => a.portalUserId)).toEqual(["u-liz"]);
+    expect(filterAccounts(all, "TAYTAY").map((a) => a.portalUserId)).toEqual(["u-liz"]);
+    expect(filterAccounts(all, "zzz")).toEqual([]);
+    expect(filterAccounts(all, "")).toEqual(all);
+  });
+
+  it("lists at most a handful at once", () => {
+    const many = Array.from({ length: 20 }, (_, i) => account(`u-${i}`, `Account ${i}`));
+
+    expect(filterAccounts(many, "")).toHaveLength(PICKER_LIMIT);
+  });
+});
+
+describe("the Add account form", () => {
+  it("needs a POS account and the reason, always, because the Employee already has an account", () => {
+    expect(checkAddForm(null, "")).toEqual({ reasonError: "Choose the reason.", reason: null, canSubmit: false });
+    expect(checkAddForm(ROBERTO, "")).toEqual({ reasonError: "Choose the reason.", reason: null, canSubmit: false });
+    expect(checkAddForm(ROBERTO, "Whatever")).toMatchObject({ canSubmit: false, reason: null });
+    expect(checkAddForm(null, NEW_ACCOUNT_REASON)).toMatchObject({ canSubmit: false });
+    expect(checkAddForm(ROBERTO, NEW_ACCOUNT_REASON)).toEqual({ reasonError: null, reason: NEW_ACCOUNT_REASON, canSubmit: true });
   });
 });
