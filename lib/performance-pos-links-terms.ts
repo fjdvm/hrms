@@ -52,6 +52,13 @@ export function unlinkReady(reason: string, note: string): boolean {
 /** The words for a refused link or unlink, for the dialog to show. */
 export function linkMessage(problem: string): string {
   switch (problem) {
+    case "not-cashier": return `${NOT_A_CASHIER_MESSAGE}. Only an employee whose position is a cashier position can be linked.`;
+    case "account-taken": return "That POS account is already linked to an employee.";
+    case "account-invalid": return "That POS account is not valid.";
+    case "unknown-employee": return "That employee could not be found.";
+    case "reason-required": return "Choose the reason: this employee already has a POS account.";
+    case "reason-not-needed": return "This employee has no POS account yet, so no reason is needed.";
+    case "reason-invalid": return "Choose the reason from the list.";
     case "unlink-reason-required": return "Choose a reason.";
     case "note-required": return "Add a note for Other.";
     case "note-invalid": return "The note has characters that are not allowed.";

@@ -31,7 +31,7 @@ const open = async () => { await userEvent.click(screen.getByRole("button", { na
 
 describe("the POS cashier links dialog", () => {
   it("reads nothing until it is opened, then lists each employee with all their accounts", async () => {
-    loadPosLinks.mockResolvedValue({ ok: true, employees: [CARLA, LIZA] });
+    loadPosLinks.mockResolvedValue({ ok: true, accounts: [], candidates: [], employees: [CARLA, LIZA] });
     render(<PosLinksDialog />);
     expect(loadPosLinks).not.toHaveBeenCalled();
 
@@ -52,7 +52,7 @@ describe("the POS cashier links dialog", () => {
   });
 
   it("keeps Unlink account disabled until the reason is valid, with a note for Other, and changes nothing before it is pressed", async () => {
-    loadPosLinks.mockResolvedValue({ ok: true, employees: [CARLA] });
+    loadPosLinks.mockResolvedValue({ ok: true, accounts: [], candidates: [], employees: [CARLA] });
     render(<PosLinksDialog />);
     await open();
     await userEvent.click((await screen.findAllByRole("button", { name: /^Unlink / }))[1]);
@@ -69,7 +69,7 @@ describe("the POS cashier links dialog", () => {
   });
 
   it("unlinks with the reason and note, then reads the list again and refreshes the page so Top sales follows", async () => {
-    loadPosLinks.mockResolvedValueOnce({ ok: true, employees: [CARLA] }).mockResolvedValueOnce({ ok: true, employees: [{ ...CARLA, accounts: [CARLA.accounts[0]] }] });
+    loadPosLinks.mockResolvedValueOnce({ ok: true, accounts: [], candidates: [], employees: [CARLA] }).mockResolvedValueOnce({ ok: true, accounts: [], candidates: [], employees: [{ ...CARLA, accounts: [CARLA.accounts[0]] }] });
     unlinkPosAccount.mockResolvedValue({ ok: true });
     render(<PosLinksDialog />);
     await open();
@@ -86,7 +86,7 @@ describe("the POS cashier links dialog", () => {
   });
 
   it("shows a refusal inside the prompt and leaves the list alone", async () => {
-    loadPosLinks.mockResolvedValue({ ok: true, employees: [CARLA] });
+    loadPosLinks.mockResolvedValue({ ok: true, accounts: [], candidates: [], employees: [CARLA] });
     unlinkPosAccount.mockResolvedValue({ ok: false, error: "This account was already unlinked. Close the dialog to see the current list." });
     render(<PosLinksDialog />);
     await open();
@@ -100,7 +100,7 @@ describe("the POS cashier links dialog", () => {
   });
 
   it("says so when the list cannot be read, and reads again only on Try again", async () => {
-    loadPosLinks.mockResolvedValueOnce({ ok: false, error: "Performance could not reach the Portal or database. Please try again in a moment." }).mockResolvedValueOnce({ ok: true, employees: [LIZA] });
+    loadPosLinks.mockResolvedValueOnce({ ok: false, error: "Performance could not reach the Portal or database. Please try again in a moment." }).mockResolvedValueOnce({ ok: true, accounts: [], candidates: [], employees: [LIZA] });
     render(<PosLinksDialog />);
     await open();
     expect((await screen.findByRole("alert")).textContent).toContain("could not reach the Portal or database");

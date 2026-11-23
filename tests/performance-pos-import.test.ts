@@ -154,6 +154,7 @@ describe("preview and confirm", () => {
     const saved = await performance().importPosSales();
 
     expect(saved).toMatchObject({ range: { from: "2026-11-10", to: "2026-12-31" }, days: 2, orders: 3, netSales: 900, removedDays: 0, importedByName: "Ada Okafor" });
+    expect((await db.query(`SELECT portal_user_id, staff_number FROM hrms_pos_accounts ORDER BY 1`)).rows).toEqual([{ portal_user_id: "u-ana", staff_number: 1000 }, { portal_user_id: "u-ben", staff_number: 1001 }]);
     expect(await stored()).toEqual([
       { portal_user_id: "u-ana", location_id: 1, business_date: "2026-11-12", orders: 2, gross_sales: "400.00", refund_amount: "0.00", net_sales: "400.00" },
       { portal_user_id: "u-ben", location_id: 2, business_date: "2026-12-01", orders: 1, gross_sales: "500.00", refund_amount: "0.00", net_sales: "500.00" }]);

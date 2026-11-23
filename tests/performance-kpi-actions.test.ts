@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GoLiveError, KpiError, PerformanceError } from "@/lib/performance";
+import { GoLiveError, KpiError, LinkError, PerformanceError } from "@/lib/performance";
 
 const state = vi.hoisted(() => ({ performance: {} as Record<string, ReturnType<typeof vi.fn>> }));
 vi.mock("@/lib/portal/performance", () => ({ performanceForRequest: async () => state.performance }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT ${url}`); } }));
 
-import { changeKpiStatus, createWeightSet, saveSalesSettings } from "@/app/(hrms)/performance/actions";
+import { changeKpiStatus, createWeightSet, linkPosCashier, loadPosLinks, saveSalesSettings } from "@/app/(hrms)/performance/actions";
 
-beforeEach(() => { state.performance = { setKpiStatus: vi.fn(), saveWeightSet: vi.fn(), setSalesTarget: vi.fn(), setPosGoLive: vi.fn() }; });
+beforeEach(() => { state.performance = { setKpiStatus: vi.fn(), saveWeightSet: vi.fn(), setSalesTarget: vi.fn(), setPosGoLive: vi.fn(), linkPosAccount: vi.fn(), posAccountsNeedingLink: vi.fn(), posLinkCandidates: vi.fn(), listLinkedEmployees: vi.fn().mockResolvedValue([]) }; });
 const WEIGHTS = { attendanceRate: 40, punctuality: 20, fullShift: 10, trainingCompletion: 10, evaluatorRating: 20 };
 
 describe("the KPI Setup server actions", () => {
@@ -74,5 +74,37 @@ describe("the sales settings server action", () => {
     expect(await saveSalesSettings({ goLive: "2026-11-10" })).toEqual({ ok: false, error: "Choose a real calendar date." });
     state.performance.setSalesTarget.mockRejectedValue(new PerformanceError("denied"));
     await expect(saveSalesSettings({ target: 1500 })).rejects.toThrow("REDIRECT /no-access");
+  });
+});
+
+describe("the POS cashier links server actions", () => {
+  it("reads the linked employees, the accounts that need linking and the Employees the picker offers", async () => {
+    state.performance.listLinkedEmployees.mockResolvedValue([{ employeeId: 9 }]);
+    state.performance.posAccountsNeedingLink.mockResolvedValue([{ portalUserId: "u-1" }]);
+    state.performance.posLinkCandidates.mockResolvedValue([{ id: 1 }]);
+
+    expect(await loadPosLinks()).toEqual({ ok: true, employees: [{ employeeId: 9 }], accounts: [{ portalUserId: "u-1" }], candidates: [{ id: 1 }] });
+  });
+
+  it("reports an unavailable Portal as a message, and sends Staff without the Module to No access", async () => {
+    state.performance.posAccountsNeedingLink.mockRejectedValue(new PerformanceError("unavailable"));
+    state.performance.posLinkCandidates.mockResolvedValue([]);
+    expect(await loadPosLinks()).toEqual({ ok: false, error: "Performance could not reach the Portal or database. Please try again in a moment." });
+    state.performance.posAccountsNeedingLink.mockRejectedValue(new PerformanceError("denied"));
+    await expect(loadPosLinks()).rejects.toThrow("REDIRECT /no-access");
+  });
+
+  it("links through the interface with the account, the Employee and the reason", async () => {
+    expect(await linkPosCashier("u-rob", 17, "New Portal account for the same person")).toEqual({ ok: true });
+    expect(state.performance.linkPosAccount).toHaveBeenCalledWith({ employeeId: 17, portalUserId: "u-rob", reason: "New Portal account for the same person" });
+  });
+
+  it("turns the interface's refusals into the words HR reads, with no override for a non-cashier", async () => {
+    state.performance.linkPosAccount.mockRejectedValue(new LinkError("not-cashier"));
+    expect(await linkPosCashier("u-rob", 19)).toEqual({ ok: false, error: "Not a cashier position. Only an employee whose position is a cashier position can be linked." });
+    state.performance.linkPosAccount.mockRejectedValue(new LinkError("account-taken", { heldBy: 4 }));
+    expect(await linkPosCashier("u-rob", 17)).toEqual({ ok: false, error: "That POS account is already linked to an employee." });
+    state.performance.linkPosAccount.mockRejectedValue(new LinkError("reason-required"));
+    expect(await linkPosCashier("u-rob", 17)).toEqual({ ok: false, error: "Choose the reason: this employee already has a POS account." });
   });
 });
