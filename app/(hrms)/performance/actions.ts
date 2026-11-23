@@ -2,10 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, GoLiveError, ImportError, KpiError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
+import { AttendanceError, GoLiveError, ImportError, KpiError, LinkError, type LinkedEmployee, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
 import { readGoLiveDate } from "@/lib/performance-pos-settings";
 import { readSalesTarget, SalesTargetError } from "@/lib/performance-sales-inputs";
 import { GO_LIVE_MESSAGE, TARGET_MESSAGE } from "@/lib/performance-sales-setup-terms";
+import { linkMessage } from "@/lib/performance-pos-links-terms";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
@@ -26,6 +27,7 @@ async function run(change: () => Promise<unknown>, paths: readonly string[]): Pr
     await change();
   } catch (error) {
     if (error instanceof KpiError) return { ok: false, error: kpiMessage(error.problem, error.extra) };
+    if (error instanceof LinkError) return { ok: false, error: linkMessage(error.problem) };
     if (error instanceof SalesTargetError) return { ok: false, error: TARGET_MESSAGE };
     if (error instanceof GoLiveError) return { ok: false, error: GO_LIVE_MESSAGE };
     if (error instanceof PeriodError) return { ok: false, error: periodMessage(error.problem, error.extra) };
@@ -220,4 +222,25 @@ export async function confirmPosImport(): Promise<PosImportResult> {
   const result = await runPosImport(async (performance) => ({ saved: await performance.importPosSales() }));
   if (result.ok) for (const path of PERIOD_PATHS) revalidatePath(path);
   return result;
+}
+
+export type PosLinksResult = { ok: true; employees: LinkedEmployee[] } | { ok: false; error: string };
+
+/** Reads every linked Employee with all their POS accounts, for the POS cashier links dialog. Read-only; the dialog asks when it opens and again on Try again. */
+export async function loadPosLinks(): Promise<PosLinksResult> {
+  try {
+    return { ok: true, employees: await (await performanceForRequest()).listLinkedEmployees() };
+  } catch (error) {
+    if (error instanceof PerformanceError) {
+      if (error.reason === "denied") redirect(NO_ACCESS_PATH);
+      if (error.reason === "invalid") redirect(LOGIN_PATH);
+      return { ok: false, error: "Performance could not reach the Portal or database. Please try again in a moment." };
+    }
+    throw error;
+  }
+}
+
+/** Ends one POS account link with a reason (and a note, required for Other). The account's sales leave the Employee, past months included; Top sales is refreshed. */
+export async function unlinkPosAccount(linkId: number, reason: string, note: string): Promise<KpiActionResult> {
+  return run(async () => (await performanceForRequest()).unlinkPosAccount(linkId, { reason, note }), PERIOD_PATHS);
 }
