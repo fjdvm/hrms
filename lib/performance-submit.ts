@@ -38,6 +38,8 @@ export type SubmittedEvaluation = {
 export const figuresOf = (detail: EvaluationDetail): Figures => ({
   shift: detail.shift, scheduledDays: detail.scheduledDays, excusedDays: detail.excusedDays, graceMinutes: detail.graceMinutes, counts: detail.counts,
   attendance: detail.attendance, resultsNotMarked: detail.resultsNotMarked,
+  // Saved only when the sales KPI was scored with figures, so every other submission is saved exactly as before.
+  ...(detail.sales ? { sales: detail.sales } : {}),
 });
 
 export function submitModule(db: Database, deps: { evaluations: ReturnType<typeof evaluationsModule> }) {

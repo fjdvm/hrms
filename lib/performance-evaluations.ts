@@ -4,6 +4,7 @@ import type { attendanceModule, AttendanceIssue } from "./performance-attendance
 import type { Kpi, kpiModule, WeightSet } from "./performance-kpis";
 import { PeriodError, type Period, type periodsModule } from "./performance-periods";
 import { SALES_MIN_PRESENT_DAYS } from "./performance-sales-scoring";
+import { noOrdersWarning, salesFigures, type SalesFigures } from "./performance-sales-figures";
 import type { salesInputsModule } from "./performance-sales-inputs";
 import { INSUFFICIENT_DATA_FLOOR_PERCENT, KPI_IDS, SCORING_FORMULAS, SCORING_RULES_VERSION, scoreEvaluation, type KpiId, type NotApplicableReason } from "./performance-scoring";
 import { RESULTS_NOT_MARKED, type trainingCompletionModule } from "./performance-training";
@@ -68,6 +69,8 @@ export type EvaluationDetail = Common & {
   history: VersionSummary[];
   /** The day figures behind the score, null when the Employee has no shift. */
   counts: DayCounts | null;
+  /** The figures behind the sales KPI's result (net sales, orders, present days, target); null when the set does not weigh sales or there are none. */
+  sales: SalesFigures | null;
   /** The saved version when the evaluation has been submitted; null while it is still being worked on. */
   submitted: SubmittedVersion | null;
   scheduledDays: string[];
@@ -112,6 +115,8 @@ type ResultRow = { kpiId: KpiId; name: string; description: string; source: stri
 export type Figures = {
   shift: Shift | null; scheduledDays: string[]; excusedDays: string[]; graceMinutes: number; counts: DayCounts | null;
   attendance: { imported: boolean; confirmedNone: boolean; openIssues: number }; resultsNotMarked: number;
+  /** Saved only when the evaluation was scored on the sales KPI with figures. */
+  sales?: SalesFigures | null;
 };
 const CHUNK = 8;
 
@@ -190,7 +195,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
 
   type Assessed = {
     common: Common; scheduled: string[]; excused: string[]; weightsUsed: Partial<Record<KpiId, number>>; weights: WeightSet["weights"] | null;
-    issues: AttendanceIssue[]; resultsNotMarked: number; shift: Shift | null; counts: DayCounts | null; graceMinutes: number;
+    issues: AttendanceIssue[]; resultsNotMarked: number; shift: Shift | null; counts: DayCounts | null; sales: SalesFigures | null; graceMinutes: number;
     rating: number | null; comments: string | null; submitted: SubmittedVersion | null; formulas: SnapshotFormulas; rulesFrozen: boolean;
   };
 
@@ -211,7 +216,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
         score: submission.outcome === "scored" ? { outcome: "scored", value: Number(submission.score) } : { outcome: "insufficient-data" }, kpis,
       },
       scheduled: figures.scheduledDays, excused: figures.excusedDays, weightsUsed: submission.weightsUsed, weights: submission.weights, issues: [],
-      resultsNotMarked: figures.resultsNotMarked, shift: figures.shift, counts: figures.counts, graceMinutes: figures.graceMinutes,
+      resultsNotMarked: figures.resultsNotMarked, shift: figures.shift, counts: figures.counts, sales: figures.sales ?? null, graceMinutes: figures.graceMinutes,
       rating: submission.rating, comments: submission.comments,
       submitted: { version: submission.version, submittedByName: submission.submittedByName, submittedAt: submission.submittedAt, formulas: submission.formulas },
       formulas: submission.formulas, rulesFrozen: false,
@@ -250,6 +255,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
     let kpis: KpiLine[] = [];
     let weightsUsed: Partial<Record<KpiId, number>> = {};
     let counts: DayCounts | null = null;
+    let salesShown: SalesFigures | null = null;
     if (shift) {
       const scoring = scoreEvaluation({
         rows: attendance.rows, shift: { start: shift.start, end: shift.end }, graceMinutes, scheduledDays: scheduled, excusedDays: excused,
@@ -260,10 +266,11 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
       score = scoring.outcome === "scored" ? { outcome: "scored", value: scoring.score } : { outcome: "insufficient-data" };
       weightsUsed = scoring.weightsUsed;
       counts = scoring.counts;
+      salesShown = salesFigures(sales, scoring.counts.present);
       kpis = scoring.results.map((result): KpiLine => {
         const id = result.kpi;
         const kpi = kpiList.find((entry) => entry.id === id)!;
-        const base = { id, name: kpi.name, description: kpi.description, source: kpi.source, target: kpi.target, weight: result.weight, flag: id === "trainingCompletion" && training.resultsNotMarked > 0 ? RESULTS_NOT_MARKED : null };
+        const base = { id, name: kpi.name, description: kpi.description, source: kpi.source, target: kpi.target, weight: result.weight, flag: id === "trainingCompletion" && training.resultsNotMarked > 0 ? RESULTS_NOT_MARKED : id === "sales" ? noOrdersWarning(salesShown) : null };
         return result.status === "scored"
           ? { ...base, status: "scored", result: result.result, weightUsed: result.weightUsed, points: result.points, reason: null }
           : { ...base, status: "not-applicable", result: null, weightUsed: null, points: null, reason: result.reason };
@@ -277,7 +284,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
       weightSet: { id: weightSet.id, name: weightSet.name, isDefault: weightSet.isDefault }, score, kpis,
     };
     return {
-      common, scheduled, excused, weightsUsed, weights: weightSet.weights, issues: attendance.issues, resultsNotMarked: training.resultsNotMarked, shift, counts,
+      common, scheduled, excused, weightsUsed, weights: weightSet.weights, issues: attendance.issues, resultsNotMarked: training.resultsNotMarked, shift, counts, sales: salesShown,
       graceMinutes, rating: evaluation?.rating ?? null, comments: evaluation?.comments ?? null, submitted: null,
       formulas: frozen ? frozen.formulas : formulasInForce(period.graceMinutes, salesWeight > 0 ? { target: salesTarget } : undefined), rulesFrozen: frozen !== null,
     };
@@ -336,6 +343,7 @@ export function evaluationsModule(db: Database, deps: EvaluationDeps) {
       rulesFrozen: assessed.rulesFrozen,
       history: evaluation ? await historyOf(evaluation.id) : [],
       counts: assessed.counts,
+      sales: assessed.sales,
       submitted: assessed.submitted,
       scheduledDays: assessed.scheduled,
       excusedDays: assessed.excused,
