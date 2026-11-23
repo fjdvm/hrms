@@ -2,6 +2,7 @@ import { formatWorkingDays } from "./validators/weekdays";
 import type { EvaluationDetail, KpiLine } from "./performance-evaluations";
 import type { SubmitCheckId } from "./performance-evaluations-terms";
 import { shiftText } from "./performance-list";
+import { pesos } from "./performance-pos-import-terms";
 import { rangeLabel } from "./performance-period-form";
 
 /**
@@ -94,11 +95,18 @@ const REASONS: Record<NonNullable<KpiLine["reason"]>, string> = {
  * One KPI row: the result, the weight and points, and the note under the name. While the rating is missing the other rows show their
  * own weights and points (the score is "incomplete"); once it is entered, a Not-applicable result is left out and the rest are rescaled.
  */
-export function lineFigures(detail: Pick<EvaluationDetail, "counts" | "rating" | "shift" | "score">, line: KpiLine): LineFigures {
+export function lineFigures(detail: Pick<EvaluationDetail, "counts" | "rating" | "shift" | "score"> & { sales?: EvaluationDetail["sales"] }, line: KpiLine): LineFigures {
   const counts = detail.counts;
   const incomplete = isIncomplete(detail);
   const noteFor = (): string => {
+    // Too few present days says how many there were; the other Not applicable reasons stand on their own.
+    if (line.id === "sales" && line.reason === "too-few-present-days" && counts) return `${REASONS[line.reason]}: ${counts.present} present ${counts.present === 1 ? "day" : "days"}`;
     if (line.reason) return REASONS[line.reason];
+    // The figures behind the sales result: net sales, present days and what that comes to a day, against the target.
+    if (line.id === "sales" && detail.sales) {
+      const { netSales, presentDays, target } = detail.sales;
+      return `${pesos(netSales)} net sales · ${presentDays} present ${presentDays === 1 ? "day" : "days"} · ${pesos(netSales / presentDays)} a day, target ${pesos(target)}`;
+    }
     if (line.id === "attendanceRate" && counts) return `${counts.present} of ${counts.counted} days present`;
     if (line.id === "punctuality" && counts) return `${counts.late} late of ${counts.present} present`;
     if (line.id === "fullShift" && counts) return `${counts.earlyOut} early-out of ${counts.present}`;

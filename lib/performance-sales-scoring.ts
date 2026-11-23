@@ -12,6 +12,9 @@
 
 export const SALES_MIN_PRESENT_DAYS = 5;
 
+/** A placeholder pending HR: with this many present days or more and no POS orders at all, the evaluation warns that the link may be wrong. */
+export const SALES_NO_ORDERS_WARNING_DAYS = 10;
+
 export const SALES_FORMULA =
   `Net sales in the period (all of the Employee's linked POS accounts, all branches) ÷ present days, as a percentage of the company-wide sales target, capped at 100. ` +
   `Negative net sales score 0. Not applicable when the Employee has no linked POS account, the period starts before the POS go-live date, ` +
@@ -21,7 +24,7 @@ export type SalesReason = "no-linked-account" | "before-go-live" | "no-import-af
 
 /** What the inputs module found for one Employee and period: the figures to score, or why there is nothing to score. */
 export type SalesInput =
-  | { status: "ready"; netSales: number; target: number }
+  | { status: "ready"; netSales: number; target: number; /** The POS orders behind the net sales, for the evaluation page; scoring does not use it. */ orders?: number }
   | { status: "not-applicable"; reason: Exclude<SalesReason, "too-few-present-days"> };
 
 export type SalesScore = { result: number } | { reason: SalesReason };

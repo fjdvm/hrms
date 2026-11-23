@@ -134,7 +134,7 @@ describe("scoring a cashier", () => {
     const period = await ready(id);
     await pos([["u-ana", 1, "2026-11-03", 15000], ["u-ana", 1, "2026-11-04", 750]]);   // 15,750 over 21 present days = 750 a day = 75%
 
-    expect(await line(id, period.id)).toMatchObject({ id: "sales", status: "scored", result: 75, weight: 10, weightUsed: 10, points: 7.5, name: "Sales", source: "POS sales import" });
+    expect(await line(id, period.id)).toMatchObject({ id: "sales", status: "scored", result: 75, weight: 10, weightUsed: 10, points: 7.5, name: "Sales", source: "POS sales" });
     // 30 + 20 + 10 + 10 + 16 (rating 80 x 20%) + 7.5
     expect((await performance().evaluationFor(id, period.id)).score).toEqual({ outcome: "scored", value: 93.5 });
   });
@@ -265,5 +265,73 @@ describe("a submitted Evaluation", () => {
     const link = (await performance().listPosAccounts(id))[0];
     await performance().unlinkPosAccount(link.id, { reason: "Wrong person linked" });
     expect(await line(id, period.id)).toMatchObject({ status: "not-applicable", reason: "no-linked-account" });
+  });
+});
+
+describe("the figures behind the sales row", () => {
+  it("returns net sales, orders, present days and the target with the result, and the same per-day maths the score uses", async () => {
+    const id = await switchedOn();
+    const period = await ready(id);
+    await pos([["u-ana", 1, "2026-11-03", 15000], ["u-ana", 1, "2026-11-04", 750]]);
+    const detail = await performance().evaluationFor(id, period.id);
+
+    expect(detail.sales).toEqual({ netSales: 15750, orders: 2, presentDays: 21, target: 1000 });
+    expect(detail.kpis.find((k) => k.id === "sales")).toMatchObject({ status: "scored", result: 75, flag: null, source: "POS sales" });
+  });
+
+  it("warns when a cashier with many present days has no POS orders at all, and still scores 0", async () => {
+    const id = await switchedOn();
+    const period = await ready(id);
+    await pos([["u-ana", 1, "2026-10-15", 500]]);   // an import ran, but nothing for this account in the period
+    const detail = await performance().evaluationFor(id, period.id);
+
+    expect(detail.sales).toEqual({ netSales: 0, orders: 0, presentDays: 21, target: 1000 });
+    expect(detail.kpis.find((k) => k.id === "sales")).toMatchObject({ status: "scored", result: 0, flag: "No POS orders in 21 present days. Check that the right POS account is linked." });
+  });
+
+  it("does not warn with few present days, or when there are orders", async () => {
+    const few = await switchedOn();
+    const period = await ready(few, WEEKDAYS.slice(0, 6));
+    await pos([["u-other", 1, "2026-10-15", 500]]);
+    expect((await performance().evaluationFor(few, period.id)).kpis.find((k) => k.id === "sales")).toMatchObject({ status: "scored", result: 0, flag: null });
+
+    await pos([["u-ana", 1, "2026-11-03", 6000]]);
+    expect((await performance().evaluationFor(few, period.id)).kpis.find((k) => k.id === "sales")?.flag).toBeNull();
+  });
+
+  it("has no figures while the sales KPI is Not applicable, or off", async () => {
+    const unlinked = await switchedOn({ link: false });
+    const period = await ready(unlinked);
+    expect((await performance().evaluationFor(unlinked, period.id)).sales).toBeNull();
+
+    const plain = await employee("Ben Reyes");
+    await performance().saveWeightSet({ position: "Barista", weights: { attendanceRate: 40, punctuality: 20, fullShift: 10, trainingCompletion: 10, evaluatorRating: 20 } });
+    await db.query(`UPDATE hrms_employees SET position = 'Barista' WHERE id = $1`, [plain]);
+    expect((await performance().evaluationFor(plain, period.id)).sales).toBeNull();
+  });
+
+  it("saves the figures and the warning with a submission, so a submitted Evaluation shows what it was scored on", async () => {
+    const id = await switchedOn();
+    const period = await ready(id);
+    await pos([["u-ana", 1, "2026-11-03", 15750]]);
+    await performance().submitEvaluation(id, period.id);
+    const before = await performance().evaluationFor(id, period.id);
+
+    expect(before.sales).toEqual({ netSales: 15750, orders: 1, presentDays: 21, target: 1000 });
+    expect((await db.query<{ figures: { sales?: unknown } }>(`SELECT figures FROM hrms_evaluation_submissions`)).rows[0].figures.sales).toEqual({ netSales: 15750, orders: 1, presentDays: 21, target: 1000 });
+
+    // A re-import and a link change do not touch it.
+    await pos([["u-ana", 1, "2026-11-03", 1]]);
+    await performance().unlinkPosAccount((await performance().listPosAccounts(id))[0].id, { reason: "Wrong person linked" });
+    expect(await performance().evaluationFor(id, period.id)).toEqual(before);
+  });
+
+  it("saves a submission without the sales KPI exactly as before: no sales figures", async () => {
+    const id = await employee();
+    const period = await ready(id);
+    await performance().submitEvaluation(id, period.id);
+
+    expect(Object.keys((await db.query<{ figures: object }>(`SELECT figures FROM hrms_evaluation_submissions`)).rows[0].figures)).not.toContain("sales");
+    expect((await performance().evaluationFor(id, period.id)).sales).toBeNull();
   });
 });
