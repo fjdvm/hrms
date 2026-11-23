@@ -69,6 +69,16 @@ describe("the Top sales card", () => {
     expect(screen.getByText(/1 staff member with POS sales is not shown/)).toBeTruthy();
   });
 
+  it("puts the entry point to the POS cashier links dialog in the footer note, with sales and without", async () => {
+    topSales.mockResolvedValue(RANKED);
+    await show();
+    expect(screen.getByRole("button", { name: "Manage POS links" })).toBeTruthy();
+    cleanup();
+    topSales.mockResolvedValue({ ...RANKED, branches: [], overall: [] });
+    await show();
+    expect(screen.getByRole("button", { name: "Manage POS links" })).toBeTruthy();
+  });
+
   it("drops the Provisional badge once a later import has re-read the month", async () => {
     topSales.mockResolvedValue({ ...RANKED, provisional: false });
     await show({ salesMonth: "2026-10" });
@@ -89,17 +99,6 @@ describe("the Top sales card", () => {
     await show();
     expect(screen.getByText("No POS sales imported for November 2026 yet")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Import POS sales" })).toBeTruthy();
-  });
-
-  it("offers Link accounts in the footer note when POS accounts with sales are not linked, and not otherwise", async () => {
-    topSales.mockResolvedValue({ ...RANKED, notShown: { unlinkedAccounts: 2, notCashiers: 0 } });
-    await show();
-    expect(screen.getByRole("button", { name: "Link accounts" })).toBeTruthy();
-    cleanup();
-
-    topSales.mockResolvedValue({ ...RANKED, notShown: { unlinkedAccounts: 0, notCashiers: 1 } });
-    await show();
-    expect(screen.queryByRole("button", { name: "Link accounts" })).toBeNull();
   });
 
   it("opens the Import POS sales dialog from the Empty state, which says so when the go-live date is not set", async () => {

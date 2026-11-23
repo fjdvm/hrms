@@ -1,6 +1,7 @@
 import type { Database } from "./database";
 import { cashierModule } from "./performance-cashier";
 import type { Actor } from "./performance-kpis";
+import { NEW_ACCOUNT_REASON, NOTE_MAX_LENGTH, NOT_A_CASHIER_MESSAGE, UNLINK_REASONS, type UnlinkReason } from "./performance-pos-links-terms";
 import { cleanMultiline, cleanText, hasDisallowedText } from "./validators/text";
 
 /**
@@ -15,11 +16,7 @@ import { cleanMultiline, cleanText, hasDisallowedText } from "./validators/text"
  * statement as the change.
  */
 
-export const NEW_ACCOUNT_REASON = "New Portal account for the same person";
-export const UNLINK_REASONS = ["Wrong person linked", "Linked to the wrong POS account", "Other"] as const;
-export type UnlinkReason = (typeof UNLINK_REASONS)[number];
-export const NOTE_MAX_LENGTH = 300;
-export const NOT_A_CASHIER_MESSAGE = "Not a cashier position";
+export { NEW_ACCOUNT_REASON, UNLINK_REASONS, NOTE_MAX_LENGTH, NOT_A_CASHIER_MESSAGE, type UnlinkReason } from "./performance-pos-links-terms";
 
 export type LinkProblem =
   | "unknown-employee" | "not-cashier" | "account-invalid" | "account-taken"
@@ -37,6 +34,11 @@ export type PosAccountLink = {
   id: number; portalUserId: string; employeeId: number; linkedByName: string; linkedAt: string; linkReason: string | null;
   unlinkedByName: string | null; unlinkedAt: string | null; unlinkReason: UnlinkReason | null; unlinkNote: string | null;
 };
+/** One active link in the Linked list: the account, who linked it and when, and the branch it last sold at (the HRMS branch, else the POS name; null before any sale is stored). */
+export type LinkedAccount = { linkId: number; portalUserId: string; name: string | null; branch: string | null; linkedByName: string; linkedAt: string; linkReason: string | null; current: boolean };
+/** A linked Employee with every POS account counting for them now. `current` marks the most recently linked account; the others are earlier ones. */
+export type LinkedEmployee = { employeeId: number; employeeNumber: string; name: string; position: string; accounts: LinkedAccount[] };
+
 /** A POS account for the Link dialog: the name from the Portal directory, or null with only the staff number and branch to go on. */
 export type DescribedAccount = { portalUserId: string; name: string | null; staffNumber: string | null; branch: string | null };
 export type Directory = () => Promise<{ id: string; name: string }[] | null>;
@@ -144,5 +146,27 @@ export function linksModule(db: Database, now: () => Date, directory: Directory)
     throw new LinkError(existing ? "already-unlinked" : "unknown-link");
   }
 
-  return { accountsOf, activeLinks, describeAccounts, linkAccount, unlinkAccount };
+  /**
+   * Every Employee with at least one active link, by name, each with all their active accounts, newest first. Names come from the Portal directory
+   * (null with no match). The branch is where the account last sold, read from the stored POS figures. Read-only.
+   */
+  async function linkedEmployees(): Promise<LinkedEmployee[]> {
+    const { rows } = await db.query<{ linkId: number; portalUserId: string; employeeId: number; linkedByName: string; linkedAt: string; linkReason: string | null; employeeNumber: string; name: string; position: string; branch: string | null }>(`
+      SELECT l.id AS "linkId", l.portal_user_id AS "portalUserId", l.employee_id AS "employeeId", l.linked_by_name AS "linkedByName", l.linked_at::text AS "linkedAt", l.link_reason AS "linkReason",
+        e.employee_number AS "employeeNumber", e.full_name AS name, e.position,
+        (SELECT coalesce(pl.hrms_branch, pl.name) FROM public.hrms_pos_sales_daily s JOIN public.hrms_pos_locations pl ON pl.pos_location_id = s.location_id
+          WHERE s.portal_user_id = l.portal_user_id ORDER BY s.business_date DESC, s.location_id LIMIT 1) AS branch
+      FROM public.hrms_pos_account_links l JOIN public.hrms_employees e ON e.id = l.employee_id
+      WHERE l.unlinked_at IS NULL ORDER BY e.full_name, e.id, l.linked_at DESC, l.id DESC`);
+    const names = new Map((await directory().catch(() => null))?.map((member) => [member.id, member.name]) ?? []);
+    const byEmployee = new Map<number, LinkedEmployee>();
+    for (const row of rows) {
+      const person = byEmployee.get(row.employeeId) ?? { employeeId: row.employeeId, employeeNumber: row.employeeNumber, name: row.name, position: row.position, accounts: [] };
+      person.accounts.push({ linkId: row.linkId, portalUserId: row.portalUserId, name: names.get(row.portalUserId) ?? null, branch: row.branch, linkedByName: row.linkedByName, linkedAt: row.linkedAt, linkReason: row.linkReason, current: person.accounts.length === 0 });
+      byEmployee.set(row.employeeId, person);
+    }
+    return [...byEmployee.values()];
+  }
+
+  return { accountsOf, activeLinks, describeAccounts, linkAccount, linkedEmployees, unlinkAccount };
 }

@@ -30,7 +30,7 @@ import type { NeedInput } from "./performance-needs";
  */
 
 export { type LinkCandidate, type PosAccountNeedingLink } from "./performance-pos-accounts";
-export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
+export { LinkError, NEW_ACCOUNT_REASON, UNLINK_REASONS, NOT_A_CASHIER_MESSAGE, NOTE_MAX_LENGTH, type DescribedAccount, type LinkedAccount, type LinkedEmployee, type LinkProblem, type PosAccountLink, type UnlinkReason } from "./performance-links";
 export { ImportError, importRange, type ImportPreview, type ImportProblem, type ImportRecord, type SavedImport, type UnlinkedAccount } from "./performance-pos-import";
 export { GoLiveError, type GoLive } from "./performance-pos-settings";
 export { SalesTargetError, SALES_TARGET_MAX, type SalesTargetProblem } from "./performance-sales-inputs";
@@ -130,6 +130,8 @@ export function performanceFor(sessionHandle: string | undefined, db: Database =
     posAccountsNeedingLink: async () => { await acting(); return posAccounts.needingLink(); },
     /** The Employees the Link POS cashier picker offers, each with whether they are a cashier today and how many POS accounts they have. */
     posLinkCandidates: async () => { await acting(); return posAccounts.candidates(); },
+    /** Every linked Employee with all their active POS accounts, for the POS cashier links dialog. */
+    listLinkedEmployees: async () => { await acting(); return links.linkedEmployees(); },
     /** Links a POS account (a Portal user) to a cashier. An Employee with an account already needs the reason "New Portal account for the same person". */
     linkPosAccount: async (input: { employeeId: number; portalUserId: unknown; reason?: unknown }) => links.linkAccount(await acting(), input),
     /** Ends a link with a reason (and a note for "Other"). The account's sales leave the Employee, past months included. */

@@ -2,12 +2,12 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AttendanceError, GoLiveError, ImportError, KpiError, LinkError, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type ImportPreview, type LinkCandidate, type OpenPeriodInput, type PosAccountNeedingLink, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
+import { AttendanceError, GoLiveError, ImportError, KpiError, LinkError, type LinkedEmployee, NeedError, PerformanceError, PeriodError, RatingError, ReopenError, RosterError, SubmitError, SuggestionError, type CalendarInput, type LinkCandidate, type PosAccountNeedingLink, type ImportPreview, type OpenPeriodInput, type ImportProblem, type Resolution, type SavedImport } from "@/lib/performance";
 import { readGoLiveDate } from "@/lib/performance-pos-settings";
 import { readSalesTarget, SalesTargetError } from "@/lib/performance-sales-inputs";
 import { GO_LIVE_MESSAGE, TARGET_MESSAGE } from "@/lib/performance-sales-setup-terms";
+import { linkMessage } from "@/lib/performance-pos-links-terms";
 import { kpiMessage } from "@/lib/performance-kpi-messages";
-import { linkMessage } from "@/lib/performance-links-messages";
 import { periodMessage } from "@/lib/performance-period-messages";
 import { attendanceMessage } from "@/lib/performance-attendance-terms";
 import { needMessage } from "@/lib/performance-needs-terms";
@@ -224,14 +224,17 @@ export async function confirmPosImport(): Promise<PosImportResult> {
   return result;
 }
 
-/** The POS accounts that need linking and the Employees the picker offers, read when the POS cashier links dialog opens (a button press, never a timer). */
-export type PosLinksResult = { ok: true; accounts: PosAccountNeedingLink[]; candidates: LinkCandidate[] } | { ok: false; error: string };
+/**
+ * What the POS cashier links dialog reads when it opens (a button press, never a timer): every linked Employee with their accounts (the Linked tab), the POS
+ * accounts that have sales but no Employee, and the Employees the Link POS cashier picker offers (the Needs linking tab).
+ */
+export type PosLinksResult = { ok: true; employees: LinkedEmployee[]; accounts: PosAccountNeedingLink[]; candidates: LinkCandidate[] } | { ok: false; error: string };
 
 export async function loadPosLinks(): Promise<PosLinksResult> {
   try {
     const performance = await performanceForRequest();
-    const [accounts, candidates] = await Promise.all([performance.posAccountsNeedingLink(), performance.posLinkCandidates()]);
-    return { ok: true, accounts, candidates };
+    const [employees, accounts, candidates] = await Promise.all([performance.listLinkedEmployees(), performance.posAccountsNeedingLink(), performance.posLinkCandidates()]);
+    return { ok: true, employees, accounts, candidates };
   } catch (error) {
     if (error instanceof PerformanceError) {
       if (error.reason === "denied") redirect(NO_ACCESS_PATH);
@@ -247,5 +250,10 @@ export async function loadPosLinks(): Promise<PosLinksResult> {
  * account without the reason. It records who linked it and why; the page is refreshed so the Top sales card follows.
  */
 export async function linkPosCashier(portalUserId: string, employeeId: number, reason?: string | null): Promise<KpiActionResult> {
-  return run(async () => (await performanceForRequest()).linkPosAccount({ employeeId, portalUserId, reason }), ["/performance"]);
+  return run(async () => (await performanceForRequest()).linkPosAccount({ employeeId, portalUserId, reason }), PERIOD_PATHS);
+}
+
+/** Ends one POS account link with a reason (and a note, required for Other). The account's sales leave the Employee, past months included; Top sales is refreshed. */
+export async function unlinkPosAccount(linkId: number, reason: string, note: string): Promise<KpiActionResult> {
+  return run(async () => (await performanceForRequest()).unlinkPosAccount(linkId, { reason, note }), PERIOD_PATHS);
 }

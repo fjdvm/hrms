@@ -1,90 +1,93 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogTrigger } from "@/components/ui/dialog";
+import { useRouter } from "next/navigation";
+import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { loadPosLinks } from "@/app/(hrms)/performance/actions";
-import type { LinkCandidate, PosAccountNeedingLink } from "@/lib/performance";
-import { pesos } from "@/lib/performance-pos-import-terms";
-import { cn } from "@/lib/utils";
-import { Callout, DialogBody, DialogFrame } from "./dialog-frame";
-import { accountMeta, accountTitle, LinkCashierDialog } from "./link-cashier-dialog";
-import { PosFooter } from "./import-pos-sales-views";
+import type { LinkCandidate, LinkedEmployee, PosAccountNeedingLink } from "@/lib/performance";
+import { Callout, DialogBody, DialogFrame, PILL, PILL_ON } from "./dialog-frame";
+import { LinkCashierDialog } from "./link-cashier-dialog";
+import { PosLinksList } from "./pos-links-list";
+import { PosNeedsLinkingList } from "./pos-needs-linking-list";
+import { UnlinkPosAccountDialog, type UnlinkTarget } from "./unlink-pos-account-dialog";
 
-type Data = { accounts: PosAccountNeedingLink[]; candidates: LinkCandidate[] };
-type Stage = { name: "loading" } | { name: "ready"; data: Data } | { name: "failed"; error: string };
+type Data = { employees: LinkedEmployee[]; accounts: PosAccountNeedingLink[]; candidates: LinkCandidate[] };
+type Load = { name: "loading" } | ({ name: "ready" } & Data) | { name: "failed"; error: string };
+type Tab = "needs" | "linked";
+
+const Loading = () => (
+  <div className="flex flex-col gap-[14px]" aria-busy="true" aria-label="Loading linked accounts">
+    {[0, 1, 2].map((i) => <div key={i} className="flex flex-col gap-[8px] border-b border-[#efebf4] pb-[12px]"><Skeleton className="h-[14px] w-[260px]" /><Skeleton className="ml-[16px] h-[28px] w-[520px] max-w-full" /></div>)}
+  </div>
+);
 
 /**
- * The POS cashier links dialog, opened from the Top sales footer note. Its Needs linking tab lists each POS account that has sales but no employee, by the
- * Portal's name (or staff number and branch alone), with its net sales and orders and a Link button that opens the Link POS cashier dialog. It reads when it
- * opens and again after a link is made (button presses only, never a timer), and a link refreshes the page so the Top sales card follows.
+ * The POS cashier links dialog, opened from "Manage POS links" in the Top sales footer note. Needs linking lists the POS accounts that have sales but no
+ * employee, each with a Link button that opens the Link POS cashier dialog; Linked lists every linked employee with all their accounts and an Unlink button.
+ * It opens on Needs linking when there is anything to link. It reads when it opens (a user action) and again after a link, an unlink or Try again; nothing is
+ * polled. After a link or an unlink the page is refreshed, so the Top sales card reflects it.
  */
-export function PosLinksDialog({ children }: { children?: React.ReactNode }) {
+export function PosLinksDialog() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [stage, setStage] = useState<Stage>({ name: "loading" });
+  const [load, setLoad] = useState<Load>({ name: "loading" });
+  const [tab, setTab] = useState<Tab>("linked");
+  const [target, setTarget] = useState<UnlinkTarget | null>(null);
   const [linking, setLinking] = useState<PosAccountNeedingLink | null>(null);
-  // An answer for a dialog that was closed meanwhile is dropped.
+  // A read that was closed or replaced finishes on its own, and its answer is dropped.
   const attempt = useRef(0);
 
-  const load = async () => {
+  const read = async (quiet = false) => {
     const token = ++attempt.current;
+    if (!quiet) setLoad({ name: "loading" });
     const result = await loadPosLinks();
     if (token !== attempt.current) return;
-    setStage(result.ok ? { name: "ready", data: { accounts: result.accounts, candidates: result.candidates } } : { name: "failed", error: result.error });
+    if (!result.ok) { setLoad({ name: "failed", error: result.error }); return; }
+    setLoad({ name: "ready", employees: result.employees, accounts: result.accounts, candidates: result.candidates });
+    // A fresh read opens on Needs linking when there is something to link; a read after a change keeps the tab the Staff member is on.
+    if (!quiet) setTab(result.accounts.length > 0 ? "needs" : "linked");
   };
   const change = (next: boolean) => {
     setOpen(next);
-    if (next) { setStage({ name: "loading" }); void load(); } else { attempt.current += 1; setLinking(null); }
+    if (next) void read(); else { attempt.current += 1; setTarget(null); setLinking(null); }
   };
-  const total = stage.name === "ready" ? stage.data.accounts.length : 0;
+  const changed = () => { void read(true); router.refresh(); };
 
+  const ready = load.name === "ready" ? load : null;
+  const tabs: { id: Tab; label: string; count: number | null }[] = [
+    { id: "needs", label: "Needs linking", count: ready ? ready.accounts.length : null },
+    { id: "linked", label: "Linked", count: ready ? ready.employees.length : null },
+  ];
   return (
     <>
       <Dialog open={open} onOpenChange={change}>
-        <DialogTrigger asChild>{children ?? <Button variant="outline" className="h-auto rounded-lg border-[#e6e1ee] px-[14px] py-[9px] shadow-none">POS cashier links</Button>}</DialogTrigger>
-        <DialogFrame title="POS cashier links" description="Which POS accounts count for which employee">
+        <DialogTrigger asChild>
+          <button type="button" className="shrink-0 text-xs font-semibold text-[#5b2a86] hover:underline">Manage POS links</button>
+        </DialogTrigger>
+        <DialogFrame wide title="POS cashier links" description="Which POS accounts count for which employee">
           <DialogBody>
-            <div role="tablist" aria-label="POS cashier links" className="flex gap-xs">
-              <span role="tab" aria-selected className="rounded-lg bg-accent px-[14px] py-[8px] text-sm font-medium text-primary">Needs linking{stage.name === "ready" ? ` ${total}` : ""}</span>
+            <div role="tablist" aria-label="Links" className="flex gap-xs">
+              {tabs.map((entry) => (
+                <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} onClick={() => setTab(entry.id)} className={`${PILL} ${tab === entry.id ? PILL_ON : ""}`}>
+                  {entry.label}{entry.count === null ? "" : ` ${entry.count}`}
+                </button>
+              ))}
             </div>
-            {stage.name === "loading" && (
-              <div role="status" aria-label="Loading POS accounts" className="flex flex-col gap-[14px]">
-                {[0, 1, 2].map((row) => <div key={row} className="flex items-center gap-[12px]"><div className="flex flex-1 flex-col gap-[6px]"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-56" /></div><Skeleton className="h-4 w-24" /><Skeleton className="h-9 w-16" /></div>)}
-              </div>
+            {load.name === "loading" && <Loading />}
+            {load.name === "failed" && (
+              <Callout alert>
+                {load.error}{" "}
+                <button type="button" onClick={() => void read()} className="font-semibold underline">Try again</button>
+              </Callout>
             )}
-            {stage.name === "failed" && (
-              <div className="flex flex-col items-start gap-[10px]">
-                <Callout alert>{stage.error}</Callout>
-                <Button variant="outline" onClick={() => { setStage({ name: "loading" }); void load(); }} className="h-auto rounded-lg px-[14px] py-[9px] shadow-none">Try again</Button>
-              </div>
-            )}
-            {stage.name === "ready" && (stage.data.accounts.length === 0 ? (
-              <p className="py-[24px] text-center text-sm text-zinc-500">Every POS account with sales is linked to an employee.</p>
-            ) : (
-              <ul className="flex flex-col">
-                {stage.data.accounts.map((account) => (
-                  <li key={account.portalUserId} className="flex items-center gap-[12px] border-b border-[#efebf4] py-[11px] last:border-0">
-                    <div className="flex min-w-0 flex-1 flex-col gap-px">
-                      <span className="truncate text-sm font-medium text-foreground">{accountTitle(account)}</span>
-                      <span className="truncate text-xs text-zinc-500">{accountMeta(account) || "No branch yet"}</span>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-px">
-                      <span className="text-sm font-medium text-foreground">{pesos(account.netSales)}</span>
-                      <span className="text-xs text-zinc-500">{account.orders.toLocaleString("en-PH")} {account.orders === 1 ? "order" : "orders"}</span>
-                    </div>
-                    <Button type="button" variant="outline" aria-label={`Link ${accountTitle(account)}`} onClick={() => setLinking(account)} className="h-auto rounded-lg border-zinc-200 px-[14px] py-[8px] shadow-none">Link</Button>
-                  </li>
-                ))}
-              </ul>
-            ))}
-            <p className={cn("text-xs text-zinc-500")}>Linking is by hand. Until an account is linked to a cashier, its sales are saved but not ranked or scored.</p>
+            {ready && tab === "needs" && <PosNeedsLinkingList accounts={ready.accounts} onLink={setLinking} />}
+            {ready && tab === "linked" && <PosLinksList employees={ready.employees} onUnlink={setTarget} />}
           </DialogBody>
-          <PosFooter note={stage.name === "ready" ? `${total} ${total === 1 ? "account" : "accounts"}` : ""}><DialogClose asChild><Button type="button" variant="outline" className="h-auto rounded-lg border-zinc-200 px-[14px] py-[9px] shadow-none">Close</Button></DialogClose></PosFooter>
         </DialogFrame>
       </Dialog>
-      <LinkCashierDialog account={linking} candidates={stage.name === "ready" ? stage.data.candidates : []} total={total} onClose={() => setLinking(null)}
-        onLinked={() => { setLinking(null); void load(); }} />
+      <UnlinkPosAccountDialog target={target} onClose={() => setTarget(null)} onUnlinked={changed} />
+      <LinkCashierDialog account={linking} candidates={ready?.candidates ?? []} total={ready?.accounts.length ?? 0} onClose={() => setLinking(null)} onLinked={() => { setLinking(null); changed(); }} />
     </>
   );
 }

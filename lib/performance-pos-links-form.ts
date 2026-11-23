@@ -1,6 +1,5 @@
-import { NEW_ACCOUNT_REASON } from "./performance-links";
+import { NEW_ACCOUNT_REASON, NOT_A_CASHIER_MESSAGE } from "./performance-pos-links-terms";
 import type { LinkCandidate } from "./performance-pos-accounts";
-import { NOT_A_CASHIER } from "./performance-links-messages";
 import { matchKey } from "./validators/text";
 
 /**
@@ -20,7 +19,7 @@ export function filterCandidates(candidates: readonly LinkCandidate[], search: s
 
 /** Only a cashier can be chosen; anyone else is shown, greyed, with why. */
 export const canChoose = (candidate: LinkCandidate) => candidate.cashier;
-export const disabledReason = (candidate: LinkCandidate) => (candidate.cashier ? null : NOT_A_CASHIER);
+export const disabledReason = (candidate: LinkCandidate) => (candidate.cashier ? null : NOT_A_CASHIER_MESSAGE);
 /** The tag on an Employee who already has POS accounts. */
 export const accountsTag = (candidate: LinkCandidate) => (candidate.accounts === 0 ? null : `Has ${candidate.accounts} POS ${candidate.accounts === 1 ? "account" : "accounts"}`);
 

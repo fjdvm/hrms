@@ -177,6 +177,50 @@ describe("naming POS accounts", () => {
   });
 });
 
+describe("the Linked list", () => {
+  const sale = async (account: string, location: number, date: string) => {
+    const importId = (await db.query<{ id: number }>(`INSERT INTO hrms_pos_imports (range_from, range_to, days, orders, net_sales, unlinked_accounts, imported_by_id, imported_by_name) VALUES ('2026-11-01', '2026-11-30', 1, 1, 100, 0, 'u', 'U') RETURNING id`)).rows[0].id;
+    await db.query(`INSERT INTO hrms_pos_sales_daily VALUES ($1, $2, $3, 1, 100, 0, 100, $4)`, [account, location, date, importId]);
+  };
+
+  it("lists every linked Employee with all their accounts, newest first as Current, with names, branches and who linked them", async () => {
+    const ana = await employee("Ana Cruz");
+    const cai = await employee("Cai Lim");
+    await db.query(`INSERT INTO hrms_pos_locations (pos_location_id, name, pos_type, is_active, hrms_branch) VALUES (1, 'Cainta', 'Branch', true, 'Cainta branch'), (2, 'Bazaar Kiosk', 'Bazaar', true, NULL)`);
+    portal.directory = [{ id: "u-pos-1", username: "maria", name: "Maria Santos", modules: ["Point of sale"] }];
+    await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-pos-1" });
+    await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-pos-2", reason: NEW_ACCOUNT_REASON });
+    await performance().linkPosAccount({ employeeId: cai, portalUserId: "u-pos-3" });
+    await sale("u-pos-1", 1, "2026-11-03");
+    await sale("u-pos-2", 2, "2026-11-04");
+
+    const list = await performance().listLinkedEmployees();
+
+    expect(list.map((person) => [person.name, person.employeeNumber, person.position, person.accounts.length])).toEqual([["Ana Cruz", "2026-001", "Branch Cashier", 2], ["Cai Lim", "2026-002", "Branch Cashier", 1]]);
+    expect(list[0].accounts.map((a) => [a.portalUserId, a.current, a.name, a.branch, a.linkedByName, a.linkReason])).toEqual([
+      ["u-pos-2", true, null, "Bazaar Kiosk", "Ada Okafor", NEW_ACCOUNT_REASON],
+      ["u-pos-1", false, "Maria Santos", "Cainta branch", "Ada Okafor", null]]);
+    expect(list[1].accounts[0]).toMatchObject({ portalUserId: "u-pos-3", current: true, branch: null });
+    expect(list[0].accounts[0].linkedAt).toMatch(/^\d{4}-\d{2}-\d{2}/);
+  });
+
+  it("drops an unlinked account from the list, and an Employee with no account left, but keeps the others", async () => {
+    const ana = await employee("Ana Cruz");
+    const first = await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-pos-1" });
+    const second = await performance().linkPosAccount({ employeeId: ana, portalUserId: "u-pos-2", reason: NEW_ACCOUNT_REASON });
+
+    await performance().unlinkPosAccount(second.id, { reason: "Wrong person linked" });
+    expect((await performance().listLinkedEmployees())[0].accounts.map((a) => [a.portalUserId, a.current])).toEqual([["u-pos-1", true]]);
+    await performance().unlinkPosAccount(first.id, { reason: "Other", note: "Left the company" });
+    expect(await performance().listLinkedEmployees()).toEqual([]);
+  });
+
+  it("is refused to a session without the Performance Module", async () => {
+    const outsider = portal.signIn({ ...staff, id: "u-bo", name: "Bo", username: "bo", email: "bo@example.test" }, ["Training"]);
+    await expect(performance(outsider).listLinkedEmployees()).rejects.toMatchObject({ reason: "denied" });
+  });
+});
+
 describe("submitted and reopened Evaluations", () => {
   const days = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, "0")}`).filter((d) => {
     const day = new Date(`${d}T00:00:00Z`).getUTCDay();

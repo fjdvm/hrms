@@ -1,5 +1,4 @@
 import { TriangleAlert, BarChart3 } from "lucide-react";
-import { InfoNote } from "@/components/hiring/parts";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { TopSalesError } from "@/lib/performance";
@@ -11,6 +10,14 @@ import { PerformanceRetry } from "./retry-button";
 import { TopSalesBody } from "./top-sales-parts";
 import { TopSalesHeader } from "./top-sales-skeleton";
 import { TopSalesMonthSelector } from "./top-sales-month-selector";
+
+/** The footer note, with the entry point that opens the POS cashier links dialog. */
+const Footer = ({ children }: { children: React.ReactNode }) => (
+  <div className="flex items-start gap-sm rounded-lg bg-muted px-[12px] py-[10px]">
+    <p className="flex-1 text-xs text-muted-foreground">{children}</p>
+    <PosLinksDialog />
+  </div>
+);
 
 const CARD = "flex flex-col gap-[16px] overflow-hidden rounded-xl p-[20px] shadow-none";
 
@@ -44,11 +51,6 @@ export async function TopSalesCard({ searchParams }: { searchParams: Search }) {
     </TopSalesHeader>
   );
 
-  // The way to link the POS accounts the note says are not shown: it opens the POS cashier links dialog, which reads only when it is opened.
-  const linkAccounts = data && data.notShown.unlinkedAccounts > 0 && (
-    <> <PosLinksDialog><button type="button" className="font-semibold text-[#5b2a86] hover:underline">Link accounts</button></PosLinksDialog></>
-  );
-
   if (!data) {
     return (
       <Card className={CARD}>
@@ -75,7 +77,7 @@ export async function TopSalesCard({ searchParams }: { searchParams: Search }) {
           <p className="max-w-[560px] text-sm text-[#6e6680]">Import POS sales to see the top seller and the top cashiers by branch. Sales are read from the POS only when you click Import.</p>
           <ImportPosSalesDialog goLiveDate={goLive?.date ?? null} today={today} variant="primary" />
         </div>
-        <InfoNote>{data.notShown.unlinkedAccounts + data.notShown.notCashiers > 0 ? footerNote(data) : EMPTY_NOTE}{linkAccounts}</InfoNote>
+        <Footer>{data.notShown.unlinkedAccounts + data.notShown.notCashiers > 0 ? footerNote(data) : EMPTY_NOTE}</Footer>
       </Card>
     );
   }
@@ -84,7 +86,7 @@ export async function TopSalesCard({ searchParams }: { searchParams: Search }) {
     <Card className={CARD}>
       {header}
       <TopSalesBody data={data} />
-      <InfoNote>{footerNote(data)}{linkAccounts}</InfoNote>
+      <Footer>{footerNote(data)}</Footer>
     </Card>
   );
 }

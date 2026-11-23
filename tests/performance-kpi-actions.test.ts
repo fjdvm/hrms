@@ -8,7 +8,7 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 
 import { changeKpiStatus, createWeightSet, linkPosCashier, loadPosLinks, saveSalesSettings } from "@/app/(hrms)/performance/actions";
 
-beforeEach(() => { state.performance = { setKpiStatus: vi.fn(), saveWeightSet: vi.fn(), setSalesTarget: vi.fn(), setPosGoLive: vi.fn(), linkPosAccount: vi.fn(), posAccountsNeedingLink: vi.fn(), posLinkCandidates: vi.fn() }; });
+beforeEach(() => { state.performance = { setKpiStatus: vi.fn(), saveWeightSet: vi.fn(), setSalesTarget: vi.fn(), setPosGoLive: vi.fn(), linkPosAccount: vi.fn(), posAccountsNeedingLink: vi.fn(), posLinkCandidates: vi.fn(), listLinkedEmployees: vi.fn().mockResolvedValue([]) }; });
 const WEIGHTS = { attendanceRate: 40, punctuality: 20, fullShift: 10, trainingCompletion: 10, evaluatorRating: 20 };
 
 describe("the KPI Setup server actions", () => {
@@ -78,11 +78,12 @@ describe("the sales settings server action", () => {
 });
 
 describe("the POS cashier links server actions", () => {
-  it("reads the accounts that need linking and the Employees the picker offers", async () => {
+  it("reads the linked employees, the accounts that need linking and the Employees the picker offers", async () => {
+    state.performance.listLinkedEmployees.mockResolvedValue([{ employeeId: 9 }]);
     state.performance.posAccountsNeedingLink.mockResolvedValue([{ portalUserId: "u-1" }]);
     state.performance.posLinkCandidates.mockResolvedValue([{ id: 1 }]);
 
-    expect(await loadPosLinks()).toEqual({ ok: true, accounts: [{ portalUserId: "u-1" }], candidates: [{ id: 1 }] });
+    expect(await loadPosLinks()).toEqual({ ok: true, employees: [{ employeeId: 9 }], accounts: [{ portalUserId: "u-1" }], candidates: [{ id: 1 }] });
   });
 
   it("reports an unavailable Portal as a message, and sends Staff without the Module to No access", async () => {
