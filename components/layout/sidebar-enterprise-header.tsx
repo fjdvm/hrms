@@ -70,13 +70,13 @@ export function SidebarEnterpriseHeader({ isMobile }: { isMobile: boolean }) {
                       </div>
                       <div className="flex flex-col min-w-0 overflow-hidden flex-1 justify-center gap-0.5">
                         <span
-                          className={`font-semibold text-xs truncate leading-snug ${
+                          className={`font-semibold text-xs whitespace-normal break-words leading-snug ${
                             sys.active ? "text-foreground font-bold" : "text-foreground"
                           }`}
                         >
                           {sys.fullName}
                         </span>
-                        <span className="text-[11px] text-muted-foreground truncate leading-tight">
+                        <span className="text-[11px] text-muted-foreground whitespace-normal break-words leading-tight">
                           {sys.desc}
                         </span>
                       </div>
