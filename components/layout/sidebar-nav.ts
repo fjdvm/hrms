@@ -120,7 +120,7 @@ export const systems: SystemItem[] = [
     url: process.env.NEXT_PUBLIC_HOST_URL ?? "https://portal.buildwrite.me/",
   },
   {
-    fullName: "CREOMS",
+    fullName: "Customer Relation and Ecommerce Ordering Management System",
     portalName: "CRMS",
     desc: "Customers, orders, tickets & feedback",
     icon: Building2,
