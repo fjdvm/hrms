@@ -25,6 +25,8 @@ export interface SystemItem {
   icon: LucideIcon;
   active: boolean;
   url?: string;
+  /** The name the Portal knows this System by; the Enterprise Portal entry has none. */
+  portalName?: string;
 }
 
 export type SystemChild = SystemItem;
@@ -118,7 +120,8 @@ export const systems: SystemItem[] = [
     url: process.env.NEXT_PUBLIC_HOST_URL ?? "https://portal.buildwrite.me/",
   },
   {
-    fullName: "Customer Relationship Management",
+    fullName: "Customer Relation and Ecommerce Ordering Management System",
+    portalName: "CRMS",
     desc: "Contact profiles, tickets & marketing",
     icon: Building2,
     active: false,
@@ -126,6 +129,7 @@ export const systems: SystemItem[] = [
   },
   {
     fullName: "Human Resource Management",
+    portalName: "HRMS",
     desc: "Staff directory & payroll",
     icon: Users2,
     active: true,
@@ -133,6 +137,7 @@ export const systems: SystemItem[] = [
   },
   {
     fullName: "Point of Sale",
+    portalName: "POS",
     desc: "Retail & register checkout",
     icon: CreditCard,
     active: false,
@@ -140,9 +145,24 @@ export const systems: SystemItem[] = [
   },
   {
     fullName: "IMS - Inventory Management System",
+    portalName: "IMS",
     desc: "Inventory & logistics",
     icon: Truck,
     active: false,
     url: "https://br-sims.vercel.app/",
   },
 ];
+
+/**
+ * The switcher entries this person may open: the Enterprise Portal, the System already open,
+ * and every System the Portal says an Admin granted them. When the Portal's answer is not known
+ * (null) only those first two show, so nothing is offered that may be refused.
+ */
+export function visibleSystems<T extends { portalName?: string; active: boolean }>(
+  all: readonly T[],
+  allowed: readonly string[] | null,
+): T[] {
+  return all.filter(
+    (sys) => !sys.portalName || sys.active || (allowed?.includes(sys.portalName) ?? false),
+  );
+}
