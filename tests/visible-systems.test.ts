@@ -27,13 +27,13 @@ describe("module switcher entries a person sees", () => {
 
   it("shows the Portal, CREOMS, HRMS and IMS to someone granted those three", () => {
     expect(shown(["CRMS", "HRMS", "IMS"])).toEqual([
-      "Enterprise Portal", "CREOMS", "Human Resource Management", "IMS - Inventory Management System",
+      "Enterprise Portal", "Customer Relation and Ecommerce Ordering Management System", "Human Resource Management", "IMS - Inventory Management System",
     ]);
   });
 
-  it("names CREOMS as the Portal home does, without the retired marketing Module", () => {
+  it("gives CREOMS its full name, without the retired marketing Module", () => {
     const creoms = systems.find((s) => s.portalName === "CRMS")!;
-    expect(creoms.fullName).toBe("CREOMS");
+    expect(creoms.fullName).toBe("Customer Relation and Ecommerce Ordering Management System");
     expect(creoms.desc).not.toMatch(/marketing/i);
   });
 });

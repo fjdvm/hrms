@@ -79,7 +79,7 @@ describe("System links in the sidebar", () => {
   it("defaults Portal, CRM and HRMS to the Azure addresses, with no vercel.app left", async () => {
     const urls = await load({});
     expect(urls["Enterprise Portal"]).toBe("https://portal.buildwrite.me/");
-    expect(urls["CREOMS"]).toBe("https://creoms.buildwrite.me/");
+    expect(urls["Customer Relation and Ecommerce Ordering Management System"]).toBe("https://creoms.buildwrite.me/");
     expect(urls["Human Resource Management"]).toBe("https://hrms.buildwrite.me/");
   });
 
@@ -90,7 +90,7 @@ describe("System links in the sidebar", () => {
       NEXT_PUBLIC_HRMS_URL: "https://h.test/",
     });
     expect(urls["Enterprise Portal"]).toBe("https://p.test/");
-    expect(urls["CREOMS"]).toBe("https://c.test/");
+    expect(urls["Customer Relation and Ecommerce Ordering Management System"]).toBe("https://c.test/");
     expect(urls["Human Resource Management"]).toBe("https://h.test/");
   });
 
