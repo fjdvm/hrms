@@ -80,7 +80,7 @@ describe("System links in the sidebar", () => {
     const urls = await load({});
     expect(urls["Enterprise Portal"]).toBe("https://portal.buildwrite.me/");
     expect(urls["Customer Relation and Ecommerce Ordering Management System"]).toBe("https://creoms.buildwrite.me/");
-    expect(urls["Human Resource Management"]).toBe("https://hrms.buildwrite.me/");
+    expect(urls["Human Resource Management System"]).toBe("https://hrms.buildwrite.me/");
   });
 
   it("uses the environment value when set", async () => {
@@ -91,13 +91,13 @@ describe("System links in the sidebar", () => {
     });
     expect(urls["Enterprise Portal"]).toBe("https://p.test/");
     expect(urls["Customer Relation and Ecommerce Ordering Management System"]).toBe("https://c.test/");
-    expect(urls["Human Resource Management"]).toBe("https://h.test/");
+    expect(urls["Human Resource Management System"]).toBe("https://h.test/");
   });
 
   it("leaves the POS and IMS links unchanged", async () => {
     const urls = await load({});
-    expect(urls["Point of Sale"]).toBe("https://web-pos-alpha-vert.vercel.app/");
-    expect(urls["IMS - Inventory Management System"]).toBe("https://br-sims.vercel.app/");
+    expect(urls["Point of Sale System"]).toBe("https://web-pos-alpha-vert.vercel.app/");
+    expect(urls["Inventory Management System"]).toBe("https://br-sims.vercel.app/");
   });
 
   it("marks one item active: Trainings for its detail pages, Calendar for its own", () => {

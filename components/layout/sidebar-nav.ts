@@ -128,7 +128,7 @@ export const systems: SystemItem[] = [
     url: process.env.NEXT_PUBLIC_CRMS_URL ?? "https://creoms.buildwrite.me/",
   },
   {
-    fullName: "Human Resource Management",
+    fullName: "Human Resource Management System",
     portalName: "HRMS",
     desc: "Staff directory & payroll",
     icon: Users2,
@@ -136,7 +136,7 @@ export const systems: SystemItem[] = [
     url: process.env.NEXT_PUBLIC_HRMS_URL ?? "https://hrms.buildwrite.me/",
   },
   {
-    fullName: "Point of Sale",
+    fullName: "Point of Sale System",
     portalName: "POS",
     desc: "Retail & register checkout",
     icon: CreditCard,
@@ -144,7 +144,7 @@ export const systems: SystemItem[] = [
     url: "https://web-pos-alpha-vert.vercel.app/",
   },
   {
-    fullName: "IMS - Inventory Management System",
+    fullName: "Inventory Management System",
     portalName: "IMS",
     desc: "Inventory & logistics",
     icon: Truck,

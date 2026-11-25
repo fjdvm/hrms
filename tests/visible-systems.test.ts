@@ -27,7 +27,7 @@ describe("module switcher entries a person sees", () => {
 
   it("shows the Portal, CREOMS, HRMS and IMS to someone granted those three", () => {
     expect(shown(["CRMS", "HRMS", "IMS"])).toEqual([
-      "Enterprise Portal", "Customer Relation and Ecommerce Ordering Management System", "Human Resource Management", "IMS - Inventory Management System",
+      "Enterprise Portal", "Customer Relation and Ecommerce Ordering Management System", "Human Resource Management System", "Inventory Management System",
     ]);
   });
 
