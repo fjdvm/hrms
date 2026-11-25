@@ -123,3 +123,15 @@ it("tells the page a new Notification was pushed, so it can re-read its data, bu
   expect(pushed).toHaveBeenCalledTimes(1);
   window.removeEventListener("hrms:live-notification", pushed);
 });
+
+it("shows each Notification's title, details, date and time, and which are unread", async () => {
+  inbox = { available: true, unread: 1, notifications: [{ ...application, body: "Applied for Cashier." } as Item, posting] };
+  await renderBell();
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  await user.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  const unread = screen.getByRole("button", { name: /New application: Kristine Aquino/ });
+  expect(unread.textContent).toContain("Applied for Cashier.");
+  expect(unread.textContent).toContain("11/2/2026, 4:00:00 PM");
+  expect(unread.textContent).toContain("Unread");
+  expect(screen.getByRole("button", { name: /Job posting closed: Cashier/ }).textContent).not.toContain("Unread");
+});

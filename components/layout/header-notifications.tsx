@@ -7,7 +7,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LIVE_EVENT } from "@/lib/live-events";
@@ -27,7 +26,16 @@ function isWebLink(link: string) {
   }
 }
 
-const dateFormat = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric" });
+/** Same date and time as the other Systems' bells, e.g. "11/26/2026, 12:26:48 AM", in Philippine time. */
+const dateFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+});
 
 async function fetchInbox(): Promise<Inbox> {
   try {
@@ -161,12 +169,12 @@ export function HeaderNotifications({ navigate = (link: string) => window.locati
         </Button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent className="w-80 bg-popover border-border text-popover-foreground z-[99999]" align="end">
-        <div className="flex items-center justify-between p-sm border-b border-border">
-          <DropdownMenuLabel className="p-0 text-body-sm font-bold text-foreground">Notifications</DropdownMenuLabel>
+      <DropdownMenuContent className="w-80 p-0 bg-popover border-border text-popover-foreground shadow-lg z-[99999]" align="end">
+        <div className="flex items-center justify-between p-3 border-b border-border">
+          <DropdownMenuLabel className="p-0 text-base font-semibold text-foreground">Notifications</DropdownMenuLabel>
           <Button
             variant="ghost"
-            className="h-auto gap-1.5 px-0 py-0 text-label-sm text-muted-foreground hover:bg-transparent hover:text-foreground"
+            className="h-auto gap-1.5 px-0 py-0 text-sm font-medium text-primary hover:bg-transparent hover:text-primary/80"
             disabled={unread === 0}
             onClick={() => void markAllRead()}
             type="button"
@@ -177,26 +185,33 @@ export function HeaderNotifications({ navigate = (link: string) => window.locati
         </div>
 
         {inbox.notifications.length === 0 ? (
-          <p className="p-md text-center text-label-sm text-muted-foreground">
-            {inbox.available ? "No notifications yet." : "Notifications are unavailable right now."}
-          </p>
+          <div className="p-6 text-center text-muted-foreground space-y-1">
+            <Bell aria-hidden="true" className="size-6 mx-auto opacity-30" />
+            <p className="text-sm font-medium">{inbox.available ? "No notifications yet." : "Notifications are unavailable right now."}</p>
+          </div>
         ) : (
-          <ul className="max-h-96 divide-y divide-border overflow-y-auto">
+          <ul className="max-h-80 divide-y divide-border overflow-y-auto">
             {inbox.notifications.map((notification) => (
               <li key={notification.id}>
-                <button className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-accent" onClick={() => void open(notification)} type="button">
-                  <span className={`mt-1.5 size-2 shrink-0 rounded-full ${notification.read ? "bg-transparent" : "bg-destructive"}`} title={notification.read ? undefined : "Unread"} />
-                  <span className="min-w-0">
-                    <span className={`block truncate text-body-sm text-foreground ${notification.read ? "" : "font-semibold"}`}>{notification.title}</span>
-                    <span className="block text-label-sm text-muted-foreground">{dateFormat.format(new Date(notification.createdAt))}</span>
+                <button
+                  className={`flex w-full items-start gap-2.5 p-3 text-left hover:bg-muted focus-visible:bg-muted focus-visible:outline-none ${notification.read ? "" : "bg-muted/50"}`}
+                  onClick={() => void open(notification)}
+                  type="button"
+                >
+                  <span aria-hidden="true" className="mt-0.5 shrink-0 rounded-full border border-border bg-muted p-1.5">
+                    <Bell className="size-3.5 text-muted-foreground" />
+                  </span>
+                  <span className="min-w-0 flex-1 space-y-0.5">
+                    <span className="block break-words text-sm font-semibold text-foreground">{notification.title}</span>
+                    {notification.body ? <span className="block break-words text-sm text-muted-foreground">{notification.body}</span> : null}
+                    <time dateTime={notification.createdAt} className="block text-xs text-muted-foreground">{dateFormat.format(new Date(notification.createdAt))}</time>
+                    {notification.read ? null : <span className="sr-only">Unread</span>}
                   </span>
                 </button>
               </li>
             ))}
           </ul>
         )}
-
-        <DropdownMenuSeparator className="bg-border m-0" />
       </DropdownMenuContent>
     </DropdownMenu>
   );
